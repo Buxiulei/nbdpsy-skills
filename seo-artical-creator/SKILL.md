@@ -99,20 +99,33 @@ bash scripts/check_links.sh seo-geo/content/drafts/{slug}.md
 
 > **为什么默认发布**：本项目采用「发布优先、事后复查」——AI 生成即上线、署名胡佰亿，管理员上网页核查，有问题再后台下架/改。这把人工环节从"发布前闸门"挪到"发布后兜底"，提速，但要求 ① 管理员及时核查 ② AI 自己的查证/复审必须更严（数字会带着真人署名一起上线）。如确需先压草稿，加 `--draft`。
 
+#### 凭据自举（首次缺失自动询问并记录，绝不硬编码）
+
+发布/本地验证需要凭据：`DB_PASSWORD`（连数据库）、`SITE_URL`/`BAIDU_PUSH_TOKEN`/`INDEXNOW_KEY`（发布后推送；生产端会从其 `.env` 自动取）。`scripts/secrets.sh` 按 **① 环境变量 → ② 项目 `.env` → ③ 用户级 `~/.config/nbdpsy/secrets.env`** 顺序解析。
+
+**运行前先探测缺失，缺啥就问用户、记下来**（密钥绝不硬编码进 skill 或仓库）：
+
 ```bash
-# 本地验证 SQL（--draft 不发布、--cleanup 插完即删，测试自清理）
+S=.claude/skills/seo-artical-creator/scripts/secrets.sh
+bash "$S" ensure DB_PASSWORD            # 打印仍缺失的 KEY（每行一个）；无输出=已就绪
+# 若打印出缺失项 → 向用户询问该值 → 记录（写入 ~/.config/nbdpsy/secrets.env，chmod 600，绝不入库）：
+#   bash "$S" set DB_PASSWORD '用户提供的值'
+```
+
+```bash
+# 本地验证 SQL（--draft 不发布、--cleanup 插完即删，测试自清理）；密码经 secrets.sh 解析
+PGPASSWORD="$(bash .claude/skills/seo-artical-creator/scripts/secrets.sh get DB_PASSWORD)" \
 python3 scripts/insert-pillar-drafts.py \
   --dsn "host=localhost user=root dbname=psychology_counseling" \
   --drafts-dir seo-geo/content/drafts --draft --cleanup
 
-# 生产发布（webhook 失效须先手动 pull；从 .env 取推送凭据，脚本发布后自动推百度+IndexNow）
+# 生产发布（webhook 失效须先手动 pull；凭据全部从生产 .env 取，发布后自动推百度+IndexNow）
 ssh nbdpsy bash -s <<'EOF'
 set -e
 cd /home/ubuntu/NBDpsy
 git fetch origin master -q && git merge --ff-only origin/master
 ENVF=后端服务/管理后端/.env
-# 数据库密码请从生产 .env / 密码管理器注入，切勿硬编码（公开仓库已脱敏）
-export PGPASSWORD="${PGPASSWORD:-$(grep -E '^DB_PASSWORD=' "$ENVF" | cut -d= -f2- | tr -d "\"'")}"
+export PGPASSWORD=$(grep -E '^DB_PASSWORD=' "$ENVF" | cut -d= -f2- | tr -d "\"'")
 export SITE_URL=$(grep -E '^SITE_URL=' "$ENVF" | cut -d= -f2- | tr -d "\"'")
 export BAIDU_PUSH_TOKEN=$(grep -E '^BAIDU_PUSH_TOKEN=' "$ENVF" | cut -d= -f2- | tr -d "\"'")
 export INDEXNOW_KEY=$(grep -E '^INDEXNOW_KEY=' "$ENVF" | cut -d= -f2- | tr -d "\"'")
