@@ -1,0 +1,19 @@
+{
+  "name": "nbdpsy-content",
+  "description": "NBDpsy 内容创作 skills：seo-artical-creator（SEO/GEO pillar 长文）+ xiaohongshu-creator（把长文拆成小红书图文笔记 + 配图提示词）",
+  "version": "1.0.0",
+  "author": {
+    "name": "Buxiulei"
+  },
+  "keywords": [
+    "seo",
+    "geo",
+    "xiaohongshu",
+    "psychology",
+    "content"
+  ],
+  "skills": [
+    "./seo-artical-creator",
+    "./xiaohongshu-creator"
+  ]
+}

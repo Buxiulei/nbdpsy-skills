@@ -1,0 +1,30 @@
+{
+  "name": "nbdpsy-skills",
+  "owner": {
+    "name": "Buxiulei"
+  },
+  "metadata": {
+    "description": "NBDpsy 心理科普内容创作 skills：SEO/GEO pillar 长文 + 小红书图文拆分（含配图提示词）",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "nbdpsy-content",
+      "source": "./",
+      "description": "把心理科普主题写成 SEO/GEO pillar 长文（seo-artical-creator），并把长文拆成可直接发小红书的图文笔记 + 配图提示词（xiaohongshu-creator）",
+      "version": "1.0.0",
+      "author": {
+        "name": "Buxiulei"
+      },
+      "keywords": [
+        "seo",
+        "geo",
+        "xiaohongshu",
+        "content",
+        "psychology",
+        "nbdpsy"
+      ],
+      "category": "workflow"
+    }
+  ]
+}

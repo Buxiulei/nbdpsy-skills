@@ -1,0 +1,11 @@
+# python 缓存
+__pycache__/
+*.pyc
+# skill 运行产物（拆分/预览的输出，不入库）
+preview.html
+review.html
+**/drafts/
+**/xiaohongshu/
+# OS / 编辑器
+.DS_Store
+*.swp
