@@ -125,22 +125,35 @@ python3 scripts/jimeng_gen.py fetch --submit-id <id> --out-dir ./clips
 
 **积分 & 排队（2026-06 实测，重要）**：5s/720p——普通 `fast` 25 积分、`fast_vip` 55 积分（+30 换插队）；扣费 success 才结算。**排队是真瓶颈**：实测高峰普通 `fast` 一条 5s 片排队 **近 2 小时仍未出片**，而 `fast_vip` 加速通道 **~3 分钟出片**。→ **投放/急用务必走 `--model seedance2.0fast_vip`**（真实可用单条成本按 VIP 55 积分算）；不急的量才用普通档 + `--submit-only` 夜间错峰。失败/超时保留 submit_id，绝不重复扣分；排队中任务无法取消（dreamina 无 cancel）。
 
+**并行生产 & 卡死重提（关键提速，实测）**：`batch` 默认**串行** submit+fetch（等一镜下完才提交下一镜）很慢。正解=**先全部 `--submit-only` 灌队列、再并行 fetch**（多进程/线程各 `fetch --submit-id`），即梦后端同时排队渲染，墙钟≈最慢单镜而非 N 镜相加。偶有个别任务卡 `querying` 数小时（同批其他 30–60min 出）→ 提交积分已是沉没成本，**重新提交拿新 submit_id（走 VIP）、新旧并行谁先渲染好用谁**。
+
 `gen`/`batch` 返回每镜 `{"success":true, "videos":["clips/xxx.mp4"], "credit_count":N}`。用返回的真实路径填第 ⑤ 步 manifest。
 
 ### 旁白配音（TTS）+ 背景音乐
 
-用 `tts_gen.py`（edge-tts，免费无 key，中文音色自然）生成旁白：
+用 `tts_gen.py` 生成旁白。**双引擎**：`edge`(免费无 key) / `doubao`(火山豆包大模型，高音质，需 `.env` 配 `VOLC_TTS_*`)。
+
 ```bash
-# 分镜计划每镜写 narration_text(旁白文案)，批量生成 tts/000.mp3, 001.mp3 …
-python3 scripts/tts_gen.py --plan shots.json --out-dir tts/
-# 单条：python3 scripts/tts_gen.py --text "焦虑不是敌人…" --out tts/1.mp3
+# 逐句时间轴(--timed)：字幕真同步的根，强烈建议开
+python3 scripts/tts_gen.py --engine doubao --plan shots.json --out-dir tts/ --timed
+# 单条：python3 scripts/tts_gen.py --engine doubao --text "焦虑不是敌人…" --out tts/1.mp3 --timed
 ```
-- 默认温柔女声 `zh-CN-XiaoxiaoNeural` + 语速 `-10%`(科普稍慢)；男声 `--voice zh-CN-YunxiNeural`。
-- 生成的 mp3 按 index 填进第⑤步 manifest 每镜 `narration`。
-- **连贯关键（旁白驱动 duration）**：**最佳做法是先出旁白、按其时长定每镜画面 `duration`**（向上取整、clamp 4–15s），画面与旁白等长、正常速度播放，最连贯。
-- 兜底：若画面仍短于旁白，compose 会把该段画面**匀速放慢填满**旁白时长（画面持续运动、不卡顿）；短则片尾静音；旁白绝不被截断。**别依赖兜底变速**（变速幅度大画面会偏慢），优先旁白驱动 duration。
-- **BGM**：自备一段无版权音乐(Pixabay/Suno 等)，路径填 manifest 的 `bgm`，`bgm_volume` 控制音量(默认 0.12，压在旁白下)。
-- 想要更高音质可换豆包 TTS(需 key)，同样产出 mp3 填 `narration`。
+
+- **逐句时间轴 `--timed`（字幕真同步，必开）**：不开时字幕只能按字数比例**估算**时长，与真实语速错位（实测明显不同步）。`--timed` 把旁白按句切、每句单独合成、**ffprobe 实测时长**后拼接，并写 sidecar `{out}.cues.json`。compose 检测到 cues 就让字幕严格按每句实测时长走——旁白讲到哪、字幕走到哪。长句(只有结尾一个句号的整段)会在句内按逗号再细分成多条字幕滚动，不会一条久挂。
+- **豆包音色**（本机实测已开通，cluster=`volcano_tts`；音色主观，新项目建议合成几个候选让用户试听选定）：
+  - `zh_female_wenroushunv_mars_bigtts` 温柔淑女（**默认**·成熟温柔知性，心理科普首选）
+  - `zh_female_qingxinnvsheng_mars_bigtts` 清新女声（清新偏年轻）
+  - `zh_female_meilinvyou_moon_bigtts` 魅力女友（偏柔偏慢偏嗲）
+  - `zh_female_shuangkuaisisi_moon_bigtts` 爽快思思（明快活泼）
+  - 经典 BV 系列(BV001/BV700)未授权会报 `code=3001 resource not granted`。edge 引擎：`zh-CN-XiaoxiaoNeural`(温柔女)/`zh-CN-YunxiNeural`(沉稳男)。
+- 生成的 mp3(+`.cues.json`) 按 index 填进第⑤步 manifest 每镜 `narration`（cues 同名自动探测，无需手填）。
+- **连贯关键（旁白驱动 duration）**：先出旁白、按其时长定每镜画面 `duration`(向上取整 clamp 4–15s)，画面与旁白等长正常速度，最连贯。兜底：画面短于旁白时 compose 匀速放慢填满(不卡顿)，旁白绝不被截。⚠️ 换音色会变语速→旁白时长变→画面放慢幅度变（温柔淑女较慢，多镜会触发兜底放慢，可接受）。
+- **背景音乐（轻音乐·自动生成）**：`gen_bgm.py` 算法合成舒缓钢琴/竖琴拨弦琶音轻音乐(和弦进行+ADSR包络+混响+低通+头尾淡入淡出)，零版权零等待，比手搓正弦 pad 有旋律有层次：
+  ```bash
+  python3 scripts/gen_bgm.py --duration 67 --out bgm.mp3 --mood calm   # mood: calm / warm
+  ```
+  时长设成≈成片长(略大即可，finalize 会截断、结尾自然淡出)。路径填 manifest 的 `bgm`；也可自备无版权音乐(Pixabay/Suno)。
+- **BGM 响度自动相对化（别用固定系数）**：finalize 测旁白与 BGM 的 mean、把 BGM 压到比旁白低 `bgm_gap_db`(默认12dB)。实测教训：自合成 pad 用固定 `volume=0.16` 会被**完全淹没**(mean −54dB)，真实音乐又可能盖过旁白——相对响度才稳。`amix` 内部已加 `normalize=0`，否则旁白会被压低 ~6dB。
 
 ---
 
@@ -154,20 +167,21 @@ python3 scripts/tts_gen.py --plan shots.json --out-dir tts/
   "resolution": "720x1280",
   "fps": 30,
   "bgm": "assets/bgm.mp3",
-  "bgm_volume": 0.12,
+  "bgm_gap_db": 12,
   "segments": [
-    {"video": "clips/shot1.mp4", "subtitle": "总觉得累，\n却说不出哪里不对？", "narration": "tts/000.mp3"},
-    {"video": "clips/shot2.mp4", "subtitle": "这可能不是懒，\n是情绪在求救", "narration": "tts/001.mp3"}
+    {"video": "clips/shot1.mp4", "narration": "tts/000.mp3", "narration_text": "总觉得累，却说不出哪里不对？这可能不是懒。"},
+    {"video": "clips/shot2.mp4", "subtitle": "无旁白时的固定字幕"}
   ]
 }
-（默认不叠任何水印/角标；如需 AI 标识，加 `"ai_label": "AI 生成"`）
+（字幕优先级：narration 同名 .cues.json(真同步) > narration_text(按句估算) > subtitle(固定整段)。
+ 默认不叠任何水印/角标；如需 AI 标识，加 "ai_label": "AI 生成"。bgm_gap_db 越大 BGM 越轻）
 ```
 
 ```bash
 python3 scripts/compose_video.py --manifest manifest.json
 ```
 
-输出 `{"success":true,...}`。合成层自动：统一分辨率/帧率 → 烧中文字幕（Noto Sans CJK SC，白字黑描边底部居中）→ TTS 旁白 + BGM 混音（**画面与旁白等长：画面短则匀速放慢填满、不卡顿，旁白绝不被截**）→ h264/aac/+faststart。**默认不叠任何水印/角标**；如需 AI 标识，manifest 加 `"ai_label": "AI 生成"`。
+输出 `{"success":true,...}`。合成层自动：统一分辨率/帧率 → 烧中文字幕（Noto Sans CJK SC，白字黑描边底部居中；**有 `.cues.json` 则按 TTS 实测时间轴逐句真同步**，否则按句估算）→ TTS 旁白 + BGM 混音（**画面与旁白等长**：画面短则匀速放慢填满、不卡顿，旁白绝不被截；**BGM 自动相对响度**压到比旁白低 `bgm_gap_db`dB，`amix normalize=0` 防旁白被压低）→ h264/aac/+faststart。**默认不叠任何水印/角标**；如需 AI 标识，manifest 加 `"ai_label": "AI 生成"`。
 
 ---
 
@@ -205,7 +219,14 @@ YMYL（健康）内容，**只做白帽，绝不编造**。投放前逐条核：
 
 **连贯（旁白驱动 duration）**：先 `tts_gen.py --engine doubao` 批量出旁白 → 读每条 mp3 时长 → **每镜 `duration` 取该页旁白时长（向上取整 clamp 4–15s）** → 再生成视频。画面与旁白等长、正常速度，不卡顿（compose 变速仅兜底）。
 
-**端到端**：选笔记 → 每页正文整理成 `narration_text` → 豆包批量出旁白+读时长定 duration → 画面(A 改写提示词跑 `jimeng_gen batch` / B 收集每页图跑 image2video) → `compose_video.py` 合成(中文字幕+豆包旁白+可选 BGM) → 人工终审(合规同小红书：不诊断/不导流/危机声明/AI 自评)。每篇一条，可投视频号·抖音，与小红书图文双投放。
+**端到端**：选笔记 → 每页正文整理成 `narration_text` → 豆包 `--timed` 批量出旁白(+cues)、读时长定 duration → 画面(A 改写提示词跑 `jimeng_gen batch` / B 收集每页图跑 image2video) → `compose_video.py` 合成(逐句字幕+豆包旁白+自动轻音乐) → 人工终审(合规同小红书：不诊断/不导流/危机声明/AI 自评)。每篇一条，可投视频号·抖音，与小红书图文双投放。
+
+**图生实战经验（2026-06-30 CPTSD 第1篇跑通）**：
+- **去文字图**：小红书发布图带大标题/信息卡文字，视频文字全走逐句字幕——图生要另出一套**去文字版**同人物图(在 xiaohongshu 提示词基础上删掉"图中文字"、信息卡页换成画面)，避免图内文字与字幕打架。
+- **信息卡页补画面 + 相关性取舍**：纯文字信息卡页(P2/P3)没画面主体，image2video 补 contextual 画面(雨窗/抱膝/城市灯火等情绪隐喻)。抽象科普概念("占4%""三组困难")靠**逐句字幕**承载相关性，画面只做情绪烘托——写意治愈风的固有取舍；要画面强相关得改"信息图解"形态(另一种视频)。
+- **逐句字幕真同步**：旁白 `--timed` 出 cues，字幕严格按实测时长滚动；长句句内按逗号细分多条滚动。
+- **提速 & 卡死**：先全 `--submit-only` 灌队列再并行 fetch；个别镜卡 querying 数小时则重提新 submit_id 并行抢（详见第③④步）。
+- **image2video 画幅**：3:4 图 → 输出 834×1112(720p)，画幅由图推断，prompt 只写运镜+微动作(无对白、画面无文字)。
 
 ## 进阶 · 接入 OpenMontage（可选，重）
 

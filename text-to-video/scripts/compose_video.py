@@ -11,11 +11,14 @@
   "resolution": "720x1280",     # 画布；Seedance 竖屏默认 720x1280
   "fps": 30,
   "ai_label": "AI 生成",        # 合规显式标识(右上角)；置空字符串可关闭——但投放强烈建议保留
-  "bgm": "bgm.mp3",             # 可选
-  "bgm_volume": 0.15,           # 可选，0-1
+  "bgm": "bgm.mp3",             # 可选；自动按相对响度垫底(比旁白低 bgm_gap_db)
+  "bgm_volume": 0.15,           # 可选，0-1；仅响度探测失败时的回退系数
+  "bgm_gap_db": 12,             # 可选；BGM 比旁白低多少 dB(默认12，越大越轻)
   "segments": [
-    {"video": "clips/a.mp4", "subtitle": "第一句字幕\n可两行", "narration": "tts/a.mp3"},
-    {"video": "clips/b.mp4", "subtitle": "第二句字幕"}
+    # narration 若有同名 .cues.json(tts_gen --timed 产物)，字幕按实测时间轴真同步；
+    # 否则用 narration_text 按句估算；都没有则用 subtitle 固定整段。
+    {"video": "clips/a.mp4", "narration": "tts/000.mp3", "narration_text": "第一句。第二句。"},
+    {"video": "clips/b.mp4", "subtitle": "无旁白时的固定字幕"}
   ]
 }
 
@@ -28,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -70,6 +74,14 @@ def _has_audio(path: str) -> bool:
     return bool(out.strip())
 
 
+def _mean_volume_db(path: str, pre_filter: str = "") -> Optional[float]:
+    """volumedetect 测 mean_volume(dB)；pre_filter 可先过滤(如调音量)再测。输出在 stderr。"""
+    af = f"{pre_filter},volumedetect" if pre_filter else "volumedetect"
+    _, _, serr = _run([FFMPEG, "-i", path, "-af", af, "-f", "null", "-"], timeout=120)
+    m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?) dB", serr)
+    return float(m.group(1)) if m else None
+
+
 def _ass_escape(text: str) -> str:
     """ASS Dialogue 文本转义：硬换行→\\N，去掉会被解析的花括号。"""
     text = (text or "").replace("{", "(").replace("}", ")")
@@ -105,6 +117,103 @@ Dialogue: 0,0:00:00.00,{end_ts},Default,,0,0,0,,{_ass_escape(text)}
     Path(out_ass).write_text(content, encoding="utf-8")
 
 
+def _ass_ts(sec: float) -> str:
+    sec = max(0.0, sec)
+    h = int(sec // 3600); m = int((sec % 3600) // 60); s = sec % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _split_caption(text: str) -> list[str]:
+    """把旁白按句末标点切成多条；过长句再按逗号切。"""
+    enders = "。！？!?"
+    caps, buf = [], ""
+    for ch in text:
+        buf += ch
+        if ch in enders:
+            caps.append(buf.strip()); buf = ""
+    if buf.strip():
+        caps.append(buf.strip())
+    out = []
+    for c in caps:
+        if len(c) <= 24:
+            out.append(c); continue
+        sub = ""
+        for ch in c:
+            sub += ch
+            if len(sub) >= 12 and ch in "，、；,;":
+                out.append(sub); sub = ""
+        if sub:
+            out.append(sub)
+    return out or [text.strip()]
+
+
+def _wrap_caption(text: str, per_line: int = 12) -> str:
+    """单条字幕过长则折行（每行约 per_line 字，优先在标点处折）。"""
+    if len(text) <= per_line:
+        return text
+    lines, buf = [], ""
+    for ch in text:
+        buf += ch
+        if len(buf) >= per_line and ch in "，。！？、；,!?;":
+            lines.append(buf); buf = ""
+    if buf:
+        lines.append(buf)
+    out = []
+    for ln in lines:
+        while len(ln) > per_line + 4:
+            out.append(ln[:per_line]); ln = ln[per_line:]
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _ass_header(width: int, height: int) -> str:
+    """ASS 头(Script Info + 底部居中白字黑描边样式)，build_timed_ass / build_cued_ass 共用。"""
+    fontsize = max(28, int(height * 0.052))
+    margin_v = int(height * 0.08)
+    return f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{CJK_FONT_NAME},{fontsize},&H00FFFFFF,&H00000000,&H80000000,1,1,3,1,2,40,40,{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+
+def build_timed_ass(text: str, duration: float, width: int, height: int, out_ass: str) -> None:
+    """逐字时间轴字幕(估算版)：按句切条、每条按字数比例分配时长。
+    这是无 TTS cues 时的回退；有 cues 时优先 build_cued_ass(按实测时长真同步)。"""
+    caps = _split_caption(text)
+    total = sum(len(c) for c in caps) or 1
+    lines, t = [], 0.0
+    for i, c in enumerate(caps):
+        seg = duration * (len(c) / total)
+        start = t
+        end = duration if i == len(caps) - 1 else min(duration, t + seg)
+        t = end
+        lines.append(f"Dialogue: 0,{_ass_ts(start)},{_ass_ts(end)},Default,,0,0,0,,{_ass_escape(_wrap_caption(c))}")
+    Path(out_ass).write_text(_ass_header(width, height) + "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_cued_ass(cues: list, width: int, height: int, out_ass: str) -> None:
+    """按 TTS 实测时间轴 cues([{text,start,end}]) 渲染字幕——旁白讲到哪字幕走到哪，真同步。
+    cues 由 tts_gen.py --timed 逐句合成时 ffprobe 实测生成，写在 {narration}.cues.json。"""
+    lines = []
+    for c in (cues or []):
+        start = float(c.get("start", 0.0))
+        end = float(c.get("end", start))
+        txt = _ass_escape(_wrap_caption((c.get("text") or "").strip()))
+        if txt:
+            lines.append(f"Dialogue: 0,{_ass_ts(start)},{_ass_ts(end)},Default,,0,0,0,,{txt}")
+    Path(out_ass).write_text(_ass_header(width, height) + "\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _filter_path(p: str) -> str:
     """ffmpeg filter 参数里的路径转义（: 和 \\）。"""
     return p.replace("\\", "/").replace(":", r"\:")
@@ -138,10 +247,25 @@ def normalize_segment(seg: dict, idx: int, width: int, height: int, fps: int,
         factor = narr_dur / video_dur
         vchain += f",setpts={factor:.4f}*PTS"
     vchain += f",fps={fps},setsar=1"
+    # 字幕：优先 TTS 实测时间轴 cues(讲到哪走到哪·真同步) → 否则按句估算 → 否则固定 subtitle
+    narration_text = (seg.get("narration_text") or "").strip()
     subtitle = (seg.get("subtitle") or "").strip()
-    if subtitle:
+    cues = None
+    if use_narr:
+        cues_path = seg.get("cues") or (narration + ".cues.json")
+        if Path(cues_path).is_file():
+            try:
+                cues = (json.loads(Path(cues_path).read_text(encoding="utf-8")) or {}).get("cues")
+            except Exception:  # noqa: BLE001
+                cues = None
+    if cues or narration_text or subtitle:
         ass = str(Path(workdir) / f"seg_{idx:03d}.ass")
-        build_ass(subtitle, target, width, height, ass)
+        if cues:
+            build_cued_ass(cues, width, height, ass)
+        elif narration_text:
+            build_timed_ass(narration_text, target, width, height, ass)
+        else:
+            build_ass(subtitle, target, width, height, ass)
         vchain += f",ass={_filter_path(ass)}:fontsdir={_filter_path(os.path.dirname(CJK_FONT_FILE))}"
 
     cmd = [FFMPEG, "-y", "-i", src]
@@ -185,7 +309,7 @@ def concat_segments(paths: list[str], out: str, workdir: str) -> bool:
 
 
 def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
-             bgm_volume: float, width: int, height: int) -> bool:
+             bgm_volume: float, width: int, height: int, bgm_gap_db: float = 12.0) -> bool:
     """叠 AI 生成合规角标(右上) + 可选 BGM 混音 → 最终成片(+faststart)。"""
     fontsize = max(20, int(height * 0.030))
     pad = int(height * 0.012)
@@ -204,10 +328,21 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
     vfilter = ",".join(filters) if filters else "null"
 
     if has_bgm:
-        v = max(0.0, min(1.0, bgm_volume))
+        # BGM 相对响度：测旁白 mean 与 BGM mean，把 BGM 压到比旁白低 bgm_gap_db(默认12dB)。
+        # 自动适配任意 BGM 源响度，杜绝"固定系数被淹没/盖过旁白"(实测踩坑)。
+        voice_db = _mean_volume_db(src)
+        bgm_db = _mean_volume_db(bgm)
+        if voice_db is not None and bgm_db is not None:
+            gain = (voice_db - bgm_gap_db) - bgm_db
+            bgm_vol_expr = f"volume={gain:.1f}dB"
+            _err(f"[finalize] BGM 相对响度: 旁白{voice_db:.1f}dB, 目标{voice_db - bgm_gap_db:.1f}dB, 增益{gain:+.1f}dB")
+        else:
+            bgm_vol_expr = f"volume={max(0.0, bgm_volume)}"
+            _err("[finalize] 响度探测失败, 回退固定 bgm_volume")
+        # normalize=0 关键：否则 amix 会把旁白+BGM 各压低 ~6dB(实测旁白变小声的 bug)
         fc = (f"[0:v]{vfilter}[v];"
-              f"[1:a]volume={v}[bg];"
-              f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]")
+              f"[1:a]{bgm_vol_expr}[bg];"
+              f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[a]")
         cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
     else:
         cmd += ["-vf", vfilter, "-map", "0:v:0", "-map", "0:a:0?"]
@@ -251,7 +386,7 @@ def compose(manifest: dict, output_override: Optional[str] = None) -> dict:
         _err("[compose] 叠合规标识 / 混 BGM / 导出 …")
         ok = finalize(merged, output, ai_label=manifest.get("ai_label", ""),
                       bgm=manifest.get("bgm"), bgm_volume=float(manifest.get("bgm_volume", 0.15)),
-                      width=width, height=height)
+                      width=width, height=height, bgm_gap_db=float(manifest.get("bgm_gap_db", 12.0)))
         if not ok:
             return {"success": False, "error": "导出失败", "stage": "finalize"}
 
