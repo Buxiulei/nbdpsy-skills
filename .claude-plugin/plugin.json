@@ -1,6 +1,6 @@
 {
   "name": "nbdpsy-content",
-  "description": "NBDpsy 内容创作 skills：seo-artical-creator（SEO/GEO pillar 长文）+ xiaohongshu-creator（把长文拆成小红书图文笔记 + 配图提示词）",
+  "description": "NBDpsy 内容创作 skills：seo-artical-creator（SEO/GEO pillar 长文）+ xiaohongshu-creator（把长文拆成小红书图文笔记 + 配图提示词）+ text-to-video（把长文/小红书笔记转成带中文字幕的竖屏短视频，即梦 Seedance 2.0 + 豆包配音）",
   "version": "1.0.0",
   "author": {
     "name": "Buxiulei"
@@ -9,11 +9,14 @@
     "seo",
     "geo",
     "xiaohongshu",
+    "video",
+    "text-to-video",
     "psychology",
     "content"
   ],
   "skills": [
     "./seo-artical-creator",
-    "./xiaohongshu-creator"
+    "./xiaohongshu-creator",
+    "./text-to-video"
   ]
 }

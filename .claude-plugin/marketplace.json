@@ -11,7 +11,7 @@
     {
       "name": "nbdpsy-content",
       "source": "./",
-      "description": "把心理科普主题写成 SEO/GEO pillar 长文（seo-artical-creator），并把长文拆成可直接发小红书的图文笔记 + 配图提示词（xiaohongshu-creator）",
+      "description": "把心理科普主题写成 SEO/GEO pillar 长文（seo-artical-creator），把长文拆成可直接发小红书的图文笔记 + 配图提示词（xiaohongshu-creator），再把长文/小红书笔记转成带中文字幕的竖屏短视频（text-to-video，即梦 Seedance 2.0 + 豆包配音）",
       "version": "1.0.0",
       "author": {
         "name": "Buxiulei"
@@ -20,6 +20,8 @@
         "seo",
         "geo",
         "xiaohongshu",
+        "video",
+        "text-to-video",
         "content",
         "psychology",
         "nbdpsy"

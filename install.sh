@@ -10,7 +10,7 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/Buxiulei/nbdpsy-skills.git"
-SKILLS=(seo-artical-creator xiaohongshu-creator)
+SKILLS=(seo-artical-creator xiaohongshu-creator text-to-video)
 TARGET="${1:-both}"
 
 # 定位 skill 源目录：脚本同级有 skill 目录则用本地；否则临时 clone（支持 curl | bash）
@@ -48,7 +48,10 @@ cat <<'EOF'
 完成 ✓ 重启 / 重新加载工具后即可使用：
   · seo-artical-creator —— 写 SEO/GEO 心理科普 pillar 长文
   · xiaohongshu-creator —— 把长文拆成小红书图文笔记 + 配图提示词
+  · text-to-video       —— 把长文/小红书笔记转成带中文字幕的竖屏短视频
+                           （需另配：dreamina CLI 登录 + 豆包 TTS key + ffmpeg，
+                            首次跑 text-to-video/scripts/check_env.py --install 自检自装）
 
-提示：这两个 skill 为 NBDpsy 定制（绑定其品牌话术、合规红线与数据库结构），
+提示：这些 skill 为 NBDpsy 定制（绑定其品牌话术、合规红线与数据库结构），
 他用请先按自己项目改造 SKILL.md 中的品牌/数据库/发布部分。
 EOF

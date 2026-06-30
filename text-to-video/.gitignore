@@ -1,0 +1,12 @@
+# 凭据 — 绝不提交
+.env
+
+# 运行产物
+clips/
+tts/
+out/
+__pycache__/
+*.mp4
+*.mp3
+*.wav
+*.ass
