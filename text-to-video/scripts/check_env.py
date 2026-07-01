@@ -2,7 +2,9 @@
 """text-to-video skill 环境自检 / 自装。
 
 检测并(可选)自动安装整条文本转视频产线所需依赖：
-  dreamina CLI(+登录态+积分) / ffmpeg / ffprobe / Noto Sans CJK SC 字体。
+  dreamina CLI(+登录态+积分) / ffmpeg / ffprobe / Noto Sans CJK SC 字体
+  / edge-tts / requests(豆包TTS引擎) / 豆包 TTS 凭据(.env VOLC_TTS_*)。
+  (gen_bgm.py 纯标准库+ffmpeg，无额外依赖)
 
 输出结构化 JSON 到 stdout（agent 解析），可读进度到 stderr。
 
@@ -116,6 +118,28 @@ def check(install: bool) -> dict:
         has_tts = rc == 0
     add("edge-tts 旁白(可选)", has_tts, "已装" if has_tts else "未装；纯字幕+BGM 可不装",
         fix="pip install edge-tts", critical=False)
+
+    # 6) requests（豆包 TTS 引擎依赖；edge 引擎不需要）
+    rc, _, _ = _run([sys.executable, "-c", "import requests"], timeout=30)
+    has_req = rc == 0
+    if not has_req and install:
+        _err("[install] pip 安装 requests …")
+        _run([sys.executable, "-m", "pip", "install", "-q", "requests"], timeout=300)
+        rc, _, _ = _run([sys.executable, "-c", "import requests"], timeout=30)
+        has_req = rc == 0
+    add("requests(豆包TTS依赖,可选)", has_req, "已装" if has_req else "未装；用豆包高音质旁白才需要",
+        fix="pip install requests", critical=False)
+
+    # 7) 豆包 TTS 凭据（.env 的 VOLC_TTS_*；高音质旁白需要，edge 免费兜底不需要）
+    env_p = Path(__file__).resolve().parent.parent / ".env"
+    volc_ok = False
+    if env_p.is_file():
+        txt = env_p.read_text(encoding="utf-8", errors="ignore")
+        volc_ok = "VOLC_TTS_APPID" in txt and "VOLC_TTS_ACCESS_TOKEN" in txt
+    add("豆包 TTS 凭据(可选)", volc_ok,
+        "已配 .env VOLC_TTS_*" if volc_ok else "未配；用豆包高音质旁白才需要(edge 免费兜底可不配)",
+        fix="在 skill 的 .env 填 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN / VOLC_TTS_CLUSTER(火山控制台申请)",
+        critical=False)
 
     ready = all(c["ok"] for c in checks if c["critical"])
     return {"ready": ready, "checks": checks}
