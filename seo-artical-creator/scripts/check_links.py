@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""外链可达性初筛：404/5xx/网络失败=死链(exit 1)；401/403/429=疑似反爬仅告警。对齐原 check_links.sh。"""
+"""外链可达性初筛：404/5xx/网络失败=死链(exit 1)；401/403/429=疑似反爬仅告警。对齐已退役的 shell 版同名脚本。"""
 import argparse, json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path

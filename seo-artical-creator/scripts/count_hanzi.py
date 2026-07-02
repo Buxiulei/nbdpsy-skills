@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""长文纯汉字计数（剥 YAML frontmatter），区间外 exit 2。语义对齐原 count_hanzi.sh。"""
+"""长文纯汉字计数（剥 YAML frontmatter），区间外 exit 2。语义对齐已退役的 shell 版同名脚本。"""
 import argparse, json, re, sys
 from pathlib import Path
 
