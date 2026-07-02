@@ -67,6 +67,36 @@ def _load_env() -> None:
             os.environ[k] = v
 
 
+def _secret_fallback(key: str) -> str | None:
+    """环境变量/skill .env（_load_env 已合并进 os.environ）都没有时，
+    回退到 nbdpsy_common 用户级 secrets（setup.py 凭据向导写入的值）。
+    同目录已有 vendored 副本，脚本直跑时 sys.path[0]=脚本目录天然可 import；
+    若 tts_gen 被当模块 import 而当时 sys.path 没有脚本目录，容错跳过，
+    不影响原有「缺凭据报错」行为。"""
+    v = os.environ.get(key)
+    if v:
+        return v
+    try:
+        from nbdpsy_common import get_secret
+    except ImportError:
+        return None
+    return get_secret(key)
+
+
+def resolve_credentials() -> dict:
+    """豆包 TTS 凭据解析（纯函数，便于测试）。
+    三级链：环境变量 → skill 目录 .env（_load_env 合并进 os.environ，优先级不变）
+    → nbdpsy_common 用户级 secrets（workspace .env / setup.py 向导写入）。
+    cluster/voice 有内置默认值：显式配置（以上任一层）优先于默认值。"""
+    _load_env()
+    return {
+        "appid": _secret_fallback("VOLC_TTS_APPID"),
+        "token": _secret_fallback("VOLC_TTS_ACCESS_TOKEN"),
+        "cluster": _secret_fallback("VOLC_TTS_CLUSTER") or "volcano_tts",
+        "voice": _secret_fallback("VOLC_TTS_VOICE"),
+    }
+
+
 def ffprobe_duration(path: str) -> float:
     """ffprobe 实测音频时长（秒）。"""
     try:
@@ -122,13 +152,14 @@ async def _edge_synth(text: str, out: str, voice: str, rate: str) -> None:
 
 def _doubao_synth(text: str, out: str, voice: str | None, speed: float) -> None:
     import requests
-    _load_env()
-    appid = os.environ.get("VOLC_TTS_APPID")
-    token = os.environ.get("VOLC_TTS_ACCESS_TOKEN")
+    creds = resolve_credentials()
+    appid, token = creds["appid"], creds["token"]
     if not appid or not token:
-        raise RuntimeError("缺 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN（填进 skill 的 .env）")
-    cluster = os.environ.get("VOLC_TTS_CLUSTER") or "volcano_tts"
-    voice = voice or os.environ.get("VOLC_TTS_VOICE") or DOUBAO_DEFAULT_VOICE
+        raise RuntimeError(
+            "缺 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN"
+            "（填进 skill 的 .env，或跑 setup.py 凭据向导写入用户级 secrets）")
+    cluster = creds["cluster"]
+    voice = voice or creds["voice"] or DOUBAO_DEFAULT_VOICE
     body = {
         "app": {"appid": appid, "token": token, "cluster": cluster},
         "user": {"uid": "nbdpsy_t2v"},
