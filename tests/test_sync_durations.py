@@ -34,7 +34,8 @@ def test_missing_audio_file(tmp_path, monkeypatch):
     # narr-01.mp3 存在，narr-02.mp3 缺失
     (audio / "narr-01.mp3").write_bytes(b"x")
     report = sync_durations.run(shots, audio, min_d=4, max_d=15)
-    assert 2 in report["missing"]
+    # 检查 missing 是否包含 index=2 的项
+    assert any(item["index"] == 2 for item in report["missing"])
     assert report["ok"] is False
     d = json.loads(shots.read_text(encoding="utf-8"))
     # 存在的应该被更新，缺失的保持原状
@@ -63,3 +64,79 @@ def test_probe_duration_real(tmp_path):
     # 验证 probe_duration 能正确读取
     duration = sync_durations.probe_duration(audio_file)
     assert abs(duration - 2.0) < 0.1  # 允许小的浮点误差
+
+def test_cli_with_argparse(tmp_path):
+    """通过 subprocess 按 argparse 契约调用命令行。"""
+    import subprocess
+    try:
+        subprocess.run(["ffprobe", "-version"], capture_output=True, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # 跳过，如果 ffprobe 不可用
+        return
+
+    # 生成 2 秒的音频
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    subprocess.run([
+        "ffmpeg", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+        "-q:a", "9",
+        str(audio_dir / "narr-01.mp3"),
+    ], capture_output=True, check=True)
+
+    # 生成 shots.json
+    shots_file = tmp_path / "shots.json"
+    shots = {"video": {"ratio": "9:16"}, "shots": [{"index": 1, "duration": None}]}
+    shots_file.write_text(json.dumps(shots), encoding="utf-8")
+
+    # 调用命令行（按契约：--shots --audio-dir --min --max）
+    script = Path(__file__).parent.parent / "text-to-video" / "scripts" / "sync_durations.py"
+    result = subprocess.run([
+        "python3", str(script),
+        "--shots", str(shots_file),
+        "--audio-dir", str(audio_dir),
+        "--min", "4",
+        "--max", "15",
+    ], capture_output=True, text=True)
+
+    # 检查返回码（ok=True 则 returncode=0）
+    assert result.returncode == 0
+    # 检查 stdout 是 JSON 并包含 ok: true
+    output = json.loads(result.stdout)
+    assert output["ok"] is True
+    assert len(output["updated"]) == 1
+    assert output["updated"][0]["index"] == 1
+
+def test_ffprobe_failure_goes_to_missing(tmp_path, monkeypatch):
+    """当 probe_duration 抛异常时，该镜进 missing（含 reason），继续处理其他镜。"""
+    import subprocess
+    import sync_durations
+
+    # 制造一个抛 CalledProcessError 的 probe_duration
+    def mock_probe(f):
+        if "01" in f.name:
+            raise subprocess.CalledProcessError(1, "ffprobe")
+        return 5.0
+
+    monkeypatch.setattr(sync_durations, "probe_duration", mock_probe)
+
+    audio = tmp_path / "a"
+    audio.mkdir()
+    # 创建两个音频文件（都存在）
+    (audio / "narr-01.mp3").write_bytes(b"x")
+    (audio / "narr-02.mp3").write_bytes(b"x")
+
+    shots = make_shots(tmp_path, 2)
+    report = sync_durations.run(shots, audio, min_d=4, max_d=15)
+
+    # 镜 1 应在 missing 中（reason="ffprobe failed"）
+    assert any(item["index"] == 1 and item["reason"] == "ffprobe failed" for item in report["missing"])
+    # 镜 2 应被正常处理
+    assert any(item["index"] == 2 for item in report["updated"])
+    # 因为有失败，ok 应为 False
+    assert report["ok"] is False
+
+    d = json.loads(shots.read_text(encoding="utf-8"))
+    # 镜 1 duration 不变（是 None）
+    assert d["shots"][0]["duration"] is None
+    # 镜 2 被更新
+    assert d["shots"][1]["duration"] == 5.3

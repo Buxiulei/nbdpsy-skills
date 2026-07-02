@@ -1,11 +1,13 @@
+import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 
 def probe_duration(path: Path) -> float:
-    """获取音频文件时长（秒）。"""
+    """获取音频文件时长（秒）。如果失败则抛异常。"""
     result = subprocess.run(
         [
             "ffprobe",
@@ -37,7 +39,7 @@ def run(shots_path: Path, audio_dir: Path, *, min_d: float, max_d: float) -> dic
         {
             "updated": [{"index": ..., "narration_sec": ..., "duration": ...}, ...],
             "overflow": [{"index": ..., "narration_sec": ..., "hint": "建议拆镜"}, ...],
-            "missing": ["index", ...],
+            "missing": [{"index": N, "expect": "narr-0N.mp3", "reason": "..."}, ...],
             "ok": bool
         }
     """
@@ -61,12 +63,27 @@ def run(shots_path: Path, audio_dir: Path, *, min_d: float, max_d: float) -> dic
 
         # 检查文件是否存在
         if not narr_file.exists():
-            report["missing"].append(idx)
+            report["missing"].append({
+                "index": idx,
+                "expect": narr_file.name,
+                "reason": "file not found",
+            })
             report["ok"] = False
+            print(f"  镜{idx} 缺音频 {narr_file.name}", file=sys.stderr)
             continue
 
         # 获取音频时长
-        narr_sec = probe_duration(narr_file)
+        try:
+            narr_sec = probe_duration(narr_file)
+        except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, ValueError) as e:
+            report["missing"].append({
+                "index": idx,
+                "expect": narr_file.name,
+                "reason": "ffprobe failed",
+            })
+            report["ok"] = False
+            print(f"  镜{idx} 缺音频 {narr_file.name}", file=sys.stderr)
+            continue
 
         # 加上 0.3s 后 clamp 到 [min_d, max_d]
         clamped = round(max(min_d, min(max_d, narr_sec + 0.3)), 1)
@@ -87,34 +104,33 @@ def run(shots_path: Path, audio_dir: Path, *, min_d: float, max_d: float) -> dic
             "narration_sec": round(narr_sec, 1),
             "duration": clamped,
         })
+        print(f"  镜{idx} narr={round(narr_sec, 1)}s → duration={clamped}s", file=sys.stderr)
 
     # 写回 shots.json
     shots_path.write_text(json.dumps(shots_content, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 汇总一行结尾
+    if report["updated"] or report["overflow"] or report["missing"]:
+        status = "FAIL" if not report["ok"] else "OK"
+        print(f"同步完成：{len(report['updated'])} 更新、{len(report['overflow'])} 溢出、{len(report['missing'])} 缺失 [{status}]", file=sys.stderr)
 
     return report
 
 
 if __name__ == "__main__":
-    import sys
+    parser = argparse.ArgumentParser(
+        description="同步旁白时长到 shots.json"
+    )
+    parser.add_argument("--shots", required=True, help="shots.json 文件路径")
+    parser.add_argument("--audio-dir", required=True, dest="audio_dir", help="音频目录路径")
+    parser.add_argument("--min", type=float, default=4, dest="min_d", help="最小时长（秒）")
+    parser.add_argument("--max", type=float, default=15, dest="max_d", help="最大时长（秒）")
 
-    # 简单的 CLI 支持（可选）
-    if len(sys.argv) < 3:
-        print("Usage: python sync_durations.py <shots.json> <audio_dir> [--min <min_d>] [--max <max_d>]")
-        sys.exit(1)
+    args = parser.parse_args()
 
-    shots_file = Path(sys.argv[1])
-    audio_directory = Path(sys.argv[2])
+    shots_file = Path(args.shots)
+    audio_directory = Path(args.audio_dir)
 
-    min_duration = 4.0
-    max_duration = 15.0
-
-    # 解析可选参数
-    for i, arg in enumerate(sys.argv[3:]):
-        if arg == "--min" and i + 4 < len(sys.argv):
-            min_duration = float(sys.argv[i + 4])
-        elif arg == "--max" and i + 4 < len(sys.argv):
-            max_duration = float(sys.argv[i + 4])
-
-    result = run(shots_file, audio_directory, min_d=min_duration, max_d=max_duration)
+    result = run(shots_file, audio_directory, min_d=args.min_d, max_d=args.max_d)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     sys.exit(0 if result["ok"] else 1)
