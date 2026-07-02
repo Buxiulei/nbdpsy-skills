@@ -86,12 +86,19 @@ def main():
                 "evidence": "页数: " + ", ".join(f"{k}={v}" for k, v in pages.items()) +
                             (f"；超界: {bad3}" if bad3 else "")})
 
-    # A4 合规闸门 exit 0
-    r = subprocess.run([sys.executable, str(SKILL / "scripts/check_compliance.py"), str(outdir)],
-                       capture_output=True, text=True)
+    # A4 合规闸门 exit 0（check_compliance.py 仅支持单文件，逐篇 post 调用后聚合）
+    bad4 = {}
+    evidences4 = []
+    for p in posts:
+        r = subprocess.run([sys.executable, str(SKILL / "scripts/check_compliance.py"), str(p)],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            bad4[p.name] = (r.stdout + r.stderr).strip().replace('\n', ' | ')[:400]
+        evidences4.append(f"{p.name}={r.returncode}")
     exp.append({"text": "check_compliance.py 退出码 0（无违禁词 + 危机声明在位）",
-                "passed": r.returncode == 0,
-                "evidence": (r.stdout + r.stderr).strip().replace('\n', ' | ')[:400]})
+                "passed": not bad4,
+                "evidence": "退出码: " + ", ".join(evidences4) +
+                            (f"；违规: {json.dumps(bad4, ensure_ascii=False)}" if bad4 else "")})
 
     # A5 品牌基底复用（每篇出现品牌锚点）
     anchors = ('#A8B5C4', '风格基底', '莫兰迪')
