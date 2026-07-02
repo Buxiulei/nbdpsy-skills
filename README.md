@@ -89,7 +89,12 @@ py setup.py                     # Windows
 
 答案存进**用户级凭据文件**（`~/.config/nbdpsy/secrets.env`，Windows 为 `%APPDATA%\nbdpsy\secrets.env`，可用 `NBDPSY_SECRETS` 环境变量覆盖路径）——**在任何仓库之外，绝不会被 git 跟踪或提交**；向导只报「已配置」，不会读取或回显已存在凭据的真实值。`NBDPSY_BLOG_API_KEY` 由三个生产 skill 通过 `shared/nbdpsy_common.py` 的 `get_secret()` 统一读取（优先级：环境变量 > 内容工作区 `.env` > 用户级凭据文件）。
 
-> `VOLC_TTS_*` 若要在豆包引擎实际生效，text-to-video 的脚本读取的是**它自己目录下的** `.env`（`cp text-to-video/.env.example text-to-video/.env` 后手填 `VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` / `VOLC_TTS_CLUSTER`），不是上面的用户级凭据文件——两处凭据存储互相独立，别以为向导填过就万事俱备。
+> `VOLC_TTS_*` 的凭据探测按三级链执行（优先级从高到低）：
+> 1. **环境变量** — 当前 shell 已设置的值
+> 2. **skill 目录 `.env`** — `cp text-to-video/.env.example text-to-video/.env` 后手填 `VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` / `VOLC_TTS_CLUSTER`
+> 3. **用户级凭据文件** — `~/.config/nbdpsy/secrets.env`（setup.py 向导写入的值）
+> 
+> 未在前两级配置时，text-to-video 会自动回退到用户级凭据；若三级都未配置，旁白改用免费引擎 `tts_gen.py --engine edge`。
 
 **即梦（dreamina）视频生成需要另外扫码登录**，向导无法代劳：终端跑 `dreamina login --headless`，用**抖音 App 扫码**，凭据存本地 `~/.dreamina_cli/`；不装/不登录也不影响其余四个 skill。
 

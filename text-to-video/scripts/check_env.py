@@ -139,15 +139,22 @@ def check(install: bool) -> dict:
     add("requests(豆包TTS依赖,可选)", has_req, "已装" if has_req else "未装；用豆包高音质旁白才需要",
         fix="pip install requests", critical=False)
 
-    # 7) 豆包 TTS 凭据（.env 的 VOLC_TTS_*；高音质旁白需要，edge 免费兜底不需要）
-    env_p = Path(__file__).resolve().parent.parent / ".env"
-    volc_ok = False
-    if env_p.is_file():
-        txt = env_p.read_text(encoding="utf-8", errors="ignore")
-        volc_ok = "VOLC_TTS_APPID" in txt and "VOLC_TTS_ACCESS_TOKEN" in txt
+    # 7) 豆包 TTS 凭据（三级链：环境变量 > skill .env > 用户级凭据；高音质旁白需要，edge 免费兜底不需要）
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        from tts_gen import resolve_credentials
+        creds = resolve_credentials()
+        volc_ok = bool(creds.get("appid") and creds.get("token"))
+    except (ImportError, Exception):
+        # tts_gen import 失败时，降级为老方案（文本包含检查）
+        env_p = Path(__file__).resolve().parent.parent / ".env"
+        volc_ok = False
+        if env_p.is_file():
+            txt = env_p.read_text(encoding="utf-8", errors="ignore")
+            volc_ok = "VOLC_TTS_APPID" in txt and "VOLC_TTS_ACCESS_TOKEN" in txt
     add("豆包 TTS 凭据(可选)", volc_ok,
-        "已配 .env VOLC_TTS_*" if volc_ok else "未配；用豆包高音质旁白才需要(edge 免费兜底可不配)",
-        fix="在 skill 的 .env 填 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN / VOLC_TTS_CLUSTER(火山控制台申请)",
+        "已配（环境变量/skill .env/用户级凭据三级链之一）" if volc_ok else "未配；用豆包高音质旁白才需要(edge 免费兜底可不配)",
+        fix="在 skill .env / 环境变量 / ~/.config/nbdpsy/secrets.env 之一配置 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN(火山控制台申请)",
         critical=False)
 
     ready = all(c["ok"] for c in checks if c["critical"])
