@@ -98,20 +98,12 @@ def has_crisis_declaration(text: str) -> bool:
     return "12356" in text
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "usage: check_compliance.py <file>"}, ensure_ascii=False))
-        sys.stderr.write("Error: missing required argument <file>\n")
-        sys.exit(2)
-
-    filepath = Path(sys.argv[1])
-
+def check_single_file(filepath: Path) -> dict:
+    """检查单个文件的合规性。"""
     try:
         text = filepath.read_text(encoding="utf-8")
     except Exception as e:
-        print(json.dumps({"error": f"文件不存在: {filepath}"}, ensure_ascii=False))
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(2)
+        return {"error": f"文件不存在: {filepath}"}
 
     # 危机声明检查：整文件去围栏后检查，不限"发布文案"区块内外。
     # 口径依据：① 原 check_compliance.sh 对全文 grep '12356'（不区分围栏内外，
@@ -131,24 +123,52 @@ def main():
     else:
         # 合规兜底闸：找不到 "## 发布文案"/"## 正文" 区块时绝不能静默判全绿——
         # 退化为全文（已去围栏）扫描，宁可误报也不可漏报。
-        print(
-            "警告：未找到「## 发布文案」或「## 正文」区块，违禁词扫描已降级为全文扫描",
-            file=sys.stderr,
+        sys.stderr.write(
+            f"警告：{filepath.name} 未找到「## 发布文案」或「## 正文」区块，违禁词扫描已降级为全文扫描\n"
         )
         scan_target = numbered_lines
 
     violations = scan_violations(scan_target)
-
     ok = len(violations) == 0 and crisis_ok
 
-    result = {
+    return {
         "violations": violations,
         "crisis_ok": crisis_ok,
         "ok": ok,
     }
 
-    print(json.dumps(result, ensure_ascii=False))
-    sys.exit(0 if ok else 1)
+
+def main():
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "usage: check_compliance.py <file|dir>"}, ensure_ascii=False))
+        sys.stderr.write("Error: missing required argument <file|dir>\n")
+        sys.exit(2)
+
+    path = Path(sys.argv[1])
+
+    # 检查是目录还是文件
+    if path.is_dir():
+        # 目录模式：扫描所有 .md 文件
+        md_files = sorted(path.glob("*.md"))
+        all_ok = True
+        for filepath in md_files:
+            result = check_single_file(filepath)
+            if "error" in result:
+                print(json.dumps(result, ensure_ascii=False))
+                sys.stderr.write(f"Error: {result['error']}\n")
+                sys.exit(2)
+            if not result["ok"]:
+                all_ok = False
+        sys.exit(0 if all_ok else 1)
+    else:
+        # 文件模式：检查单个文件
+        result = check_single_file(path)
+        if "error" in result:
+            print(json.dumps(result, ensure_ascii=False))
+            sys.stderr.write(f"Error: {result['error']}\n")
+            sys.exit(2)
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result["ok"] else 1)
 
 
 if __name__ == "__main__":

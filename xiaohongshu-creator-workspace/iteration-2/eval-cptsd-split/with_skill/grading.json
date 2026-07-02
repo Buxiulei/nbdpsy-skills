@@ -1,0 +1,50 @@
+{
+  "expectations": [
+    {
+      "text": "拆出 5–8 篇短文",
+      "passed": true,
+      "evidence": "共 6 篇：post-01.md, post-02.md, post-03.md, post-04.md, post-05.md, post-06.md"
+    },
+    {
+      "text": "每篇正文纯汉字数落在 210–450",
+      "passed": true,
+      "evidence": "字数: post-01.md=295, post-02.md=346, post-03.md=301, post-04.md=311, post-05.md=268, post-06.md=332"
+    },
+    {
+      "text": "每篇配图轮播 6–9 页",
+      "passed": true,
+      "evidence": "页数: post-01.md=6, post-02.md=6, post-03.md=6, post-04.md=6, post-05.md=7, post-06.md=7"
+    },
+    {
+      "text": "check_compliance.sh 退出码 0（无违禁词 + 危机声明在位）",
+      "passed": true,
+      "evidence": "✓ 合规扫描通过（高置信违禁词无命中、危机声明在位） |   提醒：治疗/诊断等语境词靠语义自检（见 references/xiaohongshu-spec.md 替换表）"
+    },
+    {
+      "text": "每篇配图提示词复用固定品牌基底",
+      "passed": true,
+      "evidence": "缺品牌锚点的篇: 无（全部复用）"
+    },
+    {
+      "text": "每篇有 5–10 个话题标签",
+      "passed": true,
+      "evidence": "标签数: post-01.md=7, post-02.md=7, post-03.md=7, post-04.md=7, post-05.md=7, post-06.md=7"
+    },
+    {
+      "text": "图中文字直接写进提示词（引号包裹的中文文案）",
+      "passed": true,
+      "evidence": "未检出文字入图的篇: 无（全部文字入图）"
+    },
+    {
+      "text": "不新增未验证事实：正文统计数字均见于源长文",
+      "passed": true,
+      "evidence": "可疑新数字: 无（全部可溯源）"
+    }
+  ],
+  "summary": {
+    "passed": 8,
+    "failed": 0,
+    "total": 8,
+    "pass_rate": 1.0
+  }
+}
