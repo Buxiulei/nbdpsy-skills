@@ -132,13 +132,13 @@ python3 {SKILL_DIR}/scripts/check_links.py "$WS/drafts/{slug}.md"
    - 批量：`--drafts-dir <目录>`（与 `--file` 互斥）；两者都不给时默认发内容工作区 drafts 目录全部 `.md`。
    - `--api-base` 覆盖 API 地址（默认取 `NBDPSY_API_BASE` 环境变量，缺省 `https://database.nbdpsy.com`）。
 
-3. **核对输出 JSON**：stdout 汇总 `{"published": [...], "skipped": [...], "failed": [...]}`，有 failed 时脚本 exit 1（逐条排错后重发）。published 含本篇 → 给出线上地址 `https://www.nbdpsy.com/blog/<slug>`（新文章即刻可见；修改旧文受 ISR 缓存最长 24h）。
+3. **核对输出 JSON**：stdout 汇总 `{"published": [...], "skipped": [...], "failed": [...]}`，有 failed 时脚本 exit 1（逐条排错后重发）。published 含本篇 → 给出线上地址 `https://www.nbdpsy.com/blog/<slug>`（新文章即刻可见；修改旧文受 ISR 缓存约 5 分钟生效）。
 
 ### 第 6 步 · 提醒管理员复查 / 可选分发
 
 - **发布后立即提醒管理员上网页核查**：给出文章 URL `https://www.nbdpsy.com/blog/{slug}`，请管理员核对内容与署名是否妥当。（搜索引擎推送已由后端在发布时自动完成，无需手动推。）
 - **有问题怎么办（管理员后台兜底）**：发现内容或署名有误，管理员在管理后台直接**下架**（状态改回 `draft` 或删除）或**修改**（改 `author_name` 署名、改正文）。不必回到本流程。
-- **ISR 缓存**：新发布文章即刻可见；**修改已有文章**若网页未即时生效，是官网（marketing-web）的 ISR 缓存，最长 24h 自动刷新，可提醒管理员清缓存并重启 marketing-web 加速。
+- **ISR 缓存**：新发布文章即刻可见；**修改已有文章**若网页未即时生效，是官网（marketing-web）的 ISR 缓存，约 5 分钟自动刷新（revalidate=300）；仍不生效再提醒管理员排查。
 - **可选：分发改写**。若要把 pillar 二次分发到公众号/头条/知乎，读 **`references/distribution-spec.md`**，每篇各出三版（gzh/toutiao/zhihu），写到**内容工作区 distribution 目录**的 `{slug}--{platform}.md`。核心纪律：**改写不改事实**、敏感词红线相同、每版嵌一次品牌锚句、保留危机声明。
 
 ---
