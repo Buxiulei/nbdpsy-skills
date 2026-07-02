@@ -87,9 +87,9 @@ def main():
                             (f"；超界: {bad3}" if bad3 else "")})
 
     # A4 合规闸门 exit 0
-    r = subprocess.run(["bash", str(SKILL / "scripts/check_compliance.sh"), str(outdir)],
+    r = subprocess.run([sys.executable, str(SKILL / "scripts/check_compliance.py"), str(outdir)],
                        capture_output=True, text=True)
-    exp.append({"text": "check_compliance.sh 退出码 0（无违禁词 + 危机声明在位）",
+    exp.append({"text": "check_compliance.py 退出码 0（无违禁词 + 危机声明在位）",
                 "passed": r.returncode == 0,
                 "evidence": (r.stdout + r.stderr).strip().replace('\n', ' | ')[:400]})
 
