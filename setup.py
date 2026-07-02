@@ -42,12 +42,17 @@ def _pick_cmd(cmds: dict, state: dict) -> str:
     return cmds.get(state["pkg"]) or cmds.get(_OS_DEFAULT_PKG[state["os"]], "（无自动安装命令，请自行安装）")
 
 
-def _sudo_noninteractive(cmd: str) -> str:
-    """自动安装尝试时把 sudo 换成 sudo -n：agent/CI 环境没有 tty，卡在密码输入等于挂死；
-    -n 会让 sudo 在没有缓存凭据时直接失败返回非零，而不是阻塞等待输入。"""
-    if cmd.startswith("sudo "):
-        return "sudo -n " + cmd[len("sudo "):]
-    return cmd
+def _maybe_noninteractive_sudo(cmd: str, interactive: bool) -> str:
+    """交互/非交互模式下的 sudo 命令改写。
+    - interactive=True: 普通 sudo（允许终端询问密码）
+    - interactive=False: sudo -n（非交互，无缓存凭据时直接失败）
+    """
+    if not cmd.startswith("sudo "):
+        return cmd
+    if interactive:
+        return cmd  # 交互模式，保留普通 sudo
+    # 非交互模式（--yes/CI）才加 -n
+    return "sudo -n " + cmd[len("sudo "):]
 
 
 def _run(cmd, timeout=300):
@@ -76,7 +81,7 @@ def report(item: str, mark: str, detail: str) -> None:
 
 # ---------- 系统依赖（ffmpeg 等） ----------
 
-def step_system_deps(state: dict) -> None:
+def step_system_deps(state: dict, interactive: bool) -> None:
     print("\n=== 系统依赖 ===")
     for name, (exe, cmds) in PKG_CMDS.items():
         found = shutil.which(exe)
@@ -88,7 +93,7 @@ def step_system_deps(state: dict) -> None:
             report(name, "✗", f"未装，且未检测到包管理器，请手动安装：{cmd}")
             continue
         print(f"  → 尝试自动安装 {name}：{cmd}")
-        rc, _out, _err = _run(_sudo_noninteractive(cmd))
+        rc, _out, _err = _run(_maybe_noninteractive_sudo(cmd, interactive))
         found = shutil.which(exe)
         if rc == 0 and found:
             report(name, "✓", f"自动安装成功（{found}）")
@@ -117,12 +122,17 @@ def step_python_deps() -> None:
     req = REPO_ROOT / "requirements.txt"
     cmd = [sys.executable, "-m", "pip", "install", "--user", "-r", str(req)]
     rc, _out, err = _run(cmd, timeout=300)
+    used_break_system_packages = False
     if rc != 0 and "externally-managed-environment" in err:
         # Debian/Ubuntu 较新版本（PEP 668）默认锁住系统 pip；这是 pip 自己报错里建议的逃生舱，
         # 只在探测到这条具体错误信息时才追加，不影响其它平台/环境。
+        used_break_system_packages = True
         rc, _out, err = _run(cmd + ["--break-system-packages"], timeout=300)
     if rc == 0:
-        report("Python 依赖", "✓", f"已安装 {req.name} 全部依赖")
+        detail = f"已安装 {req.name} 全部依赖"
+        if used_break_system_packages:
+            detail += "（已绕过系统包管理保护 PEP 668，装入用户目录）"
+        report("Python 依赖", "✓", detail)
     else:
         tail = err.strip().splitlines()[-1] if err.strip() else "未知错误"
         report("Python 依赖", "✗", f"pip install 失败：{tail}")
@@ -227,13 +237,14 @@ def main() -> None:
     ap.add_argument("--skip-credentials", action="store_true", help="跳过凭据向导（只报缺，不问）")
     args = ap.parse_args()
 
+    interactive = not args.yes
     state = detect()
     print(f"检测到系统：{state['os']}，包管理器：{state['pkg']}")
 
-    step_system_deps(state)
+    step_system_deps(state, interactive=interactive)
     step_font(state)
     step_python_deps()
-    step_dreamina(state, interactive=not args.yes)
+    step_dreamina(state, interactive=interactive)
     step_credentials(interactive=not (args.yes or args.skip_credentials))
     step_smoke_tests()
     print_final_report()

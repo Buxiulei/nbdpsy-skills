@@ -177,10 +177,21 @@ def test_pick_cmd_falls_back_when_no_pkg_manager():
     assert s._pick_cmd(cmds, {"os": "windows", "pkg": "none"}) == "W"
 
 
-def test_sudo_noninteractive_injects_flag():
-    assert s._sudo_noninteractive("sudo apt-get install -y ffmpeg") == "sudo -n apt-get install -y ffmpeg"
+def test_maybe_noninteractive_sudo_interactive_mode_no_flag():
+    """交互模式（interactive=True）时，sudo 命令保留普通形式，不加 -n。"""
+    cmd = "sudo apt-get install -y ffmpeg"
+    assert s._maybe_noninteractive_sudo(cmd, interactive=True) == cmd
 
 
-def test_sudo_noninteractive_leaves_non_sudo_commands_untouched():
-    assert s._sudo_noninteractive("brew install ffmpeg") == "brew install ffmpeg"
-    assert s._sudo_noninteractive("winget install --id Gyan.FFmpeg -e") == "winget install --id Gyan.FFmpeg -e"
+def test_maybe_noninteractive_sudo_noninteractive_mode_adds_flag():
+    """非交互模式（interactive=False）时，sudo 命令加 -n 标志。"""
+    cmd = "sudo apt-get install -y ffmpeg"
+    assert s._maybe_noninteractive_sudo(cmd, interactive=False) == "sudo -n apt-get install -y ffmpeg"
+
+
+def test_maybe_noninteractive_sudo_leaves_non_sudo_commands_untouched():
+    """非 sudo 命令无论何种模式都不改。"""
+    assert s._maybe_noninteractive_sudo("brew install ffmpeg", interactive=True) == "brew install ffmpeg"
+    assert s._maybe_noninteractive_sudo("brew install ffmpeg", interactive=False) == "brew install ffmpeg"
+    assert s._maybe_noninteractive_sudo("winget install --id Gyan.FFmpeg -e", interactive=True) == "winget install --id Gyan.FFmpeg -e"
+    assert s._maybe_noninteractive_sudo("winget install --id Gyan.FFmpeg -e", interactive=False) == "winget install --id Gyan.FFmpeg -e"
