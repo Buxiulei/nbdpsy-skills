@@ -8,8 +8,8 @@ from typing import Optional
 
 
 def extract_carousel_section(content: str) -> str:
-    """提取 ## 配图轮播 区块"""
-    match = re.search(r"^## 配图轮播\s*$(.+?)(?=^## |\Z)", content, re.MULTILINE | re.DOTALL)
+    """提取 ## 配图轮播 区块（标题行容忍后缀，如「## 配图轮播（6页）」）"""
+    match = re.search(r"^## 配图轮播[^\n]*\n(.+?)(?=^## |\Z)", content, re.MULTILINE | re.DOTALL)
     if not match:
         return ""
     return match.group(1)
@@ -29,30 +29,63 @@ def split_pages(carousel: str) -> list[tuple[int, str]]:
 
 
 def extract_prompt(page_body: str) -> Optional[str]:
-    """提取首个三反引号围栏中的内容"""
-    match = re.search(r"```\n(.*?)\n```", page_body, re.DOTALL)
+    """提取首个三反引号围栏中的内容（容忍语言标记，如 ```text）"""
+    match = re.search(r"^```[^\n]*$\n(.*?)\n^```[ \t]*$", page_body, re.DOTALL | re.MULTILINE)
     if match:
         return match.group(1).strip()
     return None
 
 
+def _strip_bullet(line: str) -> str:
+    """去掉行首的markdown列表符号（· - •）"""
+    return re.sub(r'^[·\-•]\s*', '', line)
+
+
 def extract_narration_text(page_body: str) -> str:
-    """提取围栏外的页面文字（**页面文字**下的文本）"""
-    # 找 **页面文字** 后的内容到首个 ``` 围栏
-    match = re.search(r"\*\*页面文字\*\*\s*(.*?)(?=```|\*\*)", page_body, re.DOTALL)
-    if match:
-        text = match.group(1).strip()
-        # 去掉markdown列表符号，转纯文本
-        lines = []
-        for line in text.split('\n'):
-            line = line.strip()
-            if line and line[0] in '·-•':
-                # 去掉首个符号和后续空格
-                line = re.sub(r'^[·\-•]\s*', '', line)
-            if line:
-                lines.append(line)
-        return '\n'.join(lines)
-    return ""
+    """提取围栏外的页面文字（**页面文字**下的文本）
+
+    行级扫描（不用 lookahead）：定位 **页面文字** 所在行，收集其后所有行，
+    直到遇到「以 ``` 开头的行」或「以 **绘图提示词 开头的行」为止，避免页面文字
+    内含内联加粗（如 "- **大标题**：说明"）时被误截断。
+    若页体没有 **页面文字** 标记行，回退为页体中所有围栏外的非空文本行。
+    """
+    lines = page_body.split('\n')
+
+    marker_idx = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith("**页面文字**"):
+            marker_idx = i
+            break
+
+    if marker_idx is not None:
+        collected = []
+        for line in lines[marker_idx + 1:]:
+            stripped = line.strip()
+            if stripped.startswith("```") or stripped.startswith("**绘图提示词"):
+                break
+            collected.append(line)
+    else:
+        collected = []
+        in_fence = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            collected.append(line)
+
+    # 去掉markdown列表符号，转纯文本，去空行
+    result_lines = []
+    for line in collected:
+        line = line.strip()
+        if not line:
+            continue
+        line = _strip_bullet(line)
+        if line:
+            result_lines.append(line)
+    return '\n'.join(result_lines)
 
 
 def extract_subtitle(narration_text: str) -> str:
@@ -88,7 +121,6 @@ def find_image(page_num: int, images_dir: Optional[Path]) -> Optional[str]:
 def parse_note(
     note_path: Path,
     images_dir: Optional[Path] = None,
-    out_path: Optional[Path] = None,
 ) -> dict:
     """解析笔记文件，返回shots.json结构"""
     content = note_path.read_text(encoding="utf-8")
@@ -121,6 +153,8 @@ def parse_note(
 
         if not prompt:
             print(f"warning: P{page_num} 无提示词", file=sys.stderr)
+        if not narration_text:
+            print(f"warning: P{page_num} 页面文字为空", file=sys.stderr)
 
         shot = {
             "index": idx,
