@@ -9,3 +9,8 @@ review.html
 # OS / 编辑器
 .DS_Store
 *.swp
+# 敏感文件
+.env
+# 测试产物
+tests/fixtures/tmp/
+*-workspace/iteration-*/output/
