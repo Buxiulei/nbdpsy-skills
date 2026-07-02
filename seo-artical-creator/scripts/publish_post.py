@@ -57,12 +57,12 @@ def build_payload(md_text: str, fallback_slug: str, author: str, draft: bool) ->
     payload = {}
 
     # 必须字段
-    if "title" in meta:
+    if meta.get("title") is not None:
         payload["title"] = meta["title"]
 
     payload["slug"] = meta.get("slug", fallback_slug)
 
-    if "excerpt" in meta:
+    if meta.get("excerpt") is not None:
         payload["excerpt"] = meta["excerpt"]
 
     # 正文剥 H1
@@ -70,7 +70,7 @@ def build_payload(md_text: str, fallback_slug: str, author: str, draft: bool) ->
     if content_md:
         payload["content_markdown"] = content_md
 
-    if "category_slug" in meta:
+    if meta.get("category_slug") is not None:
         payload["category_slug"] = meta["category_slug"]
 
     # tags → tag_names
@@ -78,6 +78,8 @@ def build_payload(md_text: str, fallback_slug: str, author: str, draft: bool) ->
         tags = meta["tags"]
         if isinstance(tags, list):
             payload["tag_names"] = tags
+        elif tags is not None:
+            print(f"tags 非 list，已丢弃: {tags!r}", file=sys.stderr)
 
     # 署名：frontmatter author_name > --author > 胡佰亿
     author_name = meta.get("author_name") or author or "胡佰亿"
@@ -86,14 +88,14 @@ def build_payload(md_text: str, fallback_slug: str, author: str, draft: bool) ->
     # status
     payload["status"] = "draft" if draft else "published"
 
-    # 可选字段（有则加）
-    if "cover_image_url" in meta:
+    # 可选字段（键存在且值非 None 才发，避免 null 覆盖后端已有值）
+    if meta.get("cover_image_url") is not None:
         payload["cover_image_url"] = meta["cover_image_url"]
 
-    if "video_url" in meta:
+    if meta.get("video_url") is not None:
         payload["video_url"] = meta["video_url"]
 
-    if "citations" in meta:
+    if meta.get("citations") is not None:
         payload["citations"] = meta["citations"]
 
     if "faq" in meta:
@@ -104,8 +106,11 @@ def build_payload(md_text: str, fallback_slug: str, author: str, draft: bool) ->
     return payload
 
 
-def post_request(url: str, key: str, payload: dict):
-    """POST 请求到 external API。
+def send_request(method: str, url: str, key: str, payload: dict):
+    """发送请求到 external API（POST/PUT），30s 超时。
+
+    网络异常（超时/连接失败等）向上抛出，由调用方（publish_one 的外层 try/except）
+    统一转成 failed 结果，不在此处静默吞掉。
 
     Returns:
         requests.Response
@@ -115,28 +120,15 @@ def post_request(url: str, key: str, payload: dict):
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json; charset=utf-8"
     }
-    return requests.post(url, json=payload, headers=headers)
-
-
-def put_request(url: str, key: str, payload: dict):
-    """PUT 请求到 external API。
-
-    Returns:
-        requests.Response
-    """
-    import requests
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json; charset=utf-8"
-    }
-    return requests.put(url, json=payload, headers=headers)
+    return requests.request(method, url, json=payload, headers=headers, timeout=30)
 
 
 def publish_one(path: Path, *, api_base: str, key: str, author: str, draft: bool, update: bool, dry_run: bool) -> dict:
     """发布单个文件。
 
     Returns:
-        {"outcome": "published|skipped|failed", "slug": str, "id": str/None, "error": str/None}
+        {"outcome": "published|skipped|failed", "slug": str, "id": str/None, "error": str/None,
+         "dry_run": True（仅 dry-run 的 published 结果带此键）}
     """
     try:
         md_text = path.read_text(encoding="utf-8")
@@ -147,27 +139,36 @@ def publish_one(path: Path, *, api_base: str, key: str, author: str, draft: bool
         if dry_run:
             print(f"[DRY-RUN] {path.name} → {slug}", file=sys.stderr)
             print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
-            return {"outcome": "published", "slug": slug, "id": None}
+            return {"outcome": "published", "slug": slug, "id": None, "dry_run": True}
 
         if update:
             url = f"{api_base}/api/external/blog/posts/{slug}"
             print(f"更新 {slug}...", file=sys.stderr)
-            resp = put_request(url, key, payload)
+            resp = send_request("PUT", url, key, payload)
         else:
             url = f"{api_base}/api/external/blog/posts"
             print(f"发布 {slug}...", file=sys.stderr)
-            resp = post_request(url, key, payload)
+            resp = send_request("POST", url, key, payload)
 
         if resp.status_code == 409:
-            # slug conflict → 幂等跳过
-            print(f"  → 跳过（slug 已存在）", file=sys.stderr)
-            return {"outcome": "skipped", "slug": slug}
+            # slug conflict → 幂等跳过；但只有响应体确认 code=="slug_conflict" 才算，
+            # 否则可能是别的 409（如权限/限流），应当算失败而非静默跳过
+            try:
+                err_data = resp.json()
+            except Exception:
+                err_data = {}
+            if err_data.get("code") == "slug_conflict":
+                print(f"  → 跳过（slug 已存在）", file=sys.stderr)
+                return {"outcome": "skipped", "slug": slug}
+            error = err_data.get("error", resp.text[:200])
+            print(f"  → 失败: {error}", file=sys.stderr)
+            return {"outcome": "failed", "slug": slug, "error": error}
 
         if resp.status_code >= 400:
             try:
                 err_data = resp.json()
                 error = err_data.get("error", resp.text[:200])
-            except:
+            except Exception:
                 error = resp.text[:200]
             print(f"  → 失败: {error}", file=sys.stderr)
             return {"outcome": "failed", "slug": slug, "error": error}
@@ -194,8 +195,9 @@ def publish_one(path: Path, *, api_base: str, key: str, author: str, draft: bool
 
 def main():
     ap = argparse.ArgumentParser(description="使用 external API 发布博客文章")
-    ap.add_argument("--file", type=Path, help="单个 markdown 文件")
-    ap.add_argument("--drafts-dir", type=Path, help="drafts 目录（默认 workspace/drafts）")
+    src_group = ap.add_mutually_exclusive_group()
+    src_group.add_argument("--file", type=Path, help="单个 markdown 文件")
+    src_group.add_argument("--drafts-dir", type=Path, help="drafts 目录（默认 workspace/drafts）")
     ap.add_argument("--draft", action="store_true", help="以草稿发布")
     ap.add_argument("--update", action="store_true", help="用 PUT 更新而非 POST 创建")
     ap.add_argument("--author", default="胡佰亿", help="默认署名")
@@ -238,7 +240,10 @@ def main():
         outcome = result["outcome"]
 
         if outcome == "published":
-            published.append({"slug": result["slug"], "id": result.get("id"), "status": "draft" if args.draft else "published"})
+            entry = {"slug": result["slug"], "id": result.get("id"), "status": "draft" if args.draft else "published"}
+            if result.get("dry_run"):
+                entry["dry_run"] = True
+            published.append(entry)
         elif outcome == "skipped":
             skipped.append(result["slug"])
         elif outcome == "failed":
@@ -250,10 +255,12 @@ def main():
         "skipped": skipped,
         "failed": failed
     }
+    if args.dry_run:
+        output["dry_run"] = True
     print(json.dumps(output, ensure_ascii=False))
 
-    # 非 dry-run 且有失败时 exit 1
-    if failed and not args.dry_run:
+    # 有失败时 exit 1（无例外，dry-run 也一样：帮 CI/调用方及早发现坏文件）
+    if failed:
         sys.exit(1)
 
 
