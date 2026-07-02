@@ -11,7 +11,7 @@ description: >-
 
 # SEO/GEO 心理科普 Pillar 长文创作
 
-> **约定**：以下 `{SKILL_DIR}` 指本文件所在目录（skill 根目录）。「内容工作区」指草稿产物目录，实际路径用 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace` 查询——在 NBDpsy 仓库根运行时自动解析为 `seo-geo/content`（向后兼容），其余环境为 `NBDPSY_WORKSPACE` 环境变量指定的目录或 `~/nbdpsy-content`。
+> **约定**：以下 `{SKILL_DIR}` 指本文件所在目录（skill 根目录）。「内容工作区」指草稿产物目录，实际路径用 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace` 查询——解析顺序：`NBDPSY_WORKSPACE` 环境变量最优先；未设时若当前目录下存在 `seo-geo/content`（如在 NBDpsy 仓库根）则用之（向后兼容）；否则 `~/nbdpsy-content`。
 
 为 NBDpsy 官网博客产出**可被搜索引擎收录、且被 AI 引擎引用**的心理科普长文。本 skill 把首批四篇 pillar（均已纯汉字 4300–4900 字发布上线）跑通的方法固化下来，让"写下一篇"不必从零摸索。
 
@@ -127,6 +127,7 @@ python3 {SKILL_DIR}/scripts/check_links.py "$WS/drafts/{slug}.md"
 
    - 默认 status=published、署名胡佰亿（frontmatter `author_name` 优先，其次 `--author`）；发布后百度/IndexNow 推送由后端自动完成，无需手动推。
    - **测试/演练一律加 `--draft`**（以草稿入库不上线）；`--dry-run` 只打印 payload 不发请求（输出 JSON 顶层带 `"dry_run": true`）。
+   - 注意：`--api-base` 默认即生产地址，`--draft` 的草稿会**真实持久化到生产库**且 API 无删除端点、无自动清理——演练后需要时去管理后台手动删除；只想看请求内容用 `--dry-run`。
    - slug 已存在返回 skipped（**绝不覆盖线上**）；确要更新已有文章，显式加 `--update`（改走 `PUT /api/external/blog/posts/{slug}`，未发送的字段保持后端原值不变）。
    - 批量：`--drafts-dir <目录>`（与 `--file` 互斥）；两者都不给时默认发内容工作区 drafts 目录全部 `.md`。
    - `--api-base` 覆盖 API 地址（默认取 `NBDPSY_API_BASE` 环境变量，缺省 `https://database.nbdpsy.com`）。
