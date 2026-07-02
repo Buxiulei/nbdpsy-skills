@@ -78,15 +78,20 @@ def resolve_font() -> str:
     # 2. POSIX 平台：fc-list/fc-match 查找 Noto Sans CJK
     if sys.platform != "win32":
         # 先用 fc-list 检查是否存在
-        rc, out, _ = _run(["bash", "-c", f"fc-list | grep -i '{CJK_FONT_NAME}'"], timeout=10)
-        if rc == 0 and out.strip():
-            # 用 fc-match 获得规范路径
-            rc, out, _ = _run(["fc-match", "-f", "%{file}", CJK_FONT_NAME], timeout=10)
-            if rc == 0:
+        try:
+            out = subprocess.run(["fc-list"], capture_output=True, text=True, timeout=10).stdout
+            # Python 侧过滤 grep
+            if any(CJK_FONT_NAME.lower() in line.lower() for line in out.splitlines()):
+                # 用 fc-match 获得规范路径
+                out = subprocess.run(["fc-match", "-f", "%{file}", CJK_FONT_NAME],
+                                   capture_output=True, text=True, timeout=10).stdout
                 candidate = out.strip()
                 if candidate and Path(candidate).exists():
                     _FONT_CACHE = candidate
                     return candidate
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # fc-list 或 fc-match 不可用，继续降级
+            pass
 
     # 3. Windows 平台：微软雅黑
     if sys.platform == "win32":
@@ -97,7 +102,7 @@ def resolve_font() -> str:
 
     # 4. 都失败：raise 含安装指引
     raise RuntimeError(
-        f"找不到 Noto Sans CJK 字体\n"
+        f"找不到中文字幕字体。可设环境变量 FONT_PATH 指向任意 CJK 字体文件（.ttf/.ttc/.otf）兜底。\n"
         f"安装指引：\n"
         f"  - Ubuntu/Debian: sudo apt-get install fonts-noto-cjk\n"
         f"  - macOS: brew install font-noto-sans-cjk-sc\n"
