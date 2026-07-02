@@ -202,7 +202,8 @@ def main():
     # 解析
     result = parse_note(note_path, images_dir)
 
-    # 写入文件
+    # 写入文件（自动创建父目录）
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote {out_path}", file=sys.stderr)
 

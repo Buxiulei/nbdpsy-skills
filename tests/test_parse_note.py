@@ -199,3 +199,34 @@ def test_out_of_order_pages(tmp_path):
     shots = d["shots"]
     assert [s["index"] for s in shots] == [1, 2, 3]
     assert [s["page"] for s in shots] == [3, 1, 5]
+
+
+def test_out_creates_nested_directory(tmp_path):
+    """--out 指向不存在的深层目录：自动创建，成功写出"""
+    note = _write_note(
+        tmp_path,
+        """## 配图轮播
+
+### P1 · 封面
+**页面文字**
+- 大标题：测试
+
+**绘图提示词**
+```
+提示词正文
+```
+""",
+    )
+    # 指向不存在的深层目录
+    out = tmp_path / "deep" / "nested" / "dir" / "shots.json"
+    assert not out.parent.exists(), "父目录应该不存在"
+
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT), str(note), "--out", str(out)],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert out.exists(), "shots.json 应该被成功创建"
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert d["shots"][0]["prompt"] == "提示词正文"
