@@ -84,7 +84,7 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
 
     segments: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
-    for i, shot in enumerate(shots):
+    for shot in shots:
         idx = shot["index"]
         files = _shot_files(workdir, idx)
 
@@ -122,9 +122,9 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
             _err(f"  镜{idx:02d} {status_icon} {component_str}")
 
         seg: dict[str, Any] = {"video": str(files["video"])}
-        if files["narration"].is_file():
+        if has_narration:
             seg["narration"] = str(files["narration"])
-        if files["cues"].is_file():
+        if has_cues:
             seg["cues"] = str(files["cues"])
         narration_text = (shot.get("narration_text") or "").strip()
         if narration_text:
