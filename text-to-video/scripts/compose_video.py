@@ -41,9 +41,73 @@ from typing import Any, Optional
 
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 FFPROBE = shutil.which("ffprobe") or "ffprobe"
-# Noto Sans CJK SC（本机已确认存在）。改字体改这里。
-CJK_FONT_FILE = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 CJK_FONT_NAME = "Noto Sans CJK SC"
+
+
+_FONT_CACHE = None
+
+
+def resolve_font() -> str:
+    """跨平台字体解析：FONT_PATH env > fc-list/fc-match(POSIX) > 微软雅黑(Windows) > raise。
+
+    Returns:
+        字体文件完整路径（确保存在）
+
+    Raises:
+        RuntimeError: 找不到合适字体，包含三平台安装指引
+    """
+    global _FONT_CACHE
+    if _FONT_CACHE is not None:
+        return _FONT_CACHE
+
+    # 1. FONT_PATH 环境变量优先（存在即用，不存在则错误）
+    font_path = os.environ.get("FONT_PATH")
+    if font_path:
+        if Path(font_path).exists():
+            _FONT_CACHE = font_path
+            return font_path
+        else:
+            raise RuntimeError(
+                f"FONT_PATH 指定的文件不存在：{font_path}\n"
+                f"Noto Sans CJK 安装指引：\n"
+                f"  - Ubuntu/Debian: sudo apt-get install fonts-noto-cjk\n"
+                f"  - macOS: brew install font-noto-sans-cjk-sc\n"
+                f"  - Windows: 使用系统自带微软雅黑或装 Noto Sans CJK"
+            )
+
+    # 2. POSIX 平台：fc-list/fc-match 查找 Noto Sans CJK
+    if sys.platform != "win32":
+        # 先用 fc-list 检查是否存在
+        try:
+            out = subprocess.run(["fc-list"], capture_output=True, text=True, timeout=10).stdout
+            # Python 侧过滤 grep
+            if any(CJK_FONT_NAME.lower() in line.lower() for line in out.splitlines()):
+                # 用 fc-match 获得规范路径
+                out = subprocess.run(["fc-match", "-f", "%{file}", CJK_FONT_NAME],
+                                   capture_output=True, text=True, timeout=10).stdout
+                candidate = out.strip()
+                if candidate and Path(candidate).exists():
+                    _FONT_CACHE = candidate
+                    return candidate
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # fc-list 或 fc-match 不可用，继续降级
+            pass
+
+    # 3. Windows 平台：微软雅黑
+    if sys.platform == "win32":
+        win_font = "C:/Windows/Fonts/msyh.ttc"
+        if Path(win_font).exists():
+            _FONT_CACHE = win_font
+            return win_font
+
+    # 4. 都失败：raise 含安装指引
+    raise RuntimeError(
+        f"找不到中文字幕字体。可设环境变量 FONT_PATH 指向任意 CJK 字体文件（.ttf/.ttc/.otf）兜底。\n"
+        f"安装指引：\n"
+        f"  - Ubuntu/Debian: sudo apt-get install fonts-noto-cjk\n"
+        f"  - macOS: brew install font-noto-sans-cjk-sc\n"
+        f"  - Windows: 使用系统自带微软雅黑或装 Noto Sans CJK"
+    )
 
 
 def _err(msg: str) -> None:
@@ -266,7 +330,8 @@ def normalize_segment(seg: dict, idx: int, width: int, height: int, fps: int,
             build_timed_ass(narration_text, target, width, height, ass)
         else:
             build_ass(subtitle, target, width, height, ass)
-        vchain += f",ass={_filter_path(ass)}:fontsdir={_filter_path(os.path.dirname(CJK_FONT_FILE))}"
+        cjk_font_file = resolve_font()
+        vchain += f",ass={_filter_path(ass)}:fontsdir={_filter_path(os.path.dirname(cjk_font_file))}"
 
     cmd = [FFMPEG, "-y", "-i", src]
     if use_narr:
@@ -322,8 +387,9 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
     if ai_label:
         # 右上角半透明底 + 白字“AI 生成”，合规显式标识
         box = "box=1:boxcolor=black@0.45:boxborderw=8"
+        cjk_font_file = resolve_font()
         filters.append(
-            f"drawtext=fontfile='{CJK_FONT_FILE}':text='{ai_label}':"
+            f"drawtext=fontfile='{cjk_font_file}':text='{ai_label}':"
             f"fontcolor=white:fontsize={fontsize}:{box}:x=w-tw-{pad}:y={pad}")
     vfilter = ",".join(filters) if filters else "null"
 
