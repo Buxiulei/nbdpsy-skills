@@ -27,8 +27,9 @@ manifest 契约，源自 compose_video.py（本仓库同目录，勿改）：
                        "shots":[{"index","page","prompt","subtitle","narration_text",
                        "image","duration"}, ...]}
   shot-{NN}.mp4        每镜成片，两位序号(01起)，必需——缺失则该镜无法合成，计入 missing
-  narr-{NN}.mp3        每镜旁白，两位序号，必需——缺失则计入 missing（仍可用 narration_text/
-                       subtitle 兜底出字幕，但该镜没有真人声轨）
+  narr-{NN}.mp3        每镜旁白，两位序号，必需——缺失则计入 missing 阻断（本脚本强制检查）。
+                       注：compose 层对无旁白/无 cues 时可用 narration_text/subtitle 兜底字幕，
+                       但本脚本不放行缺旁白镜段，由调用方决策是否允许缺件合成
   narr-{NN}.cues.json  tts_gen.py --timed 产出的时间轴 sidecar，可选；缺失时 compose 回退
                        narration_text 估算字幕
   bgm.mp3              可选，全局背景音乐
@@ -66,6 +67,11 @@ def _shot_files(workdir: Path, index: int) -> dict[str, Path]:
     }
 
 
+def _err(msg: str) -> None:
+    """打印到 stderr（兼容 compose_video.py 范式）。"""
+    print(msg, file=sys.stderr, flush=True)
+
+
 def build_manifest(workdir: Path) -> dict[str, Any]:
     """扫描 workdir，按 shots.json 逐镜配齐文件，拼出 compose_video.py 可消费的 manifest dict。
     不落盘（由调用方决定：只有 missing 为空才允许写文件）。"""
@@ -78,13 +84,42 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
 
     segments: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
-    for shot in shots:
+    for i, shot in enumerate(shots):
         idx = shot["index"]
         files = _shot_files(workdir, idx)
-        if not files["video"].is_file():
+
+        has_video = files["video"].is_file()
+        has_narration = files["narration"].is_file()
+        has_cues = files["cues"].is_file()
+
+        if not has_video:
             missing.append({"index": idx, "expect": files["video"].name})
-        if not files["narration"].is_file():
+        if not has_narration:
             missing.append({"index": idx, "expect": files["narration"].name})
+
+        # stderr: 逐镜进度
+        status_icon = "✓" if (has_video and has_narration) else "✗"
+        components = []
+        if has_video:
+            components.append(f"{files['video'].name}")
+        if has_narration:
+            components.append(f"{files['narration'].name}")
+        if has_cues:
+            components.append("cues")
+        component_str = " + ".join(components) if components else "缺文件"
+        missing_str = ""
+        if not has_video or not has_narration:
+            missing_files = []
+            if not has_video:
+                missing_files.append(files["video"].name)
+            if not has_narration:
+                missing_files.append(files["narration"].name)
+            missing_str = f"缺 {' + '.join(missing_files)}"
+
+        if status_icon == "✗":
+            _err(f"  镜{idx:02d} {status_icon} {missing_str}")
+        else:
+            _err(f"  镜{idx:02d} {status_icon} {component_str}")
 
         seg: dict[str, Any] = {"video": str(files["video"])}
         if files["narration"].is_file():
@@ -129,15 +164,23 @@ def main() -> None:
     try:
         result = build_manifest(workdir)
     except FileNotFoundError as e:
+        _err(f"error: {e}")
         print(json.dumps({"manifest": None, "shots": 0, "missing": [], "ok": False, "error": str(e)},
                           ensure_ascii=False, indent=2))
         sys.exit(1)
 
     ok = not result["missing"]
     report: dict[str, Any] = {"manifest": None, "shots": result["shots"], "missing": result["missing"], "ok": ok}
+
+    # stderr: 结尾汇总
     if ok:
         out.write_text(json.dumps(result["manifest_dict"], ensure_ascii=False, indent=2), encoding="utf-8")
         report["manifest"] = str(out)
+        _err(f"manifest 已写入 {out}")
+    else:
+        missing_count = len(result["missing"])
+        _err(f"清单完成：{result['shots']} 镜, 缺件 {missing_count}")
+
     print(json.dumps(report, ensure_ascii=False, indent=2))
     sys.exit(0 if ok else 1)
 
