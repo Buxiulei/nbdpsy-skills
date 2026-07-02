@@ -31,10 +31,10 @@ def test_complete_workdir_builds_manifest(tmp_path):
     _write_shots(tmp_path, shots)
     for n in ("shot-01.mp4", "shot-02.mp4", "narr-01.mp3", "narr-02.mp3", "bgm.mp3"):
         (tmp_path / n).write_bytes(b"x")
-    (tmp_path / "narr-01.cues.json").write_text(
+    (tmp_path / "narr-01.mp3.cues.json").write_text(
         json.dumps({"duration": 6.5, "cues": [{"text": "第一句。", "start": 0.0, "end": 3.0}]}),
         encoding="utf-8")
-    # shot 2 故意不生成 narr-02.cues.json —— 覆盖「cues 缺失」分支
+    # shot 2 故意不生成 narr-02.mp3.cues.json —— 覆盖「cues 缺失」分支
 
     r, report = _run(tmp_path)
     assert r.returncode == 0, r.stderr
@@ -54,7 +54,7 @@ def test_complete_workdir_builds_manifest(tmp_path):
     seg1 = manifest["segments"][0]
     assert seg1["video"].endswith("shot-01.mp4")
     assert seg1["narration"].endswith("narr-01.mp3")
-    assert seg1["cues"].endswith("narr-01.cues.json")
+    assert seg1["cues"].endswith("narr-01.mp3.cues.json")
     assert seg1["narration_text"] == "第一句。第二句。"
     assert seg1["subtitle"] == "第一页字幕"
     assert seg1["duration"] == 6.5
@@ -193,3 +193,30 @@ def test_stdout_is_pure_json(tmp_path):
         json.loads(stdout)
     except json.JSONDecodeError as e:
         raise AssertionError(f"stdout is not valid JSON:\n{stdout}\nError: {e}")
+
+
+def test_cues_fallback_to_old_naming(tmp_path):
+    """Test that old cues naming narr-NN.cues.json is recognized as fallback."""
+    shots = [
+        {"index": 1, "page": 1, "prompt": "p1", "subtitle": "字幕",
+         "narration_text": "旁白。", "image": None, "duration": 5.0},
+    ]
+    _write_shots(tmp_path, shots)
+    for n in ("shot-01.mp4", "narr-01.mp3"):
+        (tmp_path / n).write_bytes(b"x")
+    # 只生成旧命名 narr-01.cues.json，不生成主命名 narr-01.mp3.cues.json
+    (tmp_path / "narr-01.cues.json").write_text(
+        json.dumps({"duration": 5.0, "cues": [{"text": "旁白。", "start": 0.0, "end": 5.0}]}),
+        encoding="utf-8")
+
+    r, report = _run(tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert report["ok"] is True
+    assert report["shots"] == 1
+    assert report["missing"] == []
+
+    manifest = json.loads(Path(report["manifest"]).read_text(encoding="utf-8"))
+    seg = manifest["segments"][0]
+    # 应该成功识别兜底的旧命名
+    assert "cues" in seg
+    assert seg["cues"].endswith("narr-01.cues.json")

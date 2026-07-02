@@ -17,8 +17,9 @@ manifest 契约，源自 compose_video.py（本仓库同目录，勿改）：
     narration_text  第251行 seg.get("narration_text")，可选；cues 缺失时按句估算字幕
     subtitle        第252行 seg.get("subtitle")，可选；无旁白/无 narration_text 时的固定字幕
     cues            第255行 seg.get("cues")，可选路径；显式给出则覆盖同名自动探测
-                    （自动探测规则是 narration+".cues.json"，与本项目 narr-NN.cues.json
-                    的实际落地命名不同名，故本脚本探测到就显式写入 cues，不依赖 compose 兜底探测）
+                    （本脚本探测 tts_gen.py --timed 的落地文件名 narr-NN.mp3.cues.json，
+                    兼容旧命名 narr-NN.cues.json；显式写入 cues 确保 manifest 自包含、
+                    不依赖 compose 兜底探测）
     duration        第234行 seg.get("duration", 5)，可选数字；仅 ffprobe 探测 video 失败时的兜底
   字幕级联语义（第261-268行）：cues > narration_text > subtitle，三者都缺才不烧字幕。
 
@@ -30,8 +31,9 @@ manifest 契约，源自 compose_video.py（本仓库同目录，勿改）：
   narr-{NN}.mp3        每镜旁白，两位序号，必需——缺失则计入 missing 阻断（本脚本强制检查）。
                        注：compose 层对无旁白/无 cues 时可用 narration_text/subtitle 兜底字幕，
                        但本脚本不放行缺旁白镜段，由调用方决策是否允许缺件合成
-  narr-{NN}.cues.json  tts_gen.py --timed 产出的时间轴 sidecar，可选；缺失时 compose 回退
-                       narration_text 估算字幕
+  narr-{NN}.mp3.cues.json  tts_gen.py --timed 产出的时间轴 sidecar（真实命名），可选；
+                           本脚本优先探测此名，兼容旧名 narr-{NN}.cues.json；
+                           缺失时 compose 回退 narration_text 估算字幕
   bgm.mp3              可选，全局背景音乐
 
 用法：
@@ -63,7 +65,7 @@ def _shot_files(workdir: Path, index: int) -> dict[str, Path]:
     return {
         "video": workdir / f"shot-{n}.mp4",
         "narration": workdir / f"narr-{n}.mp3",
-        "cues": workdir / f"narr-{n}.cues.json",
+        "cues": workdir / f"narr-{n}.mp3.cues.json",
     }
 
 
@@ -90,7 +92,17 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
 
         has_video = files["video"].is_file()
         has_narration = files["narration"].is_file()
-        has_cues = files["cues"].is_file()
+        # cues 优先级：主命名 narr-NN.mp3.cues.json → 兜底 narr-NN.cues.json
+        cues_primary = files["cues"]
+        cues_fallback = workdir / f"narr-{idx:02d}.cues.json"
+        has_cues = False
+        cues_actual = None
+        if cues_primary.is_file():
+            has_cues = True
+            cues_actual = cues_primary
+        elif cues_fallback.is_file():
+            has_cues = True
+            cues_actual = cues_fallback
 
         if not has_video:
             missing.append({"index": idx, "expect": files["video"].name})
@@ -124,8 +136,8 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
         seg: dict[str, Any] = {"video": str(files["video"])}
         if has_narration:
             seg["narration"] = str(files["narration"])
-        if has_cues:
-            seg["cues"] = str(files["cues"])
+        if has_cues and cues_actual:
+            seg["cues"] = str(cues_actual)
         narration_text = (shot.get("narration_text") or "").strip()
         if narration_text:
             seg["narration_text"] = narration_text
