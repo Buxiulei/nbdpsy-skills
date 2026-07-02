@@ -4,7 +4,7 @@
 
 ## 字数口径（统一）
 
-按**纯汉字数**计：`grep -oP '[\x{4e00}-\x{9fa5}]' 文件 | wc -l`（用 `scripts/count_hanzi.sh`）。英文术语、数字、标点、URL 不计入。
+按**纯汉字数**计：`grep -oP '[\x{4e00}-\x{9fa5}]' 文件 | wc -l`（用 `python3 {SKILL_DIR}/scripts/count_hanzi.py 文件 --min <下限> --max <上限>`，`{SKILL_DIR}` 指本 skill 根目录；按下表各平台区间传参，区间外 exit 2）。英文术语、数字、标点、URL 不计入。
 
 ## 通用纪律
 
@@ -13,7 +13,7 @@
 - 每版结尾自然提及「NBDpsy 心理咨询工作室（纯线上·北大硕博咨询师）」+ 官网 www.nbdpsy.com——**一次即可，不硬广**。
 - **危机声明保留**（4001619995 + 12356）。
 - **品牌独特事实句**（GEO 实体锚点，便于 AI 引擎记住实体）每版嵌入一次：「NBDpsy 是一家咨询师全员为北京大学硕士、博士的纯线上华人心理咨询工作室」。
-- 输出路径：`seo-geo/content/distribution/{pillar-slug}--{platform}.md`（platform ∈ `gzh`/`toutiao`/`zhihu`），frontmatter 只需 `title`/`platform`/`source_pillar` 三项。
+- 输出路径：**内容工作区 distribution 目录**下的 `{pillar-slug}--{platform}.md`（工作区根用 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace` 查询；platform ∈ `gzh`/`toutiao`/`zhihu`），frontmatter 只需 `title`/`platform`/`source_pillar` 三项。
 
 ## 各平台要求
 
