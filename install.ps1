@@ -16,7 +16,7 @@ if ([string]::IsNullOrEmpty($Src) -or -not (Test-Path (Join-Path $Src $Skills[0]
     New-Item -ItemType Directory -Path $Tmp | Out-Null
     Write-Host "→ 临时克隆 $RepoUrl ..."
     git clone --depth 1 $RepoUrl (Join-Path $Tmp "repo") *> $null
-    if ($LASTEXITCODE -ne 0) { throw \"git clone 失败（网络或权限问题）\" }
+    if ($LASTEXITCODE -ne 0) { throw "git clone 失败（网络或权限问题）" }
     $Src = Join-Path $Tmp "repo"
 }
 
