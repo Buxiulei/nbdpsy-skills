@@ -15,6 +15,7 @@ def test_build_payload_strips_h1_and_maps():
     assert not payload["content_markdown"].lstrip().startswith("# ")   # 首行 H1 已剥
     assert payload["status"] == "published" and payload["author_name"]
     assert isinstance(payload.get("citations", []), list)
+    assert payload.get("meta_description")  # pillar.md 含 meta_description
 
 def test_draft_flag():
     import publish_post
@@ -42,6 +43,8 @@ def test_optional_none_fields_are_omitted_from_payload():
         "slug: s\n"
         "excerpt:\n"
         "category_slug:\n"
+        "meta_title:\n"
+        "meta_description:\n"
         "cover_image_url:\n"
         "video_url:\n"
         "citations:\n"
@@ -49,8 +52,26 @@ def test_optional_none_fields_are_omitted_from_payload():
         "正文"
     )
     payload = publish_post.build_payload(md, fallback_slug="s", author="A", draft=False)
-    for key in ("excerpt", "category_slug", "cover_image_url", "video_url", "citations"):
+    for key in ("excerpt", "category_slug", "meta_title", "meta_description", "cover_image_url", "video_url", "citations"):
         assert key not in payload, f"{key} 应因值为 None 被剔除，实际 payload={payload}"
+
+
+# ---- meta_title 与 meta_description 字段映射 ----
+
+def test_meta_title_and_description_included_in_payload():
+    import publish_post
+    md = (
+        "---\n"
+        "title: T\n"
+        "slug: s\n"
+        "meta_title: SEO标题\n"
+        "meta_description: SEO描述文本\n"
+        "---\n"
+        "正文"
+    )
+    payload = publish_post.build_payload(md, fallback_slug="s", author="A", draft=False)
+    assert payload.get("meta_title") == "SEO标题"
+    assert payload.get("meta_description") == "SEO描述文本"
 
 
 # ---- 409 语义核对：非 slug_conflict 的 409 应算 failed ----

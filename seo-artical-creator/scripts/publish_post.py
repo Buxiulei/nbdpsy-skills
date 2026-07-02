@@ -89,6 +89,12 @@ def build_payload(md_text: str, fallback_slug: str, author: str, draft: bool) ->
     payload["status"] = "draft" if draft else "published"
 
     # 可选字段（键存在且值非 None 才发，避免 null 覆盖后端已有值）
+    if meta.get("meta_title") is not None:
+        payload["meta_title"] = meta["meta_title"]
+
+    if meta.get("meta_description") is not None:
+        payload["meta_description"] = meta["meta_description"]
+
     if meta.get("cover_image_url") is not None:
         payload["cover_image_url"] = meta["cover_image_url"]
 
