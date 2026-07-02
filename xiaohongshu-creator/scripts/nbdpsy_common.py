@@ -9,7 +9,8 @@ def user_secrets_path() -> Path:
     if os.environ.get("NBDPSY_SECRETS"):
         return Path(os.environ["NBDPSY_SECRETS"]).expanduser()
     if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
         return base / "nbdpsy" / "secrets.env"
     return Path.home() / ".config" / "nbdpsy" / "secrets.env"
 

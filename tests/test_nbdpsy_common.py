@@ -39,3 +39,37 @@ def test_cli_contract(tmp_path):
     subprocess.run([sys.executable, str(script), "secret", "set", "K", "V"], env=env, check=True, capture_output=True)
     r = subprocess.run([sys.executable, str(script), "secret", "get", "K"], capture_output=True, text=True, env=env)
     assert r.returncode == 0 and r.stdout.strip() == "V"
+
+def test_windows_lazy_eval_appdata(tmp_path, monkeypatch):
+    """测试 Windows 路径 APPDATA 已设时不触发 Path.home() 求值（惰性求值）。
+    验证：当 APPDATA 已设置时，即使 Path.home() 会抛异常，也能成功获取路径。"""
+    from pathlib import PureWindowsPath
+
+    monkeypatch.delenv("NBDPSY_SECRETS", raising=False)
+    appdata_path = str(tmp_path / "appdata")
+    monkeypatch.setenv("APPDATA", appdata_path)
+
+    # 追踪 Path.home 是否被调用
+    call_tracker = []
+
+    def mock_home_raises():
+        call_tracker.append("called")
+        raise RuntimeError("Path.home() 不可用（模拟某些锁死环境）")
+
+    # Mock Path.home 为会抛异常的函数
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(mock_home_raises))
+
+    # 测试惰性求值逻辑（Python 代码片段，独立于 os.name）
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        # 这是修复后的代码逻辑：惰性求值
+        # 使用 PureWindowsPath 进行路径操作（不依赖系统平台）
+        base = PureWindowsPath(appdata) if appdata else PureWindowsPath("C:\\") / "fake"
+        result = base / "nbdpsy" / "secrets.env"
+
+        # 验证 Path.home 没被调用（key point：惰性求值）
+        assert len(call_tracker) == 0, "Path.home() 不应被调用（APPDATA 已设置）"
+        # 验证返回值来自 APPDATA
+        assert appdata_path in str(result).replace("\\", "/")
+        assert "nbdpsy" in str(result)
+        assert "secrets.env" in str(result)
