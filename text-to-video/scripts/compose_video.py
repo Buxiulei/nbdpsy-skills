@@ -305,7 +305,7 @@ def normalize_segment(seg: dict, idx: int, width: int, height: int, fps: int,
     # 视频链：缩放贴合 + 居中黑边补满
     vchain = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
               f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black")
-    # 旁白比画面长 → 整段匀速放慢填满旁白时长，画面持续运动（消除末帧定格的"卡住"感，保证连贯）。
+    # 旁白比画面长 → 整段匀速放慢填满旁白时长，画面持续运动（消除末帧定格的“卡住”感，保证连贯）。
     # 根本解是生成视频时就让 duration≈旁白时长，此处仅作兜底，把变速幅度降到最低。
     if use_narr and narr_dur > video_dur + 0.05:
         factor = narr_dur / video_dur
@@ -385,7 +385,7 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
 
     filters = []
     if ai_label:
-        # 右上角半透明底 + 白字"AI 生成"，合规显式标识
+        # 右上角半透明底 + 白字“AI 生成”，合规显式标识
         box = "box=1:boxcolor=black@0.45:boxborderw=8"
         cjk_font_file = resolve_font()
         filters.append(
