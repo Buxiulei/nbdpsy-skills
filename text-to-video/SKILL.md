@@ -91,6 +91,7 @@ python3 {SKILL_DIR}/scripts/parse_note.py <note_dir>/post-NN.md \
 
 - 图生模式：`--images-dir` 指向**去文字版**参考图目录（来源见「衔接 xiaohongshu-creator」节；命名 `P1.png` 或 `P01.png` 均可，大小写不敏感，按页序号自动映射到每镜 `image` 字段）。
 - 纯文生（无图）：省略 `--images-dir`。
+- shots.json 输出目录会自动创建，无需手动 mkdir。
 - stdout JSON `{"out": ..., "shots": N}`，核对页数；stderr 会警告缺提示词/页面文字的页。
 
 **2. 精修分镜（智力步骤，你来做，决定成片质量）**
@@ -127,10 +128,10 @@ python3 {SKILL_DIR}/scripts/sync_durations.py --shots <workdir>/shots.json --aud
 
 ```bash
 python3 {SKILL_DIR}/scripts/jimeng_gen.py batch --plan <workdir>/shots.json \
-  --out-dir <workdir> --submit-only
+  --out-dir <workdir> --submit-only > <workdir>/submit_ids.json
 ```
 
-- **保存 stdout JSON**：`results[].submit_id` 是取片凭证（注意 `results[].index` 是 0 起，shots.json 的 `index` 是 1 起，映射时 +1）。
+- **保存 stdout JSON 到 `<workdir>/submit_ids.json`**：`results[].submit_id` 是取片凭证与防重复扣分的关键（注意 `results[].index` 是 0 起，shots.json 的 `index` 是 1 起，映射时 +1）。submit_id 保留不重复提交，即使超时也可后续再 fetch 补取。
 - 新题材首次跑建议先 `gen` 试水 1 镜确认观感+实测排队，再放量（见「生成细节」节）。
 
 **6. 并行取片 + 重命名**
@@ -138,10 +139,13 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py batch --plan <workdir>/shots.json \
 ```bash
 # 每个 submit_id 各开一个 fetch（可多进程并行，墙钟≈最慢单镜）
 python3 {SKILL_DIR}/scripts/jimeng_gen.py fetch --submit-id <id> --out-dir <workdir>
-# 下载落地命名 {submit_id}_video_N.mp4，按镜序重命名成契约名：
-mv <workdir>/<submit_id>_video_0.mp4 <workdir>/shot-01.mp4
+# fetch 输出 JSON，使用其中 videos[] 字段里的真实路径逐镜重命名成契约名
+# 示例（fetch 返回 {"success":true, "videos":["/path/to/video_0.mp4", "/path/to/video_1.mp4"]}）：
+mv /path/to/video_0.mp4 <workdir>/shot-01.mp4
+mv /path/to/video_1.mp4 <workdir>/shot-02.mp4
 ```
 
+- 以 fetch 输出 JSON 的 `videos[]` 字段里的真实路径为准，不要假设文件名格式——按实际输出路径逐镜改名为 `shot-NN.mp4`（两位序号，01 起）。
 - 个别任务卡 `querying` 数小时（同批其他 30–60min 出）→ 提交积分已是沉没成本，**重提新 submit_id（走 VIP）并行抢，谁先渲染好用谁**。
 - fetch 超时不丢任务：submit_id 保留，稍后再 fetch，不重复扣分。
 
