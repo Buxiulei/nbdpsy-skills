@@ -52,7 +52,8 @@ def count_pages(text: str) -> int:
 
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "usage: count_xhs.py <file>"}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({"error": "usage: count_xhs.py <file>"}, ensure_ascii=False))
+        sys.stderr.write("Error: missing required argument <file>\n")
         sys.exit(2)
 
     filepath = Path(sys.argv[1])
@@ -60,7 +61,8 @@ def main():
     try:
         text = filepath.read_text(encoding="utf-8")
     except Exception as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({"error": f"文件不存在: {filepath}"}, ensure_ascii=False))
+        sys.stderr.write(f"Error: {e}\n")
         sys.exit(2)
 
     body_chars = count_body_chars(text)
