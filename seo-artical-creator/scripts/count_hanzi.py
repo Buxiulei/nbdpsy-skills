@@ -17,7 +17,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file"); ap.add_argument("--min", type=int, default=3000); ap.add_argument("--max", type=int, default=5000)
     a = ap.parse_args()
-    n = count_hanzi(Path(a.file).read_text(encoding="utf-8"))
+    try:
+        text = Path(a.file).read_text(encoding="utf-8")
+    except (FileNotFoundError, IOError, OSError) as e:
+        print(json.dumps({"error": f"文件不存在: {a.file}"}, ensure_ascii=False))
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(2)
+    n = count_hanzi(text)
     ok = a.min <= n <= a.max
     print(json.dumps({"hanzi": n, "min": a.min, "max": a.max, "ok": ok}, ensure_ascii=False))
     sys.exit(0 if ok else 2)

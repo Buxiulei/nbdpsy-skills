@@ -18,3 +18,9 @@ def test_dead_link_exit1(tmp_path):
     r = subprocess.run([sys.executable, str(SCRIPT), str(f), "--timeout", "2"], capture_output=True, text=True)
     d = json.loads(r.stdout)
     assert r.returncode == 1 and len(d["dead"]) == 1
+
+def test_missing_file_exit2(tmp_path):
+    r = subprocess.run([sys.executable, str(SCRIPT), "/nonexistent/path/file.md"], capture_output=True, text=True)
+    assert r.returncode == 2
+    d = json.loads(r.stdout)
+    assert "error" in d

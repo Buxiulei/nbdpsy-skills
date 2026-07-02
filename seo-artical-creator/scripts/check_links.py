@@ -20,7 +20,11 @@ def probe(url: str, timeout: int):
     try:
         r = requests.head(url, timeout=timeout, headers=UA, allow_redirects=True)
         if r.status_code in (405, 501):
-            r = requests.get(url, timeout=timeout, headers=UA, stream=True)
+            r_get = requests.get(url, timeout=timeout, headers=UA, stream=True)
+            try:
+                return r_get.status_code
+            finally:
+                r_get.close()
         return r.status_code
     except requests.RequestException:
         return None
@@ -36,7 +40,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file"); ap.add_argument("--timeout", type=int, default=10)
     a = ap.parse_args()
-    urls = extract_urls(Path(a.file).read_text(encoding="utf-8"))
+    try:
+        text = Path(a.file).read_text(encoding="utf-8")
+    except (FileNotFoundError, IOError, OSError) as e:
+        print(json.dumps({"error": f"文件不存在: {a.file}"}, ensure_ascii=False))
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(2)
+    urls = extract_urls(text)
     dead, suspect = [], []
     with ThreadPoolExecutor(max_workers=8) as ex:
         for url, status in zip(urls, ex.map(lambda u: probe(u, a.timeout), urls)):

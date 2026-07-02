@@ -19,3 +19,9 @@ def test_fixture_pillar_in_range(tmp_path):
     fx = Path(__file__).parent / "fixtures" / "pillar.md"
     r = subprocess.run([sys.executable, str(SCRIPT), str(fx)], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout   # 范文必须达标
+
+def test_missing_file_exit2(tmp_path):
+    r = subprocess.run([sys.executable, str(SCRIPT), "/nonexistent/path/file.md"], capture_output=True, text=True)
+    assert r.returncode == 2
+    d = json.loads(r.stdout)
+    assert "error" in d
