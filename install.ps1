@@ -1,4 +1,4 @@
-# NBDpsy skills 一键安装（Windows）。用法: .\install.ps1 [claude|codex|agents|all]（默认 all）
+﻿# NBDpsy skills 一键安装（Windows）。用法: .\install.ps1 [claude|codex|agents|all]（默认 all）
 # 远程: irm https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.ps1 | iex
 param(
     [string]$Target = "all"
@@ -16,6 +16,7 @@ if ([string]::IsNullOrEmpty($Src) -or -not (Test-Path (Join-Path $Src $Skills[0]
     New-Item -ItemType Directory -Path $Tmp | Out-Null
     Write-Host "→ 临时克隆 $RepoUrl ..."
     git clone --depth 1 $RepoUrl (Join-Path $Tmp "repo") *> $null
+    if ($LASTEXITCODE -ne 0) { throw \"git clone 失败（网络或权限问题）\" }
     $Src = Join-Path $Tmp "repo"
 }
 
@@ -24,6 +25,7 @@ function Copy-ToDest {
         [string]$Dest,
         [string]$Label
     )
+    if ([string]::IsNullOrEmpty($Dest)) { throw "Dest 为空，拒绝执行删除/拷贝" }
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
     Write-Host "→ 安装到 $Label（$Dest）"
     foreach ($s in $Skills) {
