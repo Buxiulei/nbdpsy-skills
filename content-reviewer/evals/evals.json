@@ -4,8 +4,8 @@
     {
       "id": 0,
       "name": "review-xhs-note",
-      "prompt": "对这篇小红书笔记进行对抗审查，使用 references/checklist-note.md 清单逐条检查。输入笔记：https://github.com/Buxiulei/nbdpsy-skills/tree/master/xiaohongshu-creator-workspace/iteration-3/eval-cptsd-split/with_skill/outputs",
-      "files": [],
+      "prompt": "对这篇小红书笔记进行对抗审查，使用 references/checklist-note.md 清单逐条检查。输入笔记：assets/example-xhs-note.md",
+      "files": ["assets/example-xhs-note.md"],
       "expected_output": "生成 review-report.md，首行为「# 审查结论：PASS」或「# 审查结论：FAIL」；逐条记录脚本输出与判断项 PASS/FAIL 及证据。",
       "assertions": [
         {"text": "首行为「# 审查结论：」开头的 PASS 或 FAIL 结论"},

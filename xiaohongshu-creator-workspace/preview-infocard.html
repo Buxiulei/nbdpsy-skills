@@ -1,0 +1,1128 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小红书拆分预览 · fuzaxing-chuangshang-cptsd-zhinan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style>@import url('https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Raleway:wght@300;400;500;600&display=swap');
+
+:root{--paper:#FAF7F2;--card:#FFFFFF;--ink:#2E3A43;--muted:#6B7884;--brand:#5A6B7B;
+--sage:#C9D6CE;--mist:#A8B5C4;--sand:#E8D8C4;--line:#ECE5DA;--code:#2E3A43;--code-ink:#E9ECEF;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+font-family:Raleway,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.75;}
+.wrap{max-width:880px;margin:0 auto;padding:40px 20px 80px;}
+h1{font-family:Lora,Georgia,serif;font-weight:700;font-size:1.9rem;color:var(--brand);margin:0 0 6px;}
+.sub{color:var(--muted);margin:0 0 24px;font-size:.95rem;}
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 30px;font-size:.85rem;}
+.legend span{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--card);}
+.dot{width:10px;height:10px;border-radius:3px;display:inline-block;}
+.dot.read{background:var(--sand);} .dot.ai{background:var(--code);}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 34px;}
+.toc a{font-size:.85rem;text-decoration:none;color:var(--brand);border:1px solid var(--line);
+background:var(--card);padding:6px 12px;border-radius:8px;transition:background .2s,border-color .2s;}
+.toc a:hover{background:var(--sage);border-color:var(--sage);}
+.post{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:26px;margin:0 0 30px;
+box-shadow:0 1px 2px rgba(46,58,67,.04);scroll-margin-top:20px;}
+.phead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:0 0 4px;}
+.pnum{font-family:Lora,serif;font-weight:700;color:var(--mist);font-size:1.05rem;}
+.ptitle{font-family:Lora,serif;font-weight:600;font-size:1.3rem;color:var(--ink);margin:0;}
+.ptopic{margin-left:auto;font-size:.78rem;color:var(--muted);background:var(--paper);
+border:1px solid var(--line);padding:3px 10px;border-radius:999px;}
+.label{display:flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;letter-spacing:.02em;
+color:var(--muted);text-transform:none;margin:22px 0 10px;}
+.label .bar{width:3px;height:14px;border-radius:2px;background:var(--sand);}
+.label.ai .bar{background:var(--mist);}
+.read-panel{background:#FCFAF6;border:1px solid var(--line);border-radius:12px;padding:18px 20px;position:relative;}
+.read-panel p{margin:0 0 12px;font-size:1.02rem;}
+.read-panel p:last-child{margin-bottom:0;}
+.disclaimer{font-size:.82rem!important;color:var(--muted);background:#F3EFE8;border-radius:8px;padding:8px 12px;}
+.tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px;}
+.tag{font-size:.82rem;color:var(--brand);background:#EAF0EC;border:1px solid #DBE5DE;padding:3px 10px;border-radius:999px;}
+.page{border-top:1px dashed var(--line);padding-top:16px;margin-top:16px;}
+.page:first-of-type{border-top:none;}
+.ptitle-sm{font-weight:600;color:var(--brand);margin:0 0 8px;font-size:1rem;}
+ul.pagetext{margin:0 0 12px;padding-left:20px;}
+ul.pagetext li{margin:2px 0;}
+.code-wrap{position:relative;}
+pre.prompt{background:var(--code);color:var(--code-ink);border-radius:12px;padding:16px 18px;margin:0;
+font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.86rem;line-height:1.65;
+white-space:pre-wrap;word-break:break-word;overflow-x:auto;}
+button.copy{position:absolute;top:10px;right:10px;border:none;cursor:pointer;border-radius:8px;
+font-size:.8rem;font-weight:600;padding:8px 12px;min-height:34px;transition:background .2s,transform .1s;
+background:rgba(255,255,255,.14);color:#fff;}
+button.copy:hover{background:rgba(255,255,255,.26);}
+button.copy:active{transform:scale(.96);}
+button.copy.ok{background:#7FA98C;color:#fff;}
+button.copy:focus-visible{outline:2px solid var(--mist);outline-offset:2px;}
+.cap-copy{position:static;display:inline-flex;align-items:center;gap:6px;margin-left:auto;
+background:var(--brand);color:#fff;}
+.cap-copy:hover{background:#4a5a69;}
+.cap-copy.ok{background:#7FA98C;}
+.label.read{justify-content:flex-start;}
+.label-row{display:flex;align-items:center;gap:8px;margin:22px 0 10px;}
+.label-row .bar{width:3px;height:14px;border-radius:2px;background:var(--sand);}
+.label-row .txt{font-size:.8rem;font-weight:600;color:var(--muted);}
+svg.ic{width:14px;height:14px;vertical-align:-2px;}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+@media (max-width:560px){.wrap{padding:24px 14px 60px;}.post{padding:18px;}}
+</style></head>
+<body><div class="wrap">
+  <h1>小红书拆分预览 · fuzaxing-chuangshang-cptsd-zhinan</h1>
+  <p class="sub">共 6 篇。<b>发布文案</b>整段复制粘进小红书；<b>绘图提示词</b>每段一键复制喂给 Gemini/GPT 出图（导出 1080×1440，首图当封面）。</p>
+  <div class="legend">
+    <span><i class="dot read"></i> 给人看 · 发布文案 / 页面文字</span>
+    <span><i class="dot ai"></i> 复制给 AI · 绘图提示词（保持原样）</span>
+  </div>
+  <div class="toc"><a href="#post1">1 总说自己&quot;想太多&quot;？也许是复杂性创伤</a><a href="#post2">2 &quot;都过去了&quot;，为什么我还是放不下？</a><a href="#post3">3 明明什么都没发生，为什么我总觉得空？</a><a href="#post4">4 看了很多抑郁焦虑科普，却没说到点子上？</a><a href="#post5">5 复杂性创伤，5 个能从今天开始的自救小步</a><a href="#post6">6 自我照顾也有边界：这 4 种情况别再一个人扛</a></div>
+  
+    <section class="post" id="post1">
+      <div class="phead">
+        <span class="pnum">1</span>
+        <h2 class="ptitle">总说自己&quot;想太多&quot;？也许是复杂性创伤</h2>
+        <span class="ptopic">CPTSD 是什么 + 和 PTSD 的区别</span>
+      </div>
+
+      <div class="label-row read">
+        <span class="bar"></span><span class="txt">发布文案 · 复制这段发小红书</span>
+        <button class="copy cap-copy" data-label="复制文案" onclick="copyVal('cap-post1',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制文案</button>
+      </div>
+      <textarea id="cap-post1" hidden>姐妹，如果你常觉得&quot;我的痛苦好像和别人不太一样&quot;——不是被某一件事吓到，而是很多年一点点累积下来的某种东西，让你对自己、对关系、对世界都失去了安全感👇
+
+这可能是**复杂性创伤（CPTSD）**，不是矫情，也不是想太多。
+
+它和 PTSD 是&quot;近亲&quot;，但有关键区别：
+· PTSD 多由单次事件引发（车祸、灾难、突发袭击）
+· CPTSD 多由长期、反复、逃不掉的人际创伤引发（童年长期被否定、长期家暴）
+· CPTSD 还会多出三样：情绪像过山车、总觉得&quot;我有缺陷&quot;、难以与人亲近
+
+世界卫生组织 ICD-11 已经把它单独列为一种诊断，美国 DSM-5 暂时没单列。换句话说——你的难受是被看见、被记录过的，不是你的错🤍
+
+研究还发现，约 7.2% 的成年人符合 PTSD 或 CPTSD 标准，其中 CPTSD（约 3.8%）甚至比 PTSD（3.4%）更常见。你真的不孤单。
+
+你有没有过&quot;一点小事就被巨大情绪淹没&quot;的瞬间？评论区抱抱👇
+
+（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）
+
+#心理科普 #复杂性创伤 #CPTSD #PTSD #情绪内耗 #童年创伤 #自我觉察</textarea>
+      <div class="read-panel"><p>姐妹，如果你常觉得&quot;我的痛苦好像和别人不太一样&quot;——不是被某一件事吓到，而是很多年一点点累积下来的某种东西，让你对自己、对关系、对世界都失去了安全感👇</p>
+<p>这可能是<strong>复杂性创伤（CPTSD）</strong>，不是矫情，也不是想太多。</p>
+<p>它和 PTSD 是&quot;近亲&quot;，但有关键区别：<br>· PTSD 多由单次事件引发（车祸、灾难、突发袭击）<br>· CPTSD 多由长期、反复、逃不掉的人际创伤引发（童年长期被否定、长期家暴）<br>· CPTSD 还会多出三样：情绪像过山车、总觉得&quot;我有缺陷&quot;、难以与人亲近</p>
+<p>世界卫生组织 ICD-11 已经把它单独列为一种诊断，美国 DSM-5 暂时没单列。换句话说——你的难受是被看见、被记录过的，不是你的错🤍</p>
+<p>研究还发现，约 7.2% 的成年人符合 PTSD 或 CPTSD 标准，其中 CPTSD（约 3.8%）甚至比 PTSD（3.4%）更常见。你真的不孤单。</p>
+<p>你有没有过&quot;一点小事就被巨大情绪淹没&quot;的瞬间？评论区抱抱👇</p>
+<p class="disclaimer">（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）</p>
+<div class="tags"><span class="tag">#心理科普</span><span class="tag">#复杂性创伤</span><span class="tag">#CPTSD</span><span class="tag">#PTSD</span><span class="tag">#情绪内耗</span><span class="tag">#童年创伤</span><span class="tag">#自我觉察</span></div></div>
+
+      <div class="label-row"><span class="bar" style="background:var(--mist)"></span>
+        <span class="txt">配图轮播 · 6 页（每页提示词喂图保持风格一致）</span></div>
+      <p class="sub" style="margin:0 0 14px">文字均已写进提示词。出图工具：Gemini / GPT；导出 1080×1440（3:4）；P1 定稿后作参考图喂给 P2–P6 保持风格一致；出图后逐字核对图上文字无错字（CPTSD 等缩写尤其要核对）。封面/末页精简，中间是信息卡。</p>
+      
+      <div class="page">
+        <div class="ptitle-sm">P1 · 封面</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>总说自己&quot;想太多&quot;？</li>
+<li><b>副标题：</b>也许是复杂性创伤（CPTSD）</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post1-1',this)">复制</button>
+          <pre class="prompt" id="pr-post1-1">柔和扁平矢量插画风，莫兰迪低饱和配色——雾霾蓝灰 #A8B5C4、暖米白 #E8D8C4、鼠尾草绿 #C9D6CE 为主，背景暖白；圆润柔和形体，细腻颗粒肌理，柔光无强阴影，平静治愈；竖版 3:4，主体居中偏下，顶部留约 1/3 空白。
+画面：一位圆脸、齐肩微卷短发的东亚年轻女性，穿燕麦色针织衫，独自坐在窗边捧着温热的马克杯望向柔光，身旁一盆小绿植，神情温和平静。
+文字：上方留白处写中文大标题&quot;总说自己想太多？&quot;（圆润无衬线体，深灰蓝 #5A6B7B，字号最大）；其下写副标题&quot;也许是复杂性创伤 CPTSD&quot;（同色，字号略小，CPTSD 单独放大一行便于渲染）。
+要求：封面留悬念、不堆要点；画面干净、留白充足，竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P2 · 它不是矫情（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>CPTSD 不是矫情</li>
+<li><b>不是被一件事吓到：</b>是很多年一点点累积下来的东西</li>
+<li><b>不是想太多：</b>是真实存在的应激反应，有诊断框架</li>
+<li><b>不是你的错：</b>源于长期、反复、逃不掉的处境</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post1-2',this)">复制</button>
+          <pre class="prompt" id="pr-post1-2">（沿用 NBDpsy 风格基底：莫兰迪低饱和、暖白背景、圆润形体、颗粒肌理、柔光、竖版 3:4；主色 #A8B5C4 / #E8D8C4 / #C9D6CE）
+版式：信息卡布局。顶部居中大标题&quot;CPTSD 不是矫情&quot;（深灰蓝 #5A6B7B）；下方竖向排列三条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;不是被一件事吓到&quot;，说明&quot;是很多年累积下来的东西&quot;；
+② 小标题&quot;不是想太多&quot;，说明&quot;是真实存在的应激反应&quot;；
+③ 小标题&quot;不是你的错&quot;，说明&quot;源于长期逃不掉的处境&quot;。
+卡片右下角放一个很小的蜷坐女孩剪影点缀，不抢文字。
+要求：条目左对齐、间距均匀、信息清楚但不拥挤、留白透气；竖版 3:4，仅用品牌基底配色，所有中文逐字清晰写进图。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P3 · 和 PTSD 差在哪（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>CPTSD 和 PTSD 差在哪</li>
+<li><b>创伤类型：</b>PTSD 多单次事件；CPTSD 多长期反复的人际创伤</li>
+<li><b>诊断框架：</b>ICD-11 把 CPTSD 单列；DSM-5 暂未单列</li>
+<li><b>症状范围：</b>CPTSD 在闪回、高警觉外，多出&quot;自我组织紊乱&quot;</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post1-3',this)">复制</button>
+          <pre class="prompt" id="pr-post1-3">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;CPTSD 和 PTSD 差在哪&quot;（深灰蓝）；下方竖排三条，每条左侧小圆图标 + 加粗小标题 + 一行浅灰说明：
+① 小标题&quot;创伤类型&quot;，说明&quot;PTSD 多单次事件，CPTSD 多长期反复人际创伤&quot;；
+② 小标题&quot;诊断框架&quot;，说明&quot;ICD-11 单列 CPTSD，DSM-5 暂未单列&quot;；
+③ 小标题&quot;症状范围&quot;，说明&quot;CPTSD 多出自我组织紊乱&quot;。
+无真人，整体克制安静。（ICD-11、PTSD、CPTSD 等缩写如渲染错误请后期排版叠加）
+要求：条目左对齐、层级清晰、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P4 · CPTSD 多出三样（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>CPTSD 比 PTSD 多出三样</li>
+<li><b>情绪像过山车：</b>一点小事就被巨大情绪淹没，或长时间麻木</li>
+<li><b>觉得&quot;我有缺陷&quot;：</b>不是做错一件事，而是&quot;我这个人有问题&quot;</li>
+<li><b>难以与人亲近：</b>渴望靠近又害怕靠近，关系反复受损</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post1-4',this)">复制</button>
+          <pre class="prompt" id="pr-post1-4">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;CPTSD 多出三样&quot;（深灰蓝）；下方竖排三条，每条左侧一个柔和圆形小图标（依次：起伏波浪线、一颗有小裂纹的心、两个相背小人），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;情绪像过山车&quot;，说明&quot;被巨大情绪淹没，或长时间麻木&quot;；
+② 小标题&quot;觉得我有缺陷&quot;，说明&quot;不是做错事，是觉得我这人有问题&quot;；
+③ 小标题&quot;难以亲近人&quot;，说明&quot;渴望靠近又害怕靠近&quot;。
+要求：三条图标风格统一、间距均匀、信息清楚不拥挤，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P5 · 你不是一个人（信息卡 + 数据）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>你真的不是一个人</li>
+<li><b>约 7.2%：</b>成年人符合 PTSD 或 CPTSD 标准</li>
+<li><b>CPTSD 更常见：</b>约 3.8%，高于 PTSD 的 3.4%</li>
+<li><b>不是个别人脆弱：</b>它是普遍的公共心理健康议题</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post1-5',this)">复制</button>
+          <pre class="prompt" id="pr-post1-5">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;你真的不是一个人&quot;（深灰蓝）；中部一行柔和的简笔小人剪影，其中约 7 个用暖色高亮，呼应数据；下方两条加粗小标题 + 浅灰说明：
+① 小标题&quot;约 7.2%&quot;，说明&quot;成年人符合 PTSD 或 CPTSD 标准&quot;；
+② 小标题&quot;CPTSD 更常见&quot;，说明&quot;约 3.8%，高于 PTSD 的 3.4%&quot;。
+底部一行小字&quot;这是普遍的议题，不是个别人脆弱&quot;。
+要求：温暖不沉重、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P6 · 末页（行动 + 品牌 + 危机声明）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>被看见，是疗愈的开始</li>
+<li><b>副标题：</b>如果长期被困住，值得寻求专业陪伴</li>
+<li><b>页脚：</b>NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post1-6',this)">复制</button>
+          <pre class="prompt" id="pr-post1-6">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+画面：那位圆脸短发针织衫女孩站在一扇透着晨光的窗前，侧脸或背影，神情舒展，窗台一盆抽出新叶的绿植，传达&quot;重新有了空间&quot;的希望感。
+文字：上方写中文大标题&quot;被看见，是疗愈的开始&quot;（深灰蓝）；中部写一行&quot;如果长期被困住，值得寻求专业陪伴&quot;；底部小字写&quot;NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356&quot;。
+要求：末页精简、明亮温暖、留白充足；不出现任何二维码、微信号或链接；竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+    </section>
+    <section class="post" id="post2">
+      <div class="phead">
+        <span class="pnum">2</span>
+        <h2 class="ptitle">&quot;都过去了&quot;，为什么我还是放不下？</h2>
+        <span class="ptopic">童年创伤的影响——为什么早年经历会跟随一生</span>
+      </div>
+
+      <div class="label-row read">
+        <span class="bar"></span><span class="txt">发布文案 · 复制这段发小红书</span>
+        <button class="copy cap-copy" data-label="复制文案" onclick="copyVal('cap-post2',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制文案</button>
+      </div>
+      <textarea id="cap-post2" hidden>&quot;都过去了，你怎么还放不下？&quot;——如果你也被这样说过，这篇写给你🤍
+
+为什么早年的事，过了这么多年还在影响现在？因为童年正是大脑和&quot;自我&quot;形成的时期，在本该被好好照顾的阶段反复受伤，影响会格外深。
+
+美国疾控中心（CDC）的&quot;童年负面经历研究&quot;（ACE）调查了 17337 名成年人，发现约三分之二（约 64%）至少经历过一项童年负面经历，超过五分之一报告了三项及以上。童年创伤，远比我们以为的普遍。
+
+创伤研究者范德考克在《身体从未忘记》里写道：&quot;创伤幸存者长期在自己的身体里感到不安全。&quot;这解释了为什么很多人会莫名紧绷、易惊、难以放松——哪怕当下并没有危险。
+
+所以单靠&quot;想开点&quot;&quot;都过去了&quot;很难奏效：被影响的是负责警觉的&quot;生存脑&quot;，不只是讲道理的&quot;理性脑&quot;。
+
+伴侣只是语气重了一点，你却突然心跳加速、手脚发凉、脑子空白？那不是反应过度，是身体还记得。理解&quot;我的反应有它的来历，不是我的错&quot;，常常是和解的第一步。
+
+你被身体的&quot;记得&quot;困住过吗？评论区聊聊👇
+
+（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）
+
+#心理科普 #童年创伤 #复杂性创伤 #身体从未忘记 #情绪内耗 #原生家庭 #自我觉察</textarea>
+      <div class="read-panel"><p>&quot;都过去了，你怎么还放不下？&quot;——如果你也被这样说过，这篇写给你🤍</p>
+<p>为什么早年的事，过了这么多年还在影响现在？因为童年正是大脑和&quot;自我&quot;形成的时期，在本该被好好照顾的阶段反复受伤，影响会格外深。</p>
+<p>美国疾控中心（CDC）的&quot;童年负面经历研究&quot;（ACE）调查了 17337 名成年人，发现约三分之二（约 64%）至少经历过一项童年负面经历，超过五分之一报告了三项及以上。童年创伤，远比我们以为的普遍。</p>
+<p>创伤研究者范德考克在《身体从未忘记》里写道：&quot;创伤幸存者长期在自己的身体里感到不安全。&quot;这解释了为什么很多人会莫名紧绷、易惊、难以放松——哪怕当下并没有危险。</p>
+<p>所以单靠&quot;想开点&quot;&quot;都过去了&quot;很难奏效：被影响的是负责警觉的&quot;生存脑&quot;，不只是讲道理的&quot;理性脑&quot;。</p>
+<p>伴侣只是语气重了一点，你却突然心跳加速、手脚发凉、脑子空白？那不是反应过度，是身体还记得。理解&quot;我的反应有它的来历，不是我的错&quot;，常常是和解的第一步。</p>
+<p>你被身体的&quot;记得&quot;困住过吗？评论区聊聊👇</p>
+<p class="disclaimer">（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）</p>
+<div class="tags"><span class="tag">#心理科普</span><span class="tag">#童年创伤</span><span class="tag">#复杂性创伤</span><span class="tag">#身体从未忘记</span><span class="tag">#情绪内耗</span><span class="tag">#原生家庭</span><span class="tag">#自我觉察</span></div></div>
+
+      <div class="label-row"><span class="bar" style="background:var(--mist)"></span>
+        <span class="txt">配图轮播 · 7 页（每页提示词喂图保持风格一致）</span></div>
+      <p class="sub" style="margin:0 0 14px">文字均已写进提示词。出图工具：Gemini / GPT；导出 1080×1440（3:4）；P1 定稿后作参考图喂给后续页保持风格一致；出图后逐字核对图上文字与数字（17337、64% 等）。封面/末页精简，中间是信息卡。</p>
+      
+      <div class="page">
+        <div class="ptitle-sm">P1 · 封面</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>&quot;都过去了&quot;，为什么还放不下？</li>
+<li><b>副标题：</b>童年创伤为什么跟随一生</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post2-1',this)">复制</button>
+          <pre class="prompt" id="pr-post2-1">柔和扁平矢量插画风，莫兰迪低饱和配色——雾霾蓝灰 #A8B5C4、暖米白 #E8D8C4、鼠尾草绿 #C9D6CE 为主，背景暖白；圆润柔和形体，细腻颗粒肌理，柔光无强阴影，平静治愈；竖版 3:4，主体居中偏下，顶部留约 1/3 空白。
+画面：一位圆脸、齐肩微卷短发的东亚年轻女性，穿燕麦色针织衫，安静地抱膝坐在地毯上，身旁是一张泛黄的旧照片和一盆小绿植，神情温柔带一点出神。
+文字：上方留白处写中文大标题&quot;都过去了，为什么还放不下？&quot;（圆润无衬线体，深灰蓝 #5A6B7B，字号最大）；其下写副标题&quot;童年创伤为什么跟随一生&quot;（同色，字号略小）。
+要求：封面留悬念、不堆要点；画面干净、留白充足，竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P2 · 为什么忘不掉（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>为什么童年的事忘不掉</li>
+<li><b>大脑在发育：</b>童年是大脑和&quot;自我&quot;成形的时期</li>
+<li><b>安全感地基：</b>本该被照顾时却反复受伤</li>
+<li><b>影响更深：</b>渗进你怎么看自己、怎么与人相处</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post2-2',this)">复制</button>
+          <pre class="prompt" id="pr-post2-2">（沿用 NBDpsy 风格基底：莫兰迪低饱和、暖白背景、圆润形体、颗粒肌理、柔光、竖版 3:4；主色 #A8B5C4 / #E8D8C4 / #C9D6CE）
+版式：信息卡布局。顶部居中大标题&quot;为什么童年的事忘不掉&quot;（深灰蓝 #5A6B7B）；下方竖排三条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;大脑在发育&quot;，说明&quot;童年是大脑和自我成形期&quot;；
+② 小标题&quot;安全感地基&quot;，说明&quot;本该被照顾时却反复受伤&quot;；
+③ 小标题&quot;影响更深&quot;，说明&quot;渗进你怎么看自己和关系&quot;。
+要求：条目左对齐、间距均匀、信息清楚不拥挤、留白透气；竖版 3:4，仅用品牌基底配色，所有中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P3 · 童年创伤有多普遍（信息卡 + 数据）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>童年创伤有多普遍</li>
+<li><b>17337 人样本：</b>CDC 的&quot;童年负面经历研究&quot;（ACE）</li>
+<li><b>约 64%：</b>至少经历过一项童年负面经历</li>
+<li><b>超 1/5：</b>报告了三项及以上</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post2-3',this)">复制</button>
+          <pre class="prompt" id="pr-post2-3">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;童年创伤有多普遍&quot;（深灰蓝）；中部一组柔和的简笔小人剪影，其中约三分之二用暖色高亮，呼应&quot;约 64%&quot;；下方竖排三条加粗小标题 + 浅灰说明：
+① 小标题&quot;17337 人样本&quot;，说明&quot;CDC 童年负面经历研究 ACE&quot;；
+② 小标题&quot;约 64%&quot;，说明&quot;至少经历过一项童年负面经历&quot;；
+③ 小标题&quot;超 1/5&quot;，说明&quot;报告了三项及以上&quot;。
+要求：数字清晰醒目、整体温暖不沉重、留白透气，竖版 3:4，仅用品牌基底配色，中文与数字逐字核对。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P4 · 身体从未忘记（信息卡 + 引语）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>身体比头脑更早记得</li>
+<li><b>创伤刻进身体：</b>&quot;长期在自己的身体里感到不安全&quot;</li>
+<li><b>生存脑被激活：</b>不是靠&quot;讲道理&quot;能讲通的</li>
+<li><b>莫名地紧绷：</b>易惊、难放松，哪怕当下没危险</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post2-4',this)">复制</button>
+          <pre class="prompt" id="pr-post2-4">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;身体比头脑更早记得&quot;（深灰蓝）；卡片上部用一行小字引语&quot;创伤幸存者长期在自己的身体里感到不安全&quot;（浅灰、斜体气质，标注引自《身体从未忘记》）；下方竖排三条加粗小标题 + 浅灰说明：
+① 小标题&quot;刻进身体&quot;，说明&quot;创伤不只在记忆里，也在身体里&quot;；
+② 小标题&quot;生存脑被激活&quot;，说明&quot;不是讲道理能讲通的&quot;；
+③ 小标题&quot;莫名紧绷&quot;，说明&quot;易惊难放松，哪怕当下没危险&quot;。
+要求：克制安静、层级清晰、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P5 · 这不是反应过度（信息卡 · 场景）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>这不是反应过度</li>
+<li><b>触发瞬间：</b>伴侣只是语气稍重，你却突然心跳加速</li>
+<li><b>身体先反应：</b>手脚发凉、脑子一片空白</li>
+<li><b>它有来历：</b>是当年为自保磨出来的高度警觉</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post2-5',this)">复制</button>
+          <pre class="prompt" id="pr-post2-5">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;这不是反应过度&quot;（深灰蓝）；卡片左侧一个很小的、双手轻护胸口的圆脸女孩剪影点缀；下方竖排三条加粗小标题 + 浅灰说明：
+① 小标题&quot;触发瞬间&quot;，说明&quot;对方语气稍重，你突然心跳加速&quot;；
+② 小标题&quot;身体先反应&quot;，说明&quot;手脚发凉、脑子一片空白&quot;；
+③ 小标题&quot;它有来历&quot;，说明&quot;是当年自保磨出的高度警觉&quot;。
+要求：温柔不惊悚、间距均匀、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P6 · 和解从这句开始（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>和解，从这句话开始</li>
+<li><b>不是我的错：</b>&quot;我的反应有它的来历&quot;</li>
+<li><b>先理解再处理：</b>看见来历，绷紧的弦就松了</li>
+<li><b>这是起点：</b>自我和解，是一切自救的开始</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post2-6',this)">复制</button>
+          <pre class="prompt" id="pr-post2-6">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;和解，从这句话开始&quot;（深灰蓝）；卡片中部用稍大字号突出一句&quot;我的反应有它的来历，不是我的错&quot;（深灰蓝，加粗）；下方竖排两条加粗小标题 + 浅灰说明：
+① 小标题&quot;先理解&quot;，说明&quot;看见来历，绷紧的弦就松了&quot;；
+② 小标题&quot;这是起点&quot;，说明&quot;自我和解是一切自救的开始&quot;。
+要求：温暖治愈、留白充足，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P7 · 末页（行动 + 品牌 + 危机声明）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>你不必一个人扛</li>
+<li><b>副标题：</b>身体的记得可以被慢慢安抚，被困住时值得寻求专业陪伴</li>
+<li><b>页脚：</b>NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post2-7',this)">复制</button>
+          <pre class="prompt" id="pr-post2-7">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+画面：那位圆脸短发针织衫女孩坐在窗边，双手捧着温热马克杯，肩膀放松地舒展，窗外是柔和的晨光与一株绿植，传达&quot;慢慢安定下来&quot;的感觉。
+文字：上方写中文大标题&quot;你不必一个人扛&quot;（深灰蓝）；中部写一行&quot;身体的记得可以被慢慢安抚，被困住时值得寻求专业陪伴&quot;；底部小字写&quot;NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356&quot;。
+要求：末页精简、明亮温暖、留白充足；不出现任何二维码、微信号或链接；竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+    </section>
+    <section class="post" id="post3">
+      <div class="phead">
+        <span class="pnum">3</span>
+        <h2 class="ptitle">明明什么都没发生，为什么我总觉得空？</h2>
+        <span class="ptopic">童年情感忽视——那道看不见的伤</span>
+      </div>
+
+      <div class="label-row read">
+        <span class="bar"></span><span class="txt">发布文案 · 复制这段发小红书</span>
+        <button class="copy cap-copy" data-label="复制文案" onclick="copyVal('cap-post3',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制文案</button>
+      </div>
+      <textarea id="cap-post3" hidden>如果你常觉得&quot;我好像哪里不对劲，但又说不出到底缺了什么&quot;——这篇写给你🤍
+
+并不是所有童年的伤都有&quot;事件&quot;。有一种伤，是因为**该发生的事，没有发生**。
+
+临床心理学家乔尼斯·韦布在《Running on Empty》里提出&quot;童年情感忽视&quot;：当父母长期没能看见、回应、确认孩子的情绪，孩子的情感需求被无声地忽略。
+
+韦布的概括很精准——它&quot;不是童年时对你做了什么，而是本该为你做、却没有发生的事&quot;。正因为没有具体画面，常常连自己都说不清，只觉得内心有种空、有种&quot;少了点什么&quot;。
+
+成年后它可能表现为：
+· 莫名的空虚或麻木
+· 过度独立，不敢依赖别人
+· 对自己缺乏同情、容易自责
+· 总觉得&quot;我哪里不对劲&quot;
+
+如果你在这些描述里看见了自己，请知道：这不是你软弱，而是一种可以被理解、被照顾的早年印记。看不见，不等于不存在。
+
+你也有过&quot;说不出缺了什么&quot;的空吗？评论区抱抱👇
+
+（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）
+
+#心理科普 #童年情感忽视 #情感忽视 #童年创伤 #情绪内耗 #自我觉察 #原生家庭</textarea>
+      <div class="read-panel"><p>如果你常觉得&quot;我好像哪里不对劲，但又说不出到底缺了什么&quot;——这篇写给你🤍</p>
+<p>并不是所有童年的伤都有&quot;事件&quot;。有一种伤，是因为<strong>该发生的事，没有发生</strong>。</p>
+<p>临床心理学家乔尼斯·韦布在《Running on Empty》里提出&quot;童年情感忽视&quot;：当父母长期没能看见、回应、确认孩子的情绪，孩子的情感需求被无声地忽略。</p>
+<p>韦布的概括很精准——它&quot;不是童年时对你做了什么，而是本该为你做、却没有发生的事&quot;。正因为没有具体画面，常常连自己都说不清，只觉得内心有种空、有种&quot;少了点什么&quot;。</p>
+<p>成年后它可能表现为：<br>· 莫名的空虚或麻木<br>· 过度独立，不敢依赖别人<br>· 对自己缺乏同情、容易自责<br>· 总觉得&quot;我哪里不对劲&quot;</p>
+<p>如果你在这些描述里看见了自己，请知道：这不是你软弱，而是一种可以被理解、被照顾的早年印记。看不见，不等于不存在。</p>
+<p>你也有过&quot;说不出缺了什么&quot;的空吗？评论区抱抱👇</p>
+<p class="disclaimer">（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）</p>
+<div class="tags"><span class="tag">#心理科普</span><span class="tag">#童年情感忽视</span><span class="tag">#情感忽视</span><span class="tag">#童年创伤</span><span class="tag">#情绪内耗</span><span class="tag">#自我觉察</span><span class="tag">#原生家庭</span></div></div>
+
+      <div class="label-row"><span class="bar" style="background:var(--mist)"></span>
+        <span class="txt">配图轮播 · 7 页（每页提示词喂图保持风格一致）</span></div>
+      <p class="sub" style="margin:0 0 14px">文字均已写进提示词。出图工具：Gemini / GPT；导出 1080×1440（3:4）；P1 定稿后作参考图喂给后续页保持风格一致；出图后逐字核对图上文字（含 Running on Empty 书名）。封面/末页精简，中间是信息卡。</p>
+      
+      <div class="page">
+        <div class="ptitle-sm">P1 · 封面</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>明明什么都没发生</li>
+<li><b>副标题：</b>为什么我总觉得空？</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post3-1',this)">复制</button>
+          <pre class="prompt" id="pr-post3-1">柔和扁平矢量插画风，莫兰迪低饱和配色——雾霾蓝灰 #A8B5C4、暖米白 #E8D8C4、鼠尾草绿 #C9D6CE 为主，背景暖白；圆润柔和形体，细腻颗粒肌理，柔光无强阴影，平静治愈；竖版 3:4，主体居中偏下，顶部留约 1/3 空白。
+画面：一位圆脸、齐肩微卷短发的东亚年轻女性，穿燕麦色针织衫，独自坐在略空旷的房间里望向窗外，身旁有一只空着的马克杯，神情平静却有一点怅然，整体留白多、显出&quot;空&quot;的氛围。
+文字：上方留白处写中文大标题&quot;明明什么都没发生&quot;（圆润无衬线体，深灰蓝 #5A6B7B，字号最大）；其下写副标题&quot;为什么我总觉得空？&quot;（同色，字号略小）。
+要求：封面留悬念、不堆要点；画面干净、留白充足，竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P2 · 有一种伤没有&quot;事件&quot;（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>有一种伤没有&quot;事件&quot;</li>
+<li><b>不是做了什么：</b>是该发生的事没有发生</li>
+<li><b>看不见的伤：</b>没有具体画面可以指认</li>
+<li><b>说不清的空：</b>只觉得&quot;少了点什么&quot;</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post3-2',this)">复制</button>
+          <pre class="prompt" id="pr-post3-2">（沿用 NBDpsy 风格基底：莫兰迪低饱和、暖白背景、圆润形体、颗粒肌理、柔光、竖版 3:4；主色 #A8B5C4 / #E8D8C4 / #C9D6CE）
+版式：信息卡布局。顶部居中大标题&quot;有一种伤没有事件&quot;（深灰蓝 #5A6B7B）；下方竖排三条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;不是做了什么&quot;，说明&quot;是该发生的事没有发生&quot;；
+② 小标题&quot;看不见的伤&quot;，说明&quot;没有具体画面可以指认&quot;；
+③ 小标题&quot;说不清的空&quot;，说明&quot;只觉得少了点什么&quot;。
+要求：条目左对齐、间距均匀、信息清楚不拥挤、留白透气；竖版 3:4，仅用品牌基底配色，所有中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P3 · 什么是童年情感忽视（信息卡 + 引语）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>什么是童年情感忽视</li>
+<li><b>来自韦布：</b>《Running on Empty》提出的概念</li>
+<li><b>核心：</b>情绪长期没被看见、回应、确认</li>
+<li><b>一句话：</b>&quot;本该为你做、却没有发生的事&quot;</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post3-3',this)">复制</button>
+          <pre class="prompt" id="pr-post3-3">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;什么是童年情感忽视&quot;（深灰蓝）；卡片中部用稍突出的浅灰引语&quot;不是对你做了什么，而是本该为你做、却没有发生的事&quot;；下方竖排三条加粗小标题 + 浅灰说明：
+① 小标题&quot;来自韦布&quot;，说明&quot;出自 Running on Empty 一书&quot;；
+② 小标题&quot;核心&quot;，说明&quot;情绪长期没被看见、回应、确认&quot;；
+③ 小标题&quot;无声忽略&quot;，说明&quot;情感需求被悄悄略过&quot;。
+（Running on Empty 书名如渲染错误请后期排版叠加）
+要求：克制安静、层级清晰、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P4 · 长大后它的样子（信息卡 · 4 条）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>长大后，它的样子</li>
+<li><b>空虚麻木：</b>莫名提不起劲，感受不到情绪</li>
+<li><b>过度独立：</b>不敢依赖别人，什么都自己扛</li>
+<li><b>对自己苛刻：</b>缺乏同情、容易自责</li>
+<li><b>总觉得不对劲：</b>说不清，却一直都在</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post3-4',this)">复制</button>
+          <pre class="prompt" id="pr-post3-4">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;长大后，它的样子&quot;（深灰蓝）；下方竖排四条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;空虚麻木&quot;，说明&quot;莫名提不起劲、感受不到情绪&quot;；
+② 小标题&quot;过度独立&quot;，说明&quot;不敢依赖、什么都自己扛&quot;；
+③ 小标题&quot;对自己苛刻&quot;，说明&quot;缺乏同情、容易自责&quot;；
+④ 小标题&quot;总觉得不对劲&quot;，说明&quot;说不清却一直都在&quot;。
+要求：四条间距均匀、信息清楚但不拥挤、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P5 · 别再被这样说（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>别再被这样说</li>
+<li><b>&quot;想太多&quot;：</b>其实是真实的早年印记</li>
+<li><b>&quot;太敏感&quot;：</b>是情绪没被回应留下的空</li>
+<li><b>&quot;矫情&quot;：</b>看不见，不等于不存在</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post3-5',this)">复制</button>
+          <pre class="prompt" id="pr-post3-5">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;别再被这样说&quot;（深灰蓝）；下方竖排三条，每条左侧一个被轻轻划掉的引号小图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;想太多&quot;，说明&quot;其实是真实的早年印记&quot;；
+② 小标题&quot;太敏感&quot;，说明&quot;是情绪没被回应留下的空&quot;；
+③ 小标题&quot;矫情&quot;，说明&quot;看不见不等于不存在&quot;。
+要求：温柔不指责、间距均匀、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P6 · 这不是你软弱（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>这不是你软弱</li>
+<li><b>不是缺陷：</b>是一种可以被理解的早年印记</li>
+<li><b>可以被照顾：</b>那种空，能被慢慢填回来</li>
+<li><b>先看见自己：</b>承认自己受过伤，就是开始</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post3-6',this)">复制</button>
+          <pre class="prompt" id="pr-post3-6">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;这不是你软弱&quot;（深灰蓝）；卡片右下角放一个很小的、轻轻拥抱自己的圆脸女孩剪影点缀；下方竖排三条加粗小标题 + 浅灰说明：
+① 小标题&quot;不是缺陷&quot;，说明&quot;是可被理解的早年印记&quot;；
+② 小标题&quot;可以被照顾&quot;，说明&quot;那种空能被慢慢填回来&quot;；
+③ 小标题&quot;先看见自己&quot;，说明&quot;承认受过伤就是开始&quot;。
+要求：温暖治愈、留白充足，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P7 · 末页（行动 + 品牌 + 危机声明）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>被好好看见，本身就有疗愈</li>
+<li><b>副标题：</b>那种&quot;说不清的空&quot;，值得被认真对待与陪伴</li>
+<li><b>页脚：</b>NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post3-7',this)">复制</button>
+          <pre class="prompt" id="pr-post3-7">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+画面：那位圆脸短发针织衫女孩被柔和的暖光包围，手边的马克杯冒着热气，桌上一盆抽出新叶的绿植，传达&quot;内心慢慢被填满&quot;的温暖感。
+文字：上方写中文大标题&quot;被好好看见，本身就有疗愈&quot;（深灰蓝）；中部写一行&quot;那种说不清的空，值得被认真对待与陪伴&quot;；底部小字写&quot;NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356&quot;。
+要求：末页精简、明亮温暖、留白充足；不出现任何二维码、微信号或链接；竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+    </section>
+    <section class="post" id="post4">
+      <div class="phead">
+        <span class="pnum">4</span>
+        <h2 class="ptitle">看了很多抑郁焦虑科普，却没说到点子上？</h2>
+        <span class="ptopic">复杂性创伤常被误解 + 自我觉察的线索</span>
+      </div>
+
+      <div class="label-row read">
+        <span class="bar"></span><span class="txt">发布文案 · 复制这段发小红书</span>
+        <button class="copy cap-copy" data-label="复制文案" onclick="copyVal('cap-post4',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制文案</button>
+      </div>
+      <textarea id="cap-post4" hidden>&quot;我看了好多关于抑郁、焦虑的科普，努力了很久，却总觉得没说到点子上&quot;——如果你也这样，可能漏了一个视角：复杂性创伤。
+
+因为 CPTSD 的核心是情绪不稳、负面自我认知和关系困难，它很容易被笼统当成单纯的抑郁或焦虑；剧烈的情绪波动、对被抛弃的恐惧，也常和边缘型人格的特征重叠。缓解情绪当然有价值，但如果根源是长期创伤，只处理表面往往不够。
+
+下面是一些常见的**自我觉察线索**（是觉察，不是自我诊断）：
+· 情绪像过山车：一点小事就被巨大情绪淹没，或长时间麻木
+· 持续的羞耻：不是&quot;我做错一件事&quot;，而是&quot;我这个人有问题&quot;
+· 关系反复受损：渴望亲近又害怕亲近，容易讨好或推开人
+· 高度警觉：难以放松，对他人情绪异常敏感
+· 解离感：感觉抽离、记忆断片、对当下不真实
+
+请记住：这些线索是科普性的觉察，不构成诊断。但如果它们长期、明显地影响了你的生活，那就是值得认真对待的信号。
+
+哪一条戳中了你？评论区聊聊👇
+
+（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）
+
+#心理科普 #复杂性创伤 #CPTSD #情绪内耗 #自我觉察 #焦虑情绪 #童年创伤</textarea>
+      <div class="read-panel"><p>&quot;我看了好多关于抑郁、焦虑的科普，努力了很久，却总觉得没说到点子上&quot;——如果你也这样，可能漏了一个视角：复杂性创伤。</p>
+<p>因为 CPTSD 的核心是情绪不稳、负面自我认知和关系困难，它很容易被笼统当成单纯的抑郁或焦虑；剧烈的情绪波动、对被抛弃的恐惧，也常和边缘型人格的特征重叠。缓解情绪当然有价值，但如果根源是长期创伤，只处理表面往往不够。</p>
+<p>下面是一些常见的<strong>自我觉察线索</strong>（是觉察，不是自我诊断）：<br>· 情绪像过山车：一点小事就被巨大情绪淹没，或长时间麻木<br>· 持续的羞耻：不是&quot;我做错一件事&quot;，而是&quot;我这个人有问题&quot;<br>· 关系反复受损：渴望亲近又害怕亲近，容易讨好或推开人<br>· 高度警觉：难以放松，对他人情绪异常敏感<br>· 解离感：感觉抽离、记忆断片、对当下不真实</p>
+<p>请记住：这些线索是科普性的觉察，不构成诊断。但如果它们长期、明显地影响了你的生活，那就是值得认真对待的信号。</p>
+<p>哪一条戳中了你？评论区聊聊👇</p>
+<p class="disclaimer">（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）</p>
+<div class="tags"><span class="tag">#心理科普</span><span class="tag">#复杂性创伤</span><span class="tag">#CPTSD</span><span class="tag">#情绪内耗</span><span class="tag">#自我觉察</span><span class="tag">#焦虑情绪</span><span class="tag">#童年创伤</span></div></div>
+
+      <div class="label-row"><span class="bar" style="background:var(--mist)"></span>
+        <span class="txt">配图轮播 · 6 页（每页提示词喂图保持风格一致）</span></div>
+      <p class="sub" style="margin:0 0 14px">文字均已写进提示词。出图工具：Gemini / GPT；导出 1080×1440（3:4）；P1 定稿后作参考图喂给后续页保持风格一致；出图后逐字核对图上文字（CPTSD 缩写尤其要核对）。封面/末页精简，中间是信息卡。</p>
+      
+      <div class="page">
+        <div class="ptitle-sm">P1 · 封面</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>看了很多抑郁焦虑科普</li>
+<li><b>副标题：</b>却总觉得没说到点子上？</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post4-1',this)">复制</button>
+          <pre class="prompt" id="pr-post4-1">柔和扁平矢量插画风，莫兰迪低饱和配色——雾霾蓝灰 #A8B5C4、暖米白 #E8D8C4、鼠尾草绿 #C9D6CE 为主，背景暖白；圆润柔和形体，细腻颗粒肌理，柔光无强阴影，平静治愈；竖版 3:4，主体居中偏下，顶部留约 1/3 空白。
+画面：一位圆脸、齐肩微卷短发的东亚年轻女性，穿燕麦色针织衫，坐在桌前手边摊着几本贴满便签的书，微微蹙眉若有所思，身旁一盆小绿植，神情温和。
+文字：上方留白处写中文大标题&quot;看了很多抑郁焦虑科普&quot;（圆润无衬线体，深灰蓝 #5A6B7B，字号最大）；其下写副标题&quot;却总觉得没说到点子上？&quot;（同色，字号略小）。
+要求：封面留悬念、不堆要点；画面干净、留白充足，竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P2 · 为什么总被看错（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>为什么总被看错</li>
+<li><b>像抑郁焦虑：</b>核心是情绪不稳、自我否定</li>
+<li><b>像边缘型人格：</b>情绪剧烈、怕被抛弃，特征重叠</li>
+<li><b>根源在创伤：</b>只处理表面情绪，往往不够</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post4-2',this)">复制</button>
+          <pre class="prompt" id="pr-post4-2">（沿用 NBDpsy 风格基底：莫兰迪低饱和、暖白背景、圆润形体、颗粒肌理、柔光、竖版 3:4；主色 #A8B5C4 / #E8D8C4 / #C9D6CE）
+版式：信息卡布局。顶部居中大标题&quot;为什么总被看错&quot;（深灰蓝 #5A6B7B）；下方竖排三条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;像抑郁焦虑&quot;，说明&quot;核心是情绪不稳、自我否定&quot;；
+② 小标题&quot;像边缘型人格&quot;，说明&quot;情绪剧烈、怕被抛弃，特征重叠&quot;；
+③ 小标题&quot;根源在创伤&quot;，说明&quot;只处理表面情绪往往不够&quot;。
+要求：条目左对齐、间距均匀、信息清楚不拥挤、留白透气；竖版 3:4，仅用品牌基底配色，所有中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P3 · 觉察线索（上）（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>觉察线索（上）</li>
+<li><b>情绪像过山车：</b>被巨大情绪淹没，或长时间麻木</li>
+<li><b>持续的羞耻：</b>不是做错事，而是&quot;我这人有问题&quot;</li>
+<li><b>关系反复受损：</b>渴望亲近又害怕亲近</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post4-3',this)">复制</button>
+          <pre class="prompt" id="pr-post4-3">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;觉察线索（上）&quot;（深灰蓝）；下方竖排三条，每条左侧一个柔和圆形小图标（依次：起伏波浪线、一颗低头的小心、两个相背小人），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;情绪像过山车&quot;，说明&quot;被巨大情绪淹没，或长时间麻木&quot;；
+② 小标题&quot;持续的羞耻&quot;，说明&quot;不是做错事，是我这人有问题&quot;；
+③ 小标题&quot;关系反复受损&quot;，说明&quot;渴望亲近又害怕亲近&quot;。
+要求：图标风格统一、间距均匀、信息清楚不拥挤，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P4 · 觉察线索（下）（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>觉察线索（下）</li>
+<li><b>高度警觉：</b>难以放松，对他人情绪异常敏感</li>
+<li><b>解离感：</b>感觉抽离、记忆断片、对当下不真实</li>
+<li><b>容易讨好或推开：</b>在关系里反复进退两难</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post4-4',this)">复制</button>
+          <pre class="prompt" id="pr-post4-4">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;觉察线索（下）&quot;（深灰蓝）；下方竖排三条，每条左侧一个柔和圆形小图标（依次：竖起的小耳朵、半透明飘离的小人、一推一拉的双手），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;高度警觉&quot;，说明&quot;难放松，对他人情绪异常敏感&quot;；
+② 小标题&quot;解离感&quot;，说明&quot;抽离、断片、对当下不真实&quot;；
+③ 小标题&quot;讨好或推开&quot;，说明&quot;关系里反复进退两难&quot;。
+要求：图标风格统一、间距均匀、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P5 · 这是觉察，不是诊断（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>这是觉察，不是诊断</li>
+<li><b>不给自己贴标签：</b>线索只是温柔的提醒</li>
+<li><b>看影响程度：</b>长期、明显影响生活才是信号</li>
+<li><b>专业才能厘清：</b>真正的判断需要专业评估</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post4-5',this)">复制</button>
+          <pre class="prompt" id="pr-post4-5">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;这是觉察，不是诊断&quot;（深灰蓝）；下方竖排三条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;不贴标签&quot;，说明&quot;线索只是温柔的提醒&quot;；
+② 小标题&quot;看影响程度&quot;，说明&quot;长期明显影响生活才是信号&quot;；
+③ 小标题&quot;专业才能厘清&quot;，说明&quot;真正的判断需要专业评估&quot;。
+要求：克制理性、层级清晰、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P6 · 末页（行动 + 品牌 + 危机声明）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>对得上的解释，才带来帮助</li>
+<li><b>副标题：</b>看清误解不是为了贴标签，而是找到真正适合你的支持</li>
+<li><b>页脚：</b>NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post4-6',this)">复制</button>
+          <pre class="prompt" id="pr-post4-6">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+画面：那位圆脸短发针织衫女孩合上书本、望向窗外柔光，神情松了一口气般释然，窗台一盆绿植，传达&quot;终于找到对得上的解释&quot;的轻松感。
+文字：上方写中文大标题&quot;对得上的解释，才带来帮助&quot;（深灰蓝）；中部写一行&quot;看清误解不是为了贴标签，而是找到真正适合你的支持&quot;；底部小字写&quot;NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356&quot;。
+要求：末页精简、明亮温暖、留白充足；不出现任何二维码、微信号或链接；竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+    </section>
+    <section class="post" id="post5">
+      <div class="phead">
+        <span class="pnum">5</span>
+        <h2 class="ptitle">复杂性创伤，5 个能从今天开始的自救小步</h2>
+        <span class="ptopic">复杂性创伤如何自救——可以从今天开始的步骤</span>
+      </div>
+
+      <div class="label-row read">
+        <span class="bar"></span><span class="txt">发布文案 · 复制这段发小红书</span>
+        <button class="copy cap-copy" data-label="复制文案" onclick="copyVal('cap-post5',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制文案</button>
+      </div>
+      <textarea id="cap-post5" hidden>复杂性创伤的康复，是有迹可循的，不是没头绪地硬扛🤍
+
+创伤研究者朱迪思·赫尔曼在《创伤与复原》里提出被广泛采用的三阶段次序：先建立安全与稳定，再回忆与哀悼，最后重建联结——记住四个字：**先安全，再处理**。
+
+顺着这个次序，分享几个低门槛的小步：
+
+1️⃣ 先照顾&quot;安全&quot;：规律作息、稳定地吃和睡，是情绪的地基。先让身体安定，再谈处理记忆。
+
+2️⃣ 学几个&quot;着陆&quot;练习：被情绪淹没时，用 5-4-3-2-1 感官练习（说出看到的 5 样、听到的 4 种声音……）把自己拉回当下。
+
+3️⃣ 记录触发点：把&quot;什么情境让我突然崩溃或麻木&quot;写下来，看见规律，就是夺回掌控的开始。
+
+4️⃣ 重建支持性关系：在关系里受的伤，也在安全的关系里慢慢被修复。
+
+5️⃣ 对自己说人话：把&quot;我真没用&quot;换成&quot;我现在很难，这不是我的错&quot;。自我慈悲是可以练习的。
+
+你愿意先从哪一步开始？评论区打卡👇
+
+（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）
+
+#心理科普 #复杂性创伤 #CPTSD #情绪自救 #着陆练习 #自我关怀 #情绪内耗</textarea>
+      <div class="read-panel"><p>复杂性创伤的康复，是有迹可循的，不是没头绪地硬扛🤍</p>
+<p>创伤研究者朱迪思·赫尔曼在《创伤与复原》里提出被广泛采用的三阶段次序：先建立安全与稳定，再回忆与哀悼，最后重建联结——记住四个字：<strong>先安全，再处理</strong>。</p>
+<p>顺着这个次序，分享几个低门槛的小步：</p>
+<p>1️⃣ 先照顾&quot;安全&quot;：规律作息、稳定地吃和睡，是情绪的地基。先让身体安定，再谈处理记忆。</p>
+<p>2️⃣ 学几个&quot;着陆&quot;练习：被情绪淹没时，用 5-4-3-2-1 感官练习（说出看到的 5 样、听到的 4 种声音……）把自己拉回当下。</p>
+<p>3️⃣ 记录触发点：把&quot;什么情境让我突然崩溃或麻木&quot;写下来，看见规律，就是夺回掌控的开始。</p>
+<p>4️⃣ 重建支持性关系：在关系里受的伤，也在安全的关系里慢慢被修复。</p>
+<p>5️⃣ 对自己说人话：把&quot;我真没用&quot;换成&quot;我现在很难，这不是我的错&quot;。自我慈悲是可以练习的。</p>
+<p>你愿意先从哪一步开始？评论区打卡👇</p>
+<p class="disclaimer">（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）</p>
+<div class="tags"><span class="tag">#心理科普</span><span class="tag">#复杂性创伤</span><span class="tag">#CPTSD</span><span class="tag">#情绪自救</span><span class="tag">#着陆练习</span><span class="tag">#自我关怀</span><span class="tag">#情绪内耗</span></div></div>
+
+      <div class="label-row"><span class="bar" style="background:var(--mist)"></span>
+        <span class="txt">配图轮播 · 8 页（每页提示词喂图保持风格一致）</span></div>
+      <p class="sub" style="margin:0 0 14px">文字均已写进提示词。出图工具：Gemini / GPT；导出 1080×1440（3:4）；P1 定稿后作参考图喂给后续页保持风格一致；出图后逐字核对图上文字与数字（5-4-3-2-1 等）。封面（P1）/末页（P8）精简，中间 P2–P7 是信息卡：P2 讲总原则、P3–P7 每页讲透一步。</p>
+      
+      <div class="page">
+        <div class="ptitle-sm">P1 · 封面</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>复杂性创伤，5 个自救小步</li>
+<li><b>副标题：</b>从今天就能开始</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-1',this)">复制</button>
+          <pre class="prompt" id="pr-post5-1">柔和扁平矢量插画风，莫兰迪低饱和配色——雾霾蓝灰 #A8B5C4、暖米白 #E8D8C4、鼠尾草绿 #C9D6CE 为主，背景暖白；圆润柔和形体，细腻颗粒肌理，柔光无强阴影，平静治愈；竖版 3:4，主体居中偏下，顶部留约 1/3 空白。
+画面：一位圆脸、齐肩微卷短发的东亚年轻女性，穿燕麦色针织衫，盘腿坐在窗边的地毯上，闭眼轻轻把手放在胸口做深呼吸，身旁一盆小绿植与一杯热茶，神情平静安定。
+文字：上方留白处写中文大标题&quot;复杂性创伤，5 个自救小步&quot;（圆润无衬线体，深灰蓝 #5A6B7B，字号最大）；其下写副标题&quot;从今天就能开始&quot;（同色，字号略小）。
+要求：封面温暖有力量、不堆要点；画面干净、留白充足，竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P2 · 总原则：先安全，再处理（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>先安全，再处理</li>
+<li><b>小注：</b>来自赫尔曼《创伤与复原》三阶段康复模型</li>
+<li><b>先安全：</b>建立安全与稳定，是地基</li>
+<li><b>再哀悼：</b>回忆与哀悼创伤</li>
+<li><b>后联结：</b>重建与他人、与生活的联结</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-2',this)">复制</button>
+          <pre class="prompt" id="pr-post5-2">（沿用 NBDpsy 风格基底：莫兰迪低饱和、暖白背景、圆润形体、颗粒肌理、柔光、竖版 3:4；主色 #A8B5C4 / #E8D8C4 / #C9D6CE）
+版式：信息卡布局。顶部居中大标题&quot;先安全，再处理&quot;（深灰蓝 #5A6B7B）；其下一行浅灰小字&quot;来自赫尔曼《创伤与复原》三阶段康复模型&quot;；下方用三个相连的小圆点串成由低到高的阶梯，竖排三条，每条左侧一个柔和小圆数字图标（①②③），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;先安全&quot;，说明&quot;建立安全与稳定，是地基&quot;；
+② 小标题&quot;再哀悼&quot;，说明&quot;回忆与哀悼创伤&quot;；
+③ 小标题&quot;后联结&quot;，说明&quot;重建与他人、与生活的联结&quot;。
+要求：层级清晰、阶梯感明确、间距均匀、留白透气，竖版 3:4，仅用品牌基底配色，所有中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P3 · 第①步 先照顾&quot;安全&quot;（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>① 先照顾&quot;安全&quot;</li>
+<li><b>做什么：</b>规律作息，稳定地吃和睡</li>
+<li><b>为什么：</b>身体先安定，情绪才有地基</li>
+<li><b>小提示：</b>先求稳，别急着处理记忆</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-3',this)">复制</button>
+          <pre class="prompt" id="pr-post5-3">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;① 先照顾安全&quot;（深灰蓝，序号①单独放大便于渲染）；下方竖排三条，每条左侧一个柔和小圆图标（依次：月亮与床、一颗稳稳的小种子、一只安抚的手掌），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;做什么&quot;，说明&quot;规律作息，稳定地吃和睡&quot;；
+② 小标题&quot;为什么&quot;，说明&quot;身体先安定，情绪才有地基&quot;；
+③ 小标题&quot;小提示&quot;，说明&quot;先求稳，别急着处理记忆&quot;。
+要求：条目左对齐、间距均匀、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P4 · 第②步 着陆练习 5-4-3-2-1（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>② 着陆练习 5-4-3-2-1</li>
+<li><b>小注：</b>情绪被淹没时，把自己拉回当下</li>
+<li><b>5 看 4 听：</b>看到的 5 样、听到的 4 种声音</li>
+<li><b>3 摸 2 闻：</b>摸到的 3 样、闻到的 2 种气味</li>
+<li><b>1 尝：</b>尝到的 1 种味道，回到此刻</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-4',this)">复制</button>
+          <pre class="prompt" id="pr-post5-4">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;② 着陆练习 5-4-3-2-1&quot;（深灰蓝，数字单独放大便于渲染）；其下一行浅灰小字&quot;情绪被淹没时，把自己拉回当下&quot;；下方竖排三条，每条左侧一个柔和的感官小图标（依次：眼睛与耳朵、手与鼻子、嘴），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;5 看 4 听&quot;，说明&quot;看到的 5 样、听到的 4 种声音&quot;；
+② 小标题&quot;3 摸 2 闻&quot;，说明&quot;摸到的 3 样、闻到的 2 种气味&quot;；
+③ 小标题&quot;1 尝&quot;，说明&quot;尝到的 1 种味道，回到此刻&quot;。
+（&quot;5-4-3-2-1&quot;与各数字如渲染错误请后期排版叠加）
+要求：图标风格统一、数字清晰、留白透气，竖版 3:4，仅用品牌基底配色，中文与数字逐字核对。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P5 · 第③步 记录触发点（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>③ 记录触发点</li>
+<li><b>做什么：</b>写下让你突然崩溃或麻木的情境</li>
+<li><b>为什么：</b>看见规律，就是夺回掌控的开始</li>
+<li><b>小提示：</b>回看记录，规律会慢慢浮现</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-5',this)">复制</button>
+          <pre class="prompt" id="pr-post5-5">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;③ 记录触发点&quot;（深灰蓝，序号③单独放大便于渲染）；下方竖排三条，每条左侧一个柔和小圆图标（依次：一支笔与本子、一面小放大镜、一组连成线的小点），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;做什么&quot;，说明&quot;写下让你突然崩溃或麻木的情境&quot;；
+② 小标题&quot;为什么&quot;，说明&quot;看见规律，就是夺回掌控的开始&quot;；
+③ 小标题&quot;小提示&quot;，说明&quot;回看记录，规律会慢慢浮现&quot;。
+要求：条目左对齐、间距均匀、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P6 · 第④步 重建支持性关系（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>④ 重建支持性关系</li>
+<li><b>做什么：</b>靠近一两个能让你放松的人</li>
+<li><b>为什么：</b>在关系里受的伤，在安全关系里修复</li>
+<li><b>小提示：</b>一两个深交，胜过一群泛泛之交</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-6',this)">复制</button>
+          <pre class="prompt" id="pr-post5-6">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;④ 重建支持性关系&quot;（深灰蓝，序号④单独放大便于渲染）；下方竖排三条，每条左侧一个柔和小圆图标（依次：两只轻轻相握的手、一颗有创可贴的小心、两个靠近的小人），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;做什么&quot;，说明&quot;靠近一两个能让你放松的人&quot;；
+② 小标题&quot;为什么&quot;，说明&quot;在关系里受的伤，在安全关系里修复&quot;；
+③ 小标题&quot;小提示&quot;，说明&quot;一两个深交，胜过一群泛泛之交&quot;。
+要求：条目左对齐、间距均匀、温暖治愈、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P7 · 第⑤步 对自己说人话（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>⑤ 对自己说人话</li>
+<li><b>换种说法：</b>把&quot;我真没用&quot;换成&quot;我现在很难&quot;</li>
+<li><b>为什么：</b>把责备换成理解，这不是你的错</li>
+<li><b>自我慈悲：</b>是一种可以慢慢练习的能力</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-7',this)">复制</button>
+          <pre class="prompt" id="pr-post5-7">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;⑤ 对自己说人话&quot;（深灰蓝，序号⑤单独放大便于渲染）；卡片中部用两个柔和气泡对照&quot;我真没用&quot; → &quot;我现在很难，这不是我的错&quot;；下方竖排三条，每条左侧一个柔和小圆图标（依次：对话气泡、一只贴胸口的手、一株小幼苗），右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;换种说法&quot;，说明&quot;把我真没用换成我现在很难&quot;；
+② 小标题&quot;为什么&quot;，说明&quot;把责备换成理解，这不是你的错&quot;；
+③ 小标题&quot;自我慈悲&quot;，说明&quot;是可以慢慢练习的能力&quot;。
+要求：温暖治愈、层级清晰、留白充足，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P8 · 末页（行动 + 品牌 + 危机声明）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>先安全，再处理，慢慢来</li>
+<li><b>副标题：</b>自救能减轻痛苦，被困住时也值得寻求专业陪伴</li>
+<li><b>页脚：</b>NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post5-8',this)">复制</button>
+          <pre class="prompt" id="pr-post5-8">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+画面：那位圆脸短发针织衫女孩在清晨的窗边伸展身体、表情舒展，桌上一杯热茶与一盆抽新叶的绿植，传达&quot;一步一步慢慢来&quot;的踏实感。
+文字：上方写中文大标题&quot;先安全，再处理，慢慢来&quot;（深灰蓝）；中部写一行&quot;自救能减轻痛苦，被困住时也值得寻求专业陪伴&quot;；底部小字写&quot;NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356&quot;。
+要求：末页精简、明亮温暖、留白充足；不出现任何二维码、微信号或链接；竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+    </section>
+    <section class="post" id="post6">
+      <div class="phead">
+        <span class="pnum">6</span>
+        <h2 class="ptitle">自我照顾也有边界：这 4 种情况别再一个人扛</h2>
+        <span class="ptopic">什么时候需要寻求专业支持</span>
+      </div>
+
+      <div class="label-row read">
+        <span class="bar"></span><span class="txt">发布文案 · 复制这段发小红书</span>
+        <button class="copy cap-copy" data-label="复制文案" onclick="copyVal('cap-post6',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制文案</button>
+      </div>
+      <textarea id="cap-post6" hidden>自我照顾很重要，但它也有边界。复杂性创伤是深层、长期的议题，很多时候，专业陪伴能让康复走得更稳🤍
+
+出现这几种情况，建议别再一个人扛，尽快寻求专业评估与陪伴：
+· 症状持续影响工作、学习或关系
+· 反复出现伤害自己的念头
+· 长期失眠、解离，或情绪失控
+· 或者你只是觉得&quot;一个人真的扛不动了&quot;
+
+求助不是软弱，而是对自己负责。
+
+很多在创伤里长大的人，第一次被人稳稳地&quot;听见&quot;，本身就是松动的开始。如果用母语表达，门槛会低很多——不用先翻译自己的痛，就能被听懂。这对身在海外的人尤其重要。
+
+也想对你说：康复不是要你和过去&quot;一刀两断&quot;，而是让过去不再主宰现在。你不必一个人，也不必一次走完。
+
+如果这篇说中了你，先收藏；也可以转给那个&quot;总说自己没事&quot;的人🤍
+
+（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）
+
+#心理科普 #复杂性创伤 #心理求助 #情绪内耗 #心理咨询 #自我关怀 #海外华人</textarea>
+      <div class="read-panel"><p>自我照顾很重要，但它也有边界。复杂性创伤是深层、长期的议题，很多时候，专业陪伴能让康复走得更稳🤍</p>
+<p>出现这几种情况，建议别再一个人扛，尽快寻求专业评估与陪伴：<br>· 症状持续影响工作、学习或关系<br>· 反复出现伤害自己的念头<br>· 长期失眠、解离，或情绪失控<br>· 或者你只是觉得&quot;一个人真的扛不动了&quot;</p>
+<p>求助不是软弱，而是对自己负责。</p>
+<p>很多在创伤里长大的人，第一次被人稳稳地&quot;听见&quot;，本身就是松动的开始。如果用母语表达，门槛会低很多——不用先翻译自己的痛，就能被听懂。这对身在海外的人尤其重要。</p>
+<p>也想对你说：康复不是要你和过去&quot;一刀两断&quot;，而是让过去不再主宰现在。你不必一个人，也不必一次走完。</p>
+<p>如果这篇说中了你，先收藏；也可以转给那个&quot;总说自己没事&quot;的人🤍</p>
+<p class="disclaimer">（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）</p>
+<div class="tags"><span class="tag">#心理科普</span><span class="tag">#复杂性创伤</span><span class="tag">#心理求助</span><span class="tag">#情绪内耗</span><span class="tag">#心理咨询</span><span class="tag">#自我关怀</span><span class="tag">#海外华人</span></div></div>
+
+      <div class="label-row"><span class="bar" style="background:var(--mist)"></span>
+        <span class="txt">配图轮播 · 6 页（每页提示词喂图保持风格一致）</span></div>
+      <p class="sub" style="margin:0 0 14px">文字均已写进提示词。出图工具：Gemini / GPT；导出 1080×1440（3:4）；P1 定稿后作参考图喂给后续页保持风格一致；出图后逐字核对图上文字。封面/末页精简，中间是信息卡。</p>
+      
+      <div class="page">
+        <div class="ptitle-sm">P1 · 封面</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>自我照顾也有边界</li>
+<li><b>副标题：</b>这几种情况，别再一个人扛</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post6-1',this)">复制</button>
+          <pre class="prompt" id="pr-post6-1">柔和扁平矢量插画风，莫兰迪低饱和配色——雾霾蓝灰 #A8B5C4、暖米白 #E8D8C4、鼠尾草绿 #C9D6CE 为主，背景暖白；圆润柔和形体，细腻颗粒肌理，柔光无强阴影，平静治愈；竖版 3:4，主体居中偏下，顶部留约 1/3 空白。
+画面：一位圆脸、齐肩微卷短发的东亚年轻女性，穿燕麦色针织衫，坐在沙发一角抱着抱枕，神情有些疲惫但平静，旁边另一只温和的手轻轻搭在她肩上（示意&quot;有人陪伴&quot;），身旁一盆小绿植。
+文字：上方留白处写中文大标题&quot;自我照顾也有边界&quot;（圆润无衬线体，深灰蓝 #5A6B7B，字号最大）；其下写副标题&quot;这几种情况，别再一个人扛&quot;（同色，字号略小）。
+要求：封面温暖有支持感、不堆要点；画面干净、留白充足，竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P2 · 自我照顾有边界（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>自我照顾有边界</li>
+<li><b>它很重要：</b>但它不是全部</li>
+<li><b>议题很深：</b>复杂性创伤长期又深层</li>
+<li><b>专业更稳：</b>有人陪伴，康复走得更稳</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post6-2',this)">复制</button>
+          <pre class="prompt" id="pr-post6-2">（沿用 NBDpsy 风格基底：莫兰迪低饱和、暖白背景、圆润形体、颗粒肌理、柔光、竖版 3:4；主色 #A8B5C4 / #E8D8C4 / #C9D6CE）
+版式：信息卡布局。顶部居中大标题&quot;自我照顾有边界&quot;（深灰蓝 #5A6B7B）；下方竖排三条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;它很重要&quot;，说明&quot;但它不是全部&quot;；
+② 小标题&quot;议题很深&quot;，说明&quot;复杂性创伤长期又深层&quot;；
+③ 小标题&quot;专业更稳&quot;，说明&quot;有人陪伴，康复走得更稳&quot;。
+要求：条目左对齐、间距均匀、信息清楚不拥挤、留白透气；竖版 3:4，仅用品牌基底配色，所有中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P3 · 这些情况别硬扛（信息卡 · 4 条）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>这些情况，别硬扛</li>
+<li><b>影响生活：</b>持续影响工作、学习或关系</li>
+<li><b>伤害念头：</b>反复出现伤害自己的想法</li>
+<li><b>身体报警：</b>长期失眠、解离，或情绪失控</li>
+<li><b>扛不动了：</b>只是觉得&quot;一个人撑不住了&quot;</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post6-3',this)">复制</button>
+          <pre class="prompt" id="pr-post6-3">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;这些情况，别硬扛&quot;（深灰蓝）；下方竖排四条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;影响生活&quot;，说明&quot;持续影响工作、学习或关系&quot;；
+② 小标题&quot;伤害念头&quot;，说明&quot;反复出现伤害自己的想法&quot;；
+③ 小标题&quot;身体报警&quot;，说明&quot;长期失眠、解离或情绪失控&quot;；
+④ 小标题&quot;扛不动了&quot;，说明&quot;觉得一个人撑不住了&quot;。
+要求：四条间距均匀、信息清楚但不拥挤、整体温和不惊悚、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P4 · 求助不是软弱（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>求助不是软弱</li>
+<li><b>是负责：</b>是对自己负责的选择</li>
+<li><b>被听见：</b>第一次被稳稳听见，就是开始</li>
+<li><b>母语更易：</b>不用先翻译自己的痛</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post6-4',this)">复制</button>
+          <pre class="prompt" id="pr-post6-4">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;求助不是软弱&quot;（深灰蓝）；卡片右下角放一个很小的、两人面对面轻松交谈的剪影点缀；下方竖排三条加粗小标题 + 一行浅灰说明：
+① 小标题&quot;是负责&quot;，说明&quot;是对自己负责的选择&quot;；
+② 小标题&quot;被听见&quot;，说明&quot;第一次被稳稳听见就是开始&quot;；
+③ 小标题&quot;母语更易&quot;，说明&quot;不用先翻译自己的痛&quot;。
+要求：温暖有支持感、间距均匀、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P5 · 康复不是告别过去（信息卡）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>康复不是告别过去</li>
+<li><b>不是一刀两断：</b>而是过去不再主宰现在</li>
+<li><b>不必独自：</b>你不必一个人扛</li>
+<li><b>不必赶路：</b>也不必一次走完</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post6-5',this)">复制</button>
+          <pre class="prompt" id="pr-post6-5">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+版式：信息卡。顶部大标题&quot;康复不是告别过去&quot;（深灰蓝）；下方竖排三条，每条左侧一个柔和小圆图标，右侧加粗小标题 + 一行浅灰说明：
+① 小标题&quot;不是一刀两断&quot;，说明&quot;而是过去不再主宰现在&quot;；
+② 小标题&quot;不必独自&quot;，说明&quot;你不必一个人扛&quot;；
+③ 小标题&quot;不必赶路&quot;，说明&quot;也不必一次走完&quot;。
+要求：温柔有希望感、层级清晰、留白透气，竖版 3:4，仅用品牌基底配色，中文逐字清晰。</pre>
+        </div>
+      </div>
+      <div class="page">
+        <div class="ptitle-sm">P6 · 末页（行动 + 品牌 + 危机声明）</div>
+        <ul class="pagetext">
+<li><b>大标题：</b>你不必一个人，也不必一次走完</li>
+<li><b>副标题：</b>如果你正觉得扛不动，找人陪你走一段，是可以的</li>
+<li><b>页脚：</b>NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356</li>
+</ul>
+        <div class="label-row ai"><span class="bar" style="background:var(--mist)"></span>
+          <span class="txt">绘图提示词 · 复制给 Gemini / GPT</span></div>
+        <div class="code-wrap">
+          <button class="copy" data-label="复制" onclick="copyEl('pr-post6-6',this)">复制</button>
+          <pre class="prompt" id="pr-post6-6">（沿用 NBDpsy 风格基底；主色 #A8B5C4 / #E8D8C4 / #C9D6CE，竖版 3:4，柔光留白）
+画面：那位圆脸短发针织衫女孩与另一个温和的身影并肩走在洒满晨光的小路上，神情轻松，路旁有绿植，传达&quot;有人同行&quot;的温暖与希望。
+文字：上方写中文大标题&quot;你不必一个人，也不必一次走完&quot;（深灰蓝）；中部写一行&quot;如果你正觉得扛不动，找人陪你走一段，是可以的&quot;；底部小字写&quot;NBDpsy · 北大硕博纯线上心理咨询 ｜ 心理科普非诊断治疗 · 援助热线 12356&quot;。
+要求：末页精简、明亮温暖、留白充足；不出现任何二维码、微信号或链接；竖版 3:4，仅用品牌基底配色。</pre>
+        </div>
+      </div>
+    </section>
+</div>
+<script>
+function flash(btn){var o=btn.dataset.label||btn.textContent;btn.dataset.label=o;
+btn.textContent='已复制 ✓';btn.classList.add('ok');
+setTimeout(function(){btn.textContent=o;btn.classList.remove('ok');},1500);}
+function fallback(text,btn){var ta=document.createElement('textarea');ta.value=text;
+ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();
+try{document.execCommand('copy');flash(btn);}catch(e){alert('复制失败，请手动选择文本');}
+document.body.removeChild(ta);}
+function copyText(text,btn){if(navigator.clipboard&&navigator.clipboard.writeText){
+navigator.clipboard.writeText(text).then(function(){flash(btn);}).catch(function(){fallback(text,btn);});}
+else{fallback(text,btn);}}
+function copyEl(id,btn){copyText(document.getElementById(id).textContent,btn);}
+function copyVal(id,btn){copyText(document.getElementById(id).value,btn);}
+</script>
+</body></html>

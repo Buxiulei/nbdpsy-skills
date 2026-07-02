@@ -13,9 +13,9 @@ review.html
 .env
 # 测试产物
 tests/fixtures/tmp/
-# 评测工作区产物（排除 outputs 内容除了 grading.json）
-xiaohongshu-creator-workspace/iteration-*/*/outputs/*
-!xiaohongshu-creator-workspace/iteration-*/*/outputs/grading.json
-xiaohongshu-creator-workspace/iteration-*/*/timing.json
-xiaohongshu-creator-workspace/iteration-*/review.html
-xiaohongshu-creator-workspace/preview-infocard.html
+# 评测工作区产物（outputs/* 与 timing.json 不入库；任何位置的 grading.json/review.html/preview-infocard.html 入库）
+xiaohongshu-creator-workspace/**/outputs/*
+!xiaohongshu-creator-workspace/**/outputs/grading.json
+xiaohongshu-creator-workspace/**/timing.json
+!xiaohongshu-creator-workspace/**/review.html
+!xiaohongshu-creator-workspace/**/preview-infocard.html
