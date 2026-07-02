@@ -204,6 +204,42 @@ def test_total_out_of_default_range(tmp_path, monkeypatch):
     assert any(v["shot"] == "total" for v in report["duration_violations"])
 
 
+def test_shots_json_declares_more_shots_than_files(tmp_path, monkeypatch):
+    """shots.json 声明 2 镜但只有 1 镜文件 → 遍历上界须对照声明镜数补齐，
+    缺的 shot-02.mp4 必须进 missing（原逻辑只按已存在文件最大序号推断上界，
+    永远遍历不到 idx=2，是对抗自检抓到的盲区）。"""
+    cv = _patch_probe(monkeypatch, {
+        "shot-01.mp4": 6.0, "narr-01.mp3": 5.8, "final.mp4": 6.0,
+    })
+    (tmp_path / "shots.json").write_text(
+        json.dumps({"shots": [{"index": 1}, {"index": 2}]}, ensure_ascii=False),
+        encoding="utf-8")
+    _make_shot(tmp_path, "01", cues=[{"text": "句。", "start": 0.0, "end": 5.7}])
+    (tmp_path / "final.mp4").write_bytes(b"x")
+
+    report = cv.run(tmp_path, total_min=5, total_max=180)
+    assert report["ok"] is False
+    missing_files = [m["file"] if isinstance(m, dict) else m for m in report["missing"]]
+    assert "shot-02.mp4" in missing_files
+    # 有 shots.json 声明时，缺件条目须附 expect 说明来源
+    shot02 = next(m for m in report["missing"] if isinstance(m, dict) and m["file"] == "shot-02.mp4")
+    assert "expect" in shot02
+
+
+def test_no_shots_json_keeps_legacy_behavior(tmp_path, monkeypatch):
+    """无 shots.json 时行为不变：遍历上界仍按已存在文件最大序号推断，
+    missing 条目仍是纯文件名字符串（向后兼容）。"""
+    cv = _patch_probe(monkeypatch, {
+        "shot-01.mp4": 6.0, "narr-01.mp3": 5.8, "final.mp4": 6.0,
+    })
+    _make_shot(tmp_path, "01", cues=[{"text": "句。", "start": 0.0, "end": 5.7}])
+    (tmp_path / "final.mp4").write_bytes(b"x")
+
+    report = cv.run(tmp_path, total_min=5, total_max=180)
+    assert report["ok"] is True
+    assert report["missing"] == []
+
+
 def test_cli_empty_workdir_valid_json_exit_one(tmp_path):
     """CLI 冒烟：空目录 0 镜、无 final → 合法 JSON、exit 1（不触发 ffprobe）。"""
     r = subprocess.run(

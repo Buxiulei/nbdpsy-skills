@@ -9,6 +9,10 @@
   final.mp4                最终成片，缺失即整体 FAIL
 
 检查项：
+  0. 若 workdir 含 shots.json（text-to-video 产线 Task 8 产物），以其 shots 数组长度
+     为期望镜数对照实产文件——避免"计划 N 镜、实产 M<N 镜"时因遍历上界只取自
+     已存在文件的最大序号而漏报缺镜（对抗自检发现的盲区）；无 shots.json 时遍历上界
+     仍按已存在 shot 文件的最大序号推断（保持原行为）。
   1. 每镜 ffprobe 实测时长 ∈ [4,15] ±0.5s（即 [3.5, 15.5]s）
   2. cues 每镜单调递增（后一句 start 不早于前一句 end），且末句 end ≤ 旁白实测时长 +0.2s
   3. final.mp4 实测总时长 ≈ Σ每镜时长 ±10%
@@ -121,15 +125,34 @@ def run(workdir: Path, *, total_min: float, total_max: float) -> dict:
 
     duration_violations: list[dict] = []
     cues_issues: list[dict] = []
-    missing: list[str] = []
+    missing: list = []
     sum_dur = 0.0
 
+    # 对照 shots.json 声明镜数（若存在）：原逻辑遍历上界只取自"已存在 shot 文件"的
+    # 最大序号，"计划 2 镜、实产 1 镜"时第 2 镜从不会被遍历到、也就永远不报 missing——
+    # 这是对抗自检抓到的盲区。有声明时按声明镜数补齐遍历上界，且缺件条目附 expect
+    # 说明来源；无 shots.json 时完全保持原行为（含 missing 条目仍是纯文件名字符串）。
+    expected_shots: int | None = None
+    shots_plan = workdir / "shots.json"
+    if shots_plan.is_file():
+        plan = json.loads(shots_plan.read_text(encoding="utf-8"))
+        expected_shots = len(plan.get("shots") or [])
+
+    def _missing(name: str, nn: str) -> None:
+        if expected_shots is not None:
+            missing.append({"file": name, "shot": nn,
+                            "expect": f"shots.json 声明 {expected_shots} 镜"})
+        else:
+            missing.append(name)
+
     max_idx = max(shot_files) if shot_files else 0
+    if expected_shots is not None:
+        max_idx = max(max_idx, expected_shots)
     for idx in range(1, max_idx + 1):
         nn = f"{idx:02d}"
         shot = shot_files.get(idx)
         if shot is None:
-            missing.append(f"shot-{nn}.mp4")
+            _missing(f"shot-{nn}.mp4", nn)
             _err(f"  镜{nn} ✗ 缺 shot-{nn}.mp4（编号断档）")
             continue
 
@@ -150,7 +173,7 @@ def run(workdir: Path, *, total_min: float, total_max: float) -> dict:
 
         narr = workdir / f"narr-{nn}.mp3"
         if not narr.is_file():
-            missing.append(narr.name)
+            _missing(narr.name, nn)
 
         cues_path = _find_cues(workdir, nn)
         if cues_path is None:

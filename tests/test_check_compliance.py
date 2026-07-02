@@ -89,6 +89,44 @@ def test_violation_line_matches_file(tmp_path):
     matched = [v for v in d["violations"] if v["text"] == marker]
     assert matched and matched[0]["line"] == expected_line
 
+def test_wechat_bare_word_variant_flagged(tmp_path):
+    """"加我的微信好友"（不含固定搭配"加微信"/"微信号"）应被裸词"微信"兜底命中——
+    对抗自检发现的漏报：原词表只认固定搭配，这类变体零命中。"""
+    bad = FIXTURE.read_text(encoding="utf-8").replace(
+        "## 发布文案（复制这一段直接发布）\n\n姐妹",
+        "## 发布文案（复制这一段直接发布）\n\n加我的微信好友聊聊，我的微信是：xxx。\n\n姐妹",
+        1,
+    )
+    f = tmp_path / "wechat_variant.md"; f.write_text(bad, encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    d = json.loads(r.stdout)
+    assert r.returncode == 1
+    assert any(v["rule"] == "站外导流" for v in d["violations"])
+
+def test_carousel_page_text_scanned(tmp_path):
+    """"## 配图轮播"下 "### PN 页面文字"（围栏外）里的违禁词必须被扫到——
+    这段文字会逐字渲染进对外公开的配图，只扫"## 发布文案"会漏（对抗自检发现的盲区）。"""
+    bad = FIXTURE.read_text(encoding="utf-8").replace(
+        "### P1 · 封面\n**页面文字**\n",
+        "### P1 · 封面\n**页面文字**\n- 联系方式：加我的微信好友咨询\n",
+        1,
+    )
+    f = tmp_path / "carousel.md"; f.write_text(bad, encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    d = json.loads(r.stdout)
+    assert r.returncode == 1
+    assert any(v["rule"] == "站外导流" for v in d["violations"])
+
+def test_carousel_prompt_fence_still_not_scanned(tmp_path):
+    """违禁词若只写在"## 配图轮播"内围栏绘图提示词里（如负向指令），仍应跳过——
+    扫描范围扩展到配图轮播不改变围栏排除语义（防误伤负向指令）。"""
+    bad = FIXTURE.read_text(encoding="utf-8").replace(
+        "柔和扁平矢量插画风", "画面中不要出现微信号或二维码。柔和扁平矢量插画风", 1)
+    f = tmp_path / "carousel_fence.md"; f.write_text(bad, encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    d = json.loads(r.stdout)
+    assert r.returncode == 0 and d["ok"] is True
+
 def test_missing_file_errors_to_stdout(tmp_path):
     missing = tmp_path / "does_not_exist.md"
     r = subprocess.run([sys.executable, str(SCRIPT), str(missing)], capture_output=True, text=True)
