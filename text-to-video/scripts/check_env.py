@@ -22,8 +22,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 导入 resolve_font 从同目录的 compose_video
+from compose_video import resolve_font
+
 DREAMINA = shutil.which("dreamina") or os.path.expanduser("~/.local/bin/dreamina")
-CJK_FONT_FILE = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 MIN_CREDIT_WARN = 200  # 低于此积分给警告(一条短片量级)
 
 
@@ -96,16 +98,23 @@ def check(install: bool) -> dict:
             fix="sudo apt-get install -y ffmpeg  (macOS: brew install ffmpeg)")
 
     # 4) Noto Sans CJK SC 字体（中文字幕铁律）
-    font_ok = Path(CJK_FONT_FILE).exists()
-    if not font_ok:
-        rc, out, _ = _run(["bash", "-c", "fc-list | grep -i 'sans cjk sc'"], timeout=30)
-        font_ok = bool(out.strip())
-    if not font_ok and install:
-        _err("[install] 尝试 apt 安装 fonts-noto-cjk (需 sudo) …")
-        _run(["sudo", "-n", "apt-get", "install", "-y", "fonts-noto-cjk"], timeout=300)
-        font_ok = Path(CJK_FONT_FILE).exists()
+    font_path = None
+    font_ok = False
+    try:
+        font_path = resolve_font()
+        font_ok = True
+    except RuntimeError:
+        # 尝试安装后重试
+        if install:
+            _err("[install] 尝试 apt 安装 fonts-noto-cjk (需 sudo) …")
+            _run(["sudo", "-n", "apt-get", "install", "-y", "fonts-noto-cjk"], timeout=300)
+            try:
+                font_path = resolve_font()
+                font_ok = True
+            except RuntimeError:
+                pass
     add("Noto Sans CJK SC 字体", font_ok,
-        CJK_FONT_FILE if font_ok else "未找到（中文字幕会变豆腐块）",
+        font_path or "未找到（中文字幕会变豆腐块）",
         fix="sudo apt-get install -y fonts-noto-cjk  (macOS: brew install font-noto-sans-cjk-sc)")
 
     # 5) edge-tts 中文旁白（可选——纯字幕+BGM 可不装）
