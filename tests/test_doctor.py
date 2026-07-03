@@ -9,7 +9,7 @@ def _fresh(monkeypatch, tmp_path, secrets_body: str):
     secrets.write_text(secrets_body, encoding="utf-8")
     monkeypatch.setenv("NBDPSY_SECRETS", str(secrets))
     monkeypatch.setenv("NBDPSY_WORKSPACE", str(tmp_path / "ws"))  # 隔离工作区 .env
-    for k in ("NBDPSY_BLOG_API_KEY", "VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN"):
+    for k in ("NBDPSY_BLOG_API_KEY", "VOLC_TTS_API_KEY", "VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN"):
         monkeypatch.delenv(k, raising=False)
     import nbdpsy_common
     reload(nbdpsy_common)
@@ -40,3 +40,12 @@ def test_doctor_doubao_optional(monkeypatch, tmp_path):
     assert code == 0
     assert report["ok"] is True
     assert report["doubao_ready"] is False
+
+
+def test_doctor_doubao_ready_via_api_key_only(monkeypatch, tmp_path):
+    """新版单一凭据 VOLC_TTS_API_KEY 单独齐备（无 appid/token）也应判定 doubao_ready=True。"""
+    m = _fresh(monkeypatch, tmp_path, "NBDPSY_BLOG_API_KEY=nbdblog_x\nVOLC_TTS_API_KEY=sk-x\n")
+    report, code = m.doctor()
+    assert code == 0
+    assert report["ok"] is True
+    assert report["doubao_ready"] is True

@@ -86,12 +86,19 @@ def test_credentials_structure():
 
 
 def test_volc_credentials_describe_edge_engine_fallback():
-    """控制器契约更正：VOLC 两项说明文案必须提到显式 --engine edge，不能暗示"自动回退"。"""
+    """控制器契约更正：VOLC 各项说明文案必须提到显式 --engine edge，不能暗示"自动回退"。
+    三项：新版单一 VOLC_TTS_API_KEY + 旧版 VOLC_TTS_APPID/VOLC_TTS_ACCESS_TOKEN。"""
     volc_descs = [desc for k, _, desc in s.CREDENTIALS if k.startswith("VOLC_TTS_")]
-    assert len(volc_descs) == 2
+    assert len(volc_descs) == 3
     for desc in volc_descs:
         assert "--engine edge" in desc
         assert "跳过" in desc
+
+
+def test_volc_api_key_credential_precedes_legacy_pair():
+    """VOLC_TTS_API_KEY 是新版单一凭据，应排在旧版 appid/token 之前（向导优先问新凭据）。"""
+    keys = [k for k, _, _ in s.CREDENTIALS]
+    assert keys.index("VOLC_TTS_API_KEY") < keys.index("VOLC_TTS_APPID") < keys.index("VOLC_TTS_ACCESS_TOKEN")
 
 
 # ---------- 凭据向导缺失路径 ----------
@@ -101,6 +108,7 @@ def test_credential_wizard_reports_missing_required_as_fail(tmp_path, monkeypatc
     secrets_file = tmp_path / "secrets.env"
     monkeypatch.setenv("NBDPSY_SECRETS", str(secrets_file))
     monkeypatch.delenv("NBDPSY_BLOG_API_KEY", raising=False)
+    monkeypatch.delenv("VOLC_TTS_API_KEY", raising=False)
     monkeypatch.delenv("VOLC_TTS_APPID", raising=False)
     monkeypatch.delenv("VOLC_TTS_ACCESS_TOKEN", raising=False)
 
@@ -113,6 +121,7 @@ def test_credential_wizard_reports_missing_required_as_fail(tmp_path, monkeypatc
     results = s.credential_wizard(interactive=False)
     by_key = {k: (mark, detail) for k, mark, detail in results}
     assert by_key["NBDPSY_BLOG_API_KEY"][0] == "✗"
+    assert by_key["VOLC_TTS_API_KEY"][0] == "跳过"
     assert by_key["VOLC_TTS_APPID"][0] == "跳过"
     assert by_key["VOLC_TTS_ACCESS_TOKEN"][0] == "跳过"
 
@@ -122,15 +131,17 @@ def test_credential_wizard_interactive_records_input(tmp_path, monkeypatch):
     secrets_file = tmp_path / "secrets.env"
     monkeypatch.setenv("NBDPSY_SECRETS", str(secrets_file))
     monkeypatch.delenv("NBDPSY_BLOG_API_KEY", raising=False)
+    monkeypatch.delenv("VOLC_TTS_API_KEY", raising=False)
     monkeypatch.delenv("VOLC_TTS_APPID", raising=False)
     monkeypatch.delenv("VOLC_TTS_ACCESS_TOKEN", raising=False)
 
-    answers = iter(["sk-test-12345", "", ""])  # 第一项输入，后两项留空跳过
+    answers = iter(["sk-test-12345", "", "", ""])  # 第一项输入，后三项（API_KEY/APPID/TOKEN）留空跳过
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     results = s.credential_wizard(interactive=True)
     by_key = {k: (mark, detail) for k, mark, detail in results}
     assert by_key["NBDPSY_BLOG_API_KEY"][0] == "✓"
+    assert by_key["VOLC_TTS_API_KEY"][0] == "跳过"  # 可选项留空 → 跳过而非 ✗
     assert by_key["VOLC_TTS_APPID"][0] == "跳过"  # 可选项留空 → 跳过而非 ✗
 
     # 凭据已落盘到用户级文件，且第二次探测能读到（不重复问）

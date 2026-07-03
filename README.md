@@ -92,21 +92,22 @@ py setup.py                     # Windows
 
 跑一遍：探测系统 → 装 ffmpeg / 中文字幕字体 → 装 Python 依赖 → 自动装 dreamina CLI（视频生成用，可选；装完还需你自己终端扫码登录，见下）→ **凭据向导** → 每个 skill 冒烟测试（`--help` 级别）→ 打印终检报告。幂等，可反复跑。参数：`--yes`（非交互：能装的都装，含 dreamina CLI 自动安装，凭据只报缺不问）、`--skip-credentials`（跳过凭据向导）。
 
-**凭据向导会问 3 个 key（最省事的方式是找管理员要「凭据配置包」一键导入，见「凭据手册」；下表是手动逐项配置的备用说明）：**
+**凭据向导会问 4 个 key（最省事的方式是找管理员要「凭据配置包」一键导入，见「凭据手册」；下表是手动逐项配置的备用说明）：**
 
 | 变量 | 是否必需 | 用途 | 缺失怎么办 |
 |------|---------|------|-----------|
 | `NBDPSY_BLOG_API_KEY` | 必需 | seo-artical-creator 调用官网博客发布 API | 找管理员要「凭据配置包」（推荐）；或自己去管理后台 `manage.nbdpsy.com` → 博客 → API Keys 新建 |
-| `VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` | 可选 | text-to-video 豆包高音质旁白 | 找管理员要（凭据配置包会一并带上）；留空跳过也行，旁白改用免费引擎 `tts_gen.py --engine edge` |
+| `VOLC_TTS_API_KEY` | 可选 | text-to-video 豆包高音质旁白（新版单一凭据，**优先于**下面两项） | 找管理员要（凭据配置包会一并带上）；或去火山控制台 `speech/new/setting/apikeys` 自建；留空跳过也行，旁白改用免费引擎 `tts_gen.py --engine edge` |
+| `VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` | 可选 | text-to-video 豆包高音质旁白（旧版双凭据，已有 `VOLC_TTS_API_KEY` 可不填） | 找管理员要（凭据配置包会一并带上）；留空跳过也行，旁白改用免费引擎 `tts_gen.py --engine edge` |
 
 答案存进**用户级凭据文件**（`~/.config/nbdpsy/secrets.env`，Windows 为 `%APPDATA%\nbdpsy\secrets.env`，可用 `NBDPSY_SECRETS` 环境变量覆盖路径）——**在任何仓库之外，绝不会被 git 跟踪或提交**；向导只报「已配置」，不会读取或回显已存在凭据的真实值。`NBDPSY_BLOG_API_KEY` 由三个生产 skill 通过 `shared/nbdpsy_common.py` 的 `get_secret()` 统一读取（优先级：环境变量 > 内容工作区 `.env` > 用户级凭据文件）。想跳过逐项问答，直接运行 `python3 <任一 skill>/scripts/nbdpsy_common.py secret import <凭据包文件>` 即可一键导入管理员给的整包凭据；`... doctor` 可随时自检还缺哪些。
 
 > `VOLC_TTS_*` 的凭据探测按三级链执行（优先级从高到低）：
 > 1. **环境变量** — 当前 shell 已设置的值
-> 2. **skill 目录 `.env`** — `cp text-to-video/.env.example text-to-video/.env` 后手填 `VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` / `VOLC_TTS_CLUSTER`
+> 2. **skill 目录 `.env`** — `cp text-to-video/.env.example text-to-video/.env` 后手填 `VOLC_TTS_API_KEY`（推荐）或旧版 `VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` / `VOLC_TTS_CLUSTER`
 > 3. **用户级凭据文件** — `~/.config/nbdpsy/secrets.env`（setup.py 向导写入的值）
 > 
-> 未在前两级配置时，text-to-video 会自动回退到用户级凭据；若三级都未配置，旁白改用免费引擎 `tts_gen.py --engine edge`。
+> 未在前两级配置时，text-to-video 会自动回退到用户级凭据；若三级都未配置，旁白改用免费引擎 `tts_gen.py --engine edge`。配了 `VOLC_TTS_API_KEY` 就优先用它（走新版 V3 接口），否则退到旧版 `VOLC_TTS_APPID`+`VOLC_TTS_ACCESS_TOKEN`（V1 接口，向后兼容）。
 
 **dreamina CLI 本身向导会自动装好，但登录这一步它代劳不了**：终端跑 `dreamina login --headless`，用**抖音 App 扫码**，凭据存本地 `~/.dreamina_cli/`；不装/不登录也不影响其余四个 skill。
 
@@ -270,7 +271,8 @@ py setup.py                     # Windows
 | 凭据名 | 干什么用 | 必需? | 去哪获取 | 怎么填 |
 |---|---|---|---|---|
 | `NBDPSY_BLOG_API_KEY` | 授权 AI 把长文发布到官网博客（场景 A 用） | **必需** | 找管理员要「凭据配置包」（推荐）；或登录管理后台 `manage.nbdpsy.com` → 博客 → API Keys → 新建 | 首次发布时如果这个 key 还没配，AI 会提示你，你把在后台新建出来的那串值粘贴给它即可；AI 会自动存进你电脑本地的凭据文件，不用你手动改任何文件 |
-| `VOLC_TTS_APPID` + `VOLC_TTS_ACCESS_TOKEN` | 让视频旁白用火山引擎「豆包」大模型配音，音质更自然（场景 D 用） | 可选 | 火山引擎控制台 → 语音技术 → 语音合成大模型，开通音色后拿 APPID / Access Token | 同上，告诉 AI 这两个值即可自动存好；**不申请也没关系**，AI 会自动改用免费的 edge 引擎配音，只是听感稍逊一筹 |
+| `VOLC_TTS_API_KEY` | 让视频旁白用火山引擎「豆包」大模型配音，音质更自然（场景 D 用，**新版单一凭据，推荐**） | 可选 | 火山引擎控制台 → `speech/new/setting/apikeys` 自建 API Key | 同上，告诉 AI 这个值即可自动存好；**不申请也没关系**，AI 会自动改用免费的 edge 引擎配音，只是听感稍逊一筹 |
+| `VOLC_TTS_APPID` + `VOLC_TTS_ACCESS_TOKEN`（旧版，已有上面的 API Key 可不填） | 同上（场景 D 用） | 可选 | 火山引擎控制台 → 语音技术 → 语音合成大模型，开通音色后拿 APPID / Access Token | 同上，告诉 AI 这两个值即可自动存好；**不申请也没关系**，AI 会自动改用免费的 edge 引擎配音，只是听感稍逊一筹 |
 | 即梦（dreamina）登录 | 让 AI 能调用即梦 Seedance 生成视频画面，消耗你的即梦会员积分（场景 D 用） | 仅"出视频"时需要 | 用你已有的抖音 App 账号，不需要单独申请 key | 这一步 AI 帮不了忙：需要你自己在终端跑一条命令 `dreamina login --headless`（一般无需手动执行，AI 需要时会提示你），用抖音 App 扫码登录一次；登录状态只存在你这台电脑本地 |
 
 **存放位置与安全性**：以上凭据只会存进你电脑本地的用户级文件（Linux/macOS 是 `~/.config/nbdpsy/secrets.env`，Windows 是 `%APPDATA%\nbdpsy\secrets.env`），这个文件**在所有代码仓库之外，绝不会被提交进 Git**。AI 只会告诉你某项"已配置"，**永远不会把你填过的真实值念出来或回显给你或任何人**。

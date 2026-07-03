@@ -29,10 +29,15 @@ CREDENTIALS = [  # (KEY, 是否必需, 说明)
     ("NBDPSY_BLOG_API_KEY", True,
      "博客发布 API Key —— 请向管理员索要『凭据配置包』一键导入（secret import）；"
      "管理员生成入口：manage.nbdpsy.com → 博客 → API Keys → 生成凭据配置包"),
+    ("VOLC_TTS_API_KEY", False,
+     "火山豆包 TTS 新版单一凭据（优先于下面两条 appid/token）—— 找管理员要（凭据配置包会一并带上），"
+     "或去火山控制台 speech/new/setting/apikeys 自建；三者都可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
     ("VOLC_TTS_APPID", False,
-     "火山豆包 TTS —— 找管理员要（凭据配置包会一并带上）；可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
+     "火山豆包 TTS（旧版，已有 VOLC_TTS_API_KEY 可不填）—— 找管理员要（凭据配置包会一并带上）；"
+     "可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
     ("VOLC_TTS_ACCESS_TOKEN", False,
-     "火山豆包 TTS —— 找管理员要（凭据配置包会一并带上）；可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
+     "火山豆包 TTS（旧版，已有 VOLC_TTS_API_KEY 可不填）—— 找管理员要（凭据配置包会一并带上）；"
+     "可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
 ]
 
 _OS_DEFAULT_PKG = {"linux": "apt", "darwin": "brew", "windows": "winget"}

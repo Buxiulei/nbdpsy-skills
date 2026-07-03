@@ -140,21 +140,24 @@ def check(install: bool) -> dict:
         fix="pip install requests", critical=False)
 
     # 7) 豆包 TTS 凭据（三级链：环境变量 > skill .env > 用户级凭据；高音质旁白需要，edge 免费兜底不需要）
+    #    新版 VOLC_TTS_API_KEY（单一凭据，优先）或旧版 VOLC_TTS_APPID+VOLC_TTS_ACCESS_TOKEN 任一齐备即算就绪
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         from tts_gen import resolve_credentials
         creds = resolve_credentials()
-        volc_ok = bool(creds.get("appid") and creds.get("token"))
+        volc_ok = bool(creds.get("api_key")) or bool(creds.get("appid") and creds.get("token"))
     except (ImportError, Exception):
         # tts_gen import 失败时，降级为老方案（文本包含检查）
         env_p = Path(__file__).resolve().parent.parent / ".env"
         volc_ok = False
         if env_p.is_file():
             txt = env_p.read_text(encoding="utf-8", errors="ignore")
-            volc_ok = "VOLC_TTS_APPID" in txt and "VOLC_TTS_ACCESS_TOKEN" in txt
+            volc_ok = "VOLC_TTS_API_KEY" in txt or ("VOLC_TTS_APPID" in txt and "VOLC_TTS_ACCESS_TOKEN" in txt)
     add("豆包 TTS 凭据(可选)", volc_ok,
         "已配（环境变量/skill .env/用户级凭据三级链之一）" if volc_ok else "未配；用豆包高音质旁白才需要(edge 免费兜底可不配)",
-        fix="在 skill .env / 环境变量 / ~/.config/nbdpsy/secrets.env 之一配置 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN(火山控制台申请)",
+        fix="优先配 VOLC_TTS_API_KEY（新版控制台单一凭据，火山控制台 speech/new/setting/apikeys 自建）；"
+            "也可配旧版 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN；写入 skill .env / 环境变量 / "
+            "~/.config/nbdpsy/secrets.env 任一处均可",
         critical=False)
 
     ready = all(c["ok"] for c in checks if c["critical"])

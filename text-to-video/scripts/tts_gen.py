@@ -5,8 +5,18 @@
 
 引擎 --engine：
   edge   （默认，免费）edge-tts，音色 --voice zh-CN-XiaoxiaoNeural，语速 --rate "-10%"
-  doubao （高音质，需 key）火山大模型 TTS，凭据读 ../.env 的 VOLC_TTS_*，
-          音色 --voice 或 VOLC_TTS_VOICE，语速 --speed 0.95(0.8-2.0)
+  doubao （高音质，需 key）火山豆包 TTS，凭据读 ../.env 的 VOLC_TTS_*，
+          音色 --voice 或 VOLC_TTS_VOICE，语速 --speed 0.95(0.8-2.0)。
+          两套凭据/接口二选一（按有无 VOLC_TTS_API_KEY 自动路由，互不干扰）：
+          · 有 VOLC_TTS_API_KEY（新版控制台单一 Key）→ 走 V3 单向流式接口
+            （POST /api/v3/tts/unidirectional，header X-Api-Key/X-Api-Resource-Id，
+            默认音色 zh_female_wenroushunv_uranus_bigtts「温柔淑女 2.0」——
+            V3 仅认 2.0 系音色（*_uranus_bigtts），旧版 V1 音色如
+            zh_female_wenroushunv_mars_bigtts 在 V3 下不可用）。
+          · 无 API Key 但有 VOLC_TTS_APPID+VOLC_TTS_ACCESS_TOKEN（旧版双凭据）
+            → 走 V1 接口（/api/v1/tts，官方已标"不推荐"但保留向后兼容），
+            默认音色仍是 zh_female_wenroushunv_mars_bigtts「温柔淑女」。
+          · 都无 → 报错，优先引导配 VOLC_TTS_API_KEY。
 
 **逐句时间轴 --timed（字幕真同步的根，强烈建议开）**：
   默认整段合成时，字幕只能按字数比例估算时长 → 与真实语速错位。
@@ -43,9 +53,16 @@ from pathlib import Path
 
 EDGE_DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
 EDGE_DEFAULT_RATE = "-10%"
-# 默认大模型音色：温柔淑女（成熟温柔知性，心理科普旁白；需控制台开通）
+# V1（appid+token，官方已标"不推荐"，仅向后兼容）默认音色：温柔淑女
 DOUBAO_DEFAULT_VOICE = "zh_female_wenroushunv_mars_bigtts"
 DOUBAO_ENDPOINT = "https://openspeech.bytedance.com/api/v1/tts"
+# V3（单一 API Key，新版首选）默认音色：温柔淑女 2.0——V3 只认 2.0 系音色(*_uranus_bigtts)，
+# 是 V1 默认音色「温柔淑女」zh_female_wenroushunv_mars_bigtts 的 2.0 对应版本，人设一致。
+# 契约锁定自官方文档 https://www.volcengine.com/docs/6561/2528925 （V3 接口）
+# 与 https://www.volcengine.com/docs/6561/1257544 （2.0 音色列表）。
+DOUBAO_V3_DEFAULT_VOICE = "zh_female_wenroushunv_uranus_bigtts"
+DOUBAO_V3_ENDPOINT = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+DOUBAO_V3_RESOURCE_ID = "seed-tts-2.0"  # 豆包语音合成大模型2.0（另有 seed-icl-2.0 用于声音复刻音色，本产线不用）
 
 
 def _err(m: str) -> None:
@@ -87,9 +104,12 @@ def resolve_credentials() -> dict:
     """豆包 TTS 凭据解析（纯函数，便于测试）。
     三级链：环境变量 → skill 目录 .env（_load_env 合并进 os.environ，优先级不变）
     → nbdpsy_common 用户级 secrets（workspace .env / setup.py 向导写入）。
-    cluster/voice 有内置默认值：显式配置（以上任一层）优先于默认值。"""
+    cluster/voice 有内置默认值：显式配置（以上任一层）优先于默认值。
+    api_key（新版单一凭据）与 appid/token（旧版双凭据）并存解析，
+    由调用方按「有 api_key 优先走 V3」的路由规则二选一（见 _doubao_synth）。"""
     _load_env()
     return {
+        "api_key": _secret_fallback("VOLC_TTS_API_KEY"),
         "appid": _secret_fallback("VOLC_TTS_APPID"),
         "token": _secret_fallback("VOLC_TTS_ACCESS_TOKEN"),
         "cluster": _secret_fallback("VOLC_TTS_CLUSTER") or "volcano_tts",
@@ -150,20 +170,99 @@ async def _edge_synth(text: str, out: str, voice: str, rate: str) -> None:
 
 # ---- 火山豆包大模型 TTS ----
 
-def _doubao_synth(text: str, out: str, voice: str | None, speed: float) -> None:
+def _doubao_v3_speech_rate(speed: float) -> int:
+    """--speed 0.8-2.0（speed_ratio 语义，1.0=正常语速）换算成 V3 的 speech_rate 整数。
+    官方文档：speech_rate 取值 [-50,100]，100=2.0倍速、-50=0.5倍速——
+    两端斜率相同（每 1 点=0.01x），即 speed_ratio = 1 + speech_rate*0.01，故反解为线性换算。"""
+    return max(-50, min(100, round((speed - 1.0) * 100)))
+
+
+def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str) -> None:
+    """V3 单向流式合成（新版单一 API Key）。
+    契约锁定自官方文档 https://www.volcengine.com/docs/6561/2528925：
+      POST https://openspeech.bytedance.com/api/v3/tts/unidirectional
+      请求头：X-Api-Key(必选) / X-Api-Resource-Id(必选，seed-tts-2.0) / X-Api-Request-Id(必选，uuid)
+      请求体：{"req_params": {"text","speaker","audio_params":{"format","sample_rate"},"speech_rate"}}
+      响应：基于 HTTP Chunked 的连续 JSON 对象流（官方 curl 示例用 -N 免缓冲），
+      每个 JSON 对象形如 {"code":0,"message":"OK","data":"<base64 音频分片>","sentence":{...}}，
+      data 逐段 base64 解码后按到达顺序拼接即完整音频；文档未给出显式"流结束"字段，
+      以 HTTP 响应流关闭（无更多数据）作为结束判定。"""
     import requests
+    speech_rate = _doubao_v3_speech_rate(speed)
+    body = {
+        "req_params": {
+            "text": text,
+            "speaker": voice,
+            "audio_params": {"format": "mp3", "sample_rate": 24000},
+            "speech_rate": speech_rate,
+        }
+    }
+    headers = {
+        "X-Api-Key": api_key,
+        "X-Api-Resource-Id": DOUBAO_V3_RESOURCE_ID,
+        "X-Api-Request-Id": str(uuid.uuid4()),
+        "Content-Type": "application/json",
+    }
+    r = requests.post(DOUBAO_V3_ENDPOINT, headers=headers, json=body, stream=True, timeout=120)
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"火山 V3 TTS HTTP {r.status_code}：{r.text[:200]}"
+            f"（常见：API Key 无效/未授权、X-Api-Resource-Id 或音色版本不匹配）")
+    audio = bytearray()
+    buf = ""
+    decoder = json.JSONDecoder()
+    try:
+        for raw_chunk in r.iter_content(chunk_size=None):
+            if not raw_chunk:
+                continue
+            buf += raw_chunk.decode("utf-8", errors="ignore")
+            buf = buf.lstrip()
+            while buf:
+                try:
+                    obj, idx = decoder.raw_decode(buf)
+                except ValueError:
+                    break  # 本块内 JSON 尚不完整，攒到下一块再解析
+                buf = buf[idx:].lstrip()
+                code = obj.get("code")
+                if code not in (0, None):
+                    raise RuntimeError(
+                        f"火山 V3 TTS 失败 code={code} msg={obj.get('message')}"
+                        f"（常见：模型/音色未在控制台开通 / 音色不是 2.0 系(*_uranus_bigtts) / API Key 无效）")
+                data = obj.get("data")
+                if data:
+                    audio.extend(base64.b64decode(data))
+    finally:
+        r.close()
+    if not audio:
+        raise RuntimeError("火山 V3 TTS 未返回音频数据（可能凭据无效或音色不可用）")
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_bytes(bytes(audio))
+
+
+def _doubao_synth(text: str, out: str, voice: str | None, speed: float) -> str:
+    """豆包 TTS 统一入口：按凭据自动路由 V3(新)/V1(旧，向后兼容)，返回实际使用的音色。"""
     creds = resolve_credentials()
+    api_key = creds.get("api_key")
+    if api_key:
+        resolved_voice = voice or creds["voice"] or DOUBAO_V3_DEFAULT_VOICE
+        _doubao_v3_synth(text, out, resolved_voice, speed, api_key)
+        return resolved_voice
+
+    import requests
     appid, token = creds["appid"], creds["token"]
     if not appid or not token:
         raise RuntimeError(
-            "缺 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN"
-            "（填进 skill 的 .env，或跑 setup.py 凭据向导写入用户级 secrets）")
+            "缺豆包 TTS 凭据：优先配 VOLC_TTS_API_KEY"
+            "（新版控制台单一 API Key，找管理员要「凭据配置包」，或去火山引擎控制台"
+            " speech/new/setting/apikeys 自建）；"
+            "也可用旧版 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN（填进 skill 的 .env，"
+            "或跑 setup.py 凭据向导写入用户级 secrets，向后兼容）")
     cluster = creds["cluster"]
-    voice = voice or creds["voice"] or DOUBAO_DEFAULT_VOICE
+    resolved_voice = voice or creds["voice"] or DOUBAO_DEFAULT_VOICE
     body = {
         "app": {"appid": appid, "token": token, "cluster": cluster},
         "user": {"uid": "nbdpsy_t2v"},
-        "audio": {"voice_type": voice, "encoding": "mp3", "speed_ratio": speed},
+        "audio": {"voice_type": resolved_voice, "encoding": "mp3", "speed_ratio": speed},
         "request": {"reqid": str(uuid.uuid4()), "text": text, "operation": "query"},
     }
     # 火山鉴权头是 "Bearer;{token}"（分号分隔，非空格）
@@ -182,6 +281,7 @@ def _doubao_synth(text: str, out: str, voice: str | None, speed: float) -> None:
         raise RuntimeError(f"火山 TTS 无音频数据：{str(j)[:200]}")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_bytes(base64.b64decode(data))
+    return resolved_voice
 
 
 # ---- 统一入口 ----
@@ -191,17 +291,17 @@ def gen_one(text: str, out: str, *, engine: str = "edge", voice: str | None = No
     text = (text or "").strip()
     if not text:
         return {"success": False, "error": "文本为空"}
+    resolved_voice = voice or EDGE_DEFAULT_VOICE
     try:
         if engine == "doubao":
-            _doubao_synth(text, out, voice, speed)
+            resolved_voice = _doubao_synth(text, out, voice, speed)
         else:
-            asyncio.run(_edge_synth(text, out, voice or EDGE_DEFAULT_VOICE, rate))
+            asyncio.run(_edge_synth(text, out, resolved_voice, rate))
     except ModuleNotFoundError as e:
         return {"success": False, "error": f"缺依赖 {e.name}（edge-tts 或 requests）"}
     except Exception as e:  # noqa: BLE001
         return {"success": False, "error": str(e)}
-    return {"success": True, "output": str(Path(out).resolve()), "engine": engine,
-            "voice": voice or (DOUBAO_DEFAULT_VOICE if engine == "doubao" else EDGE_DEFAULT_VOICE)}
+    return {"success": True, "output": str(Path(out).resolve()), "engine": engine, "voice": resolved_voice}
 
 
 def _concat_mp3(parts: list[str], out: str) -> bool:
@@ -255,7 +355,7 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
             json.dumps({"duration": dur, "cues": cues}, ensure_ascii=False, indent=2),
             encoding="utf-8")
         return {"success": True, "output": str(Path(out).resolve()), "engine": engine,
-                "voice": voice or (DOUBAO_DEFAULT_VOICE if engine == "doubao" else EDGE_DEFAULT_VOICE),
+                "voice": r.get("voice", voice),  # 逐句实际解析出的音色（V3/V1 各自默认不同，见 gen_one）
                 "duration": dur, "cues": cues, "cues_path": cues_path}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

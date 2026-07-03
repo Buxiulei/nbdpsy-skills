@@ -58,19 +58,22 @@ def ensure_secrets(keys):
     return [k for k in keys if not get_secret(k)]
 
 REQUIRED_KEYS = ["NBDPSY_BLOG_API_KEY"]
-DOUBAO_KEYS = ["VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN"]
+DOUBAO_API_KEY = "VOLC_TTS_API_KEY"  # 新版控制台单一凭据，优先
+DOUBAO_KEYS = ["VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN"]  # 旧版双凭据，向后兼容
 
 def doctor():
     """自检可复制类凭据。返回 (report, exit_code)。绝不把密钥值放进 report。"""
     required_missing = [k for k in REQUIRED_KEYS if not get_secret(k)]
-    doubao_ready = all(get_secret(k) for k in DOUBAO_KEYS)
+    doubao_ready = bool(get_secret(DOUBAO_API_KEY)) or all(get_secret(k) for k in DOUBAO_KEYS)
     ok = not required_missing
     notes = []
     if required_missing:
         notes.append("缺发文凭据 NBDPSY_BLOG_API_KEY：找管理员要「凭据配置包」发给我一键导入"
                      "（管理员生成入口：manage.nbdpsy.com → 博客 → API Keys → 生成凭据配置包）。")
     if not doubao_ready:
-        notes.append("豆包语音未配置（可选）：不配则视频旁白用免费 edge 引擎；同一个凭据配置包会带上豆包。")
+        notes.append("豆包语音未配置（可选）：优先配 VOLC_TTS_API_KEY（新版控制台单一凭据，找管理员要"
+                     "「凭据配置包」，或去控制台 speech/new/setting/apikeys 自建），也可用旧版 "
+                     "VOLC_TTS_APPID+VOLC_TTS_ACCESS_TOKEN；都不配则视频旁白用免费 edge 引擎。")
     notes.append("视频画面用的即梦需在本机终端扫码一次：dreamina login --headless（抖音 App 扫码）；"
                  "登录态由 text-to-video/scripts/check_env.py 检测。")
     return {"ok": ok, "required_missing": required_missing,
