@@ -193,3 +193,25 @@ def test_v3_error_message_multibyte_char_split_across_chunks_not_dropped(tmp_pat
 
     with pytest.raises(RuntimeError, match="音色不存在"):
         tts_gen._doubao_synth("测试报错", str(tmp_path / "out.mp3"), None, 0.95)
+
+
+def test_v3_end_of_stream_sentinel_20000000_is_not_an_error(tmp_path, monkeypatch):
+    """生产实测：流末尾会追加 {"code":20000000,"message":"OK"} 结束哨兵（公开文档未记载）。
+    它不是错误——回归保护：带哨兵的流必须成功落盘全部音频。"""
+    tts_gen = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("VOLC_TTS_API_KEY", "sk-fake-key")
+
+    piece = b"AUDIO-BYTES"
+    obj_audio = json.dumps({"code": 0, "message": "OK", "data": base64.b64encode(piece).decode()})
+    obj_sentinel = json.dumps({"code": 20000000, "message": "OK"})
+    payload = (obj_audio + obj_sentinel).encode("utf-8")
+
+    def fake_post(url, headers=None, json=None, stream=False, timeout=None):
+        return _FakeStreamResponse(200, [payload[:20], payload[20:]])
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    out = tmp_path / "out.mp3"
+    tts_gen._doubao_synth("哨兵测试", str(out), None, 0.95)
+
+    assert out.read_bytes() == piece

@@ -226,7 +226,9 @@ def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str
                 break  # 本块内 JSON 尚不完整，攒到下一块再解析
             buf = buf[idx:].lstrip()
             code = obj.get("code")
-            if code not in (0, None):
+            # 20000000 = 流结束哨兵（生产实测：末帧 {"code":20000000,"message":"OK"}，
+            # 公开文档未记载；它不是错误，音频已在之前的 code=0 帧里发完）
+            if code not in (0, None, 20000000):
                 raise RuntimeError(
                     f"火山 V3 TTS 失败 code={code} msg={obj.get('message')}"
                     f"（常见：模型/音色未在控制台开通 / 音色不是 2.0 系(*_uranus_bigtts) / API Key 无效）")
