@@ -2,7 +2,7 @@
 """NBDpsy skills 共享工具：内容工作区解析 + 凭据三层解析。
 此文件真源在仓库 shared/，由 tools/sync_shared.py 同步到各 skill 的 scripts/，勿单独改副本。
 凭据存储：用户级 secrets 文件在任何仓库之外，永不入库。"""
-import os, sys
+import os, sys, json
 from pathlib import Path
 
 def user_secrets_path() -> Path:
@@ -57,8 +57,28 @@ def set_secret(key: str, value: str) -> Path:
 def ensure_secrets(keys):
     return [k for k in keys if not get_secret(k)]
 
+REQUIRED_KEYS = ["NBDPSY_BLOG_API_KEY"]
+DOUBAO_KEYS = ["VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN"]
+
+def doctor():
+    """自检可复制类凭据。返回 (report, exit_code)。绝不把密钥值放进 report。"""
+    required_missing = [k for k in REQUIRED_KEYS if not get_secret(k)]
+    doubao_ready = all(get_secret(k) for k in DOUBAO_KEYS)
+    ok = not required_missing
+    notes = []
+    if required_missing:
+        notes.append("缺发文凭据 NBDPSY_BLOG_API_KEY：打开管理后台 manage.nbdpsy.com → 博客 → "
+                     "API Keys → 点「生成凭据配置包」，把整段复制发给我。")
+    if not doubao_ready:
+        notes.append("豆包语音未配置（可选）：不配则视频旁白用免费 edge 引擎；同一个凭据配置包会带上豆包。")
+    notes.append("视频画面用的即梦需在本机终端扫码一次：dreamina login --headless（抖音 App 扫码）；"
+                 "登录态由 text-to-video/scripts/check_env.py 检测。")
+    return {"ok": ok, "required_missing": required_missing,
+            "doubao_ready": doubao_ready, "notes": notes}, (0 if ok else 1)
+
 def _usage():
-    print("用法: nbdpsy_common.py workspace | secret {get K | set K V | ensure K...}", file=sys.stderr)
+    print("用法: nbdpsy_common.py workspace | doctor | secret {get K | set K V | ensure K...}",
+          file=sys.stderr)
     return 2
 
 def main(argv):
@@ -67,6 +87,17 @@ def main(argv):
     if argv[0] == "workspace":
         print(resolve_workspace())
         return 0
+    if argv[0] == "doctor":
+        report, code = doctor()
+        if report["ok"]:
+            tail = "；豆包语音已配置" if report["doubao_ready"] else "；豆包语音未配置（可选，视频用免费 edge 旁白）"
+            print("✓ 发文凭据已就绪" + tail, file=sys.stderr)
+        else:
+            print("✗ 缺少必需凭据，暂时无法发文。", file=sys.stderr)
+        for n in report["notes"]:
+            print("  · " + n, file=sys.stderr)
+        print(json.dumps(report, ensure_ascii=False))
+        return code
     if argv[0] == "secret" and len(argv) >= 2:
         sub = argv[1]
         if sub == "get" and len(argv) == 3:
