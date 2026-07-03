@@ -64,6 +64,7 @@ irm https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.ps1 
 > /plugin install nbdpsy-content@nbdpsy-skills
 > ```
 > 用这种方式装完，记得手动补跑一遍 `python3 setup.py`（见下方「手动 / 排障」章节）把依赖和凭据配齐。
+> 插件市场装完没跑 setup 也不怕：首次使用或遇到报错时，skill 会自检自愈，缺的 Python 包自动补装、缺系统件/凭据会明确告诉你怎么办。
 
 ---
 

@@ -7,9 +7,15 @@ description: NBDpsy 内容产线总导演：运营只给一个心理科普话题
 
 依次驱动四个 skill，自己不生产内容。全程维护一份任务清单让用户看到进度。
 
-## 第 0 步 · 凭据自检（开跑前必做）
+## 第 0 步 · 环境与凭据自检（开跑前必做）
 
 先跑一次自检，缺啥一次性告诉运营，别做到一半才卡（`{SKILL_DIR}` 沿用各 SKILL.md 既有占位约定）：
+
+```bash
+python3 {SKILL_DIR}/scripts/env_check.py --profile pipeline --install
+```
+
+依赖（yaml/requests/PIL）会自动补装；视频链依赖由 text-to-video 自己的第 0 步 `check_env.py` 负责，本步不管。再跑凭据自检：
 
 ```bash
 python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
