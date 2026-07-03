@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "NBDpsy 心理科普内容创作 skills：SEO/GEO pillar 长文 + 小红书图文拆分（含配图提示词）+ 竖屏短视频 + 对抗审查 + 一句话全流程总导演",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "nbdpsy-content",
       "source": "./",
       "description": "把心理科普主题写成 SEO/GEO pillar 长文（seo-artical-creator），把长文拆成可直接发小红书的图文笔记 + 配图提示词（xiaohongshu-creator），再把长文/小红书笔记转成带中文字幕的竖屏短视频（text-to-video，即梦 Seedance 2.0 + 豆包配音）；content-reviewer 对每一级产物做对抗性质量审查；content-pipeline 只需一个话题即可把长文→审查→拆笔记→审查→出图→审查→视频→审查全流程自动串完",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": {
         "name": "Buxiulei"
       },
