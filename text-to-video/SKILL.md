@@ -60,6 +60,8 @@ check_env 报某项凭据缺失时，按下表**主动引导用户提供**，拿
 | 首模型合规授权 | Dreamina 网页端 | 报 `AigcComplianceConfirmationRequired` 时引导用户去网页端一次性授权 |
 | sudo（装 ffmpeg/字体，如需）| 不留存 | 需要时即时问用户密码，用完不写进任何文件/日志 |
 
+> 豆包凭据也可由管理后台「博客 → API Keys → 生成凭据配置包」统一下发（工作室已集中配置时，包里会自动带上 `VOLC_TTS_*`）；即梦登录仍需本机扫码，无法进包。
+
 配好后 `python3 {SKILL_DIR}/scripts/check_env.py` 复检到全绿再开跑。用户想撤销时，删 `.env` 对应行 / `~/.dreamina_cli/` 即可。
 
 ---

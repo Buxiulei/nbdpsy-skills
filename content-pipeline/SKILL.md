@@ -7,6 +7,30 @@ description: NBDpsy 内容产线总导演：运营只给一个心理科普话题
 
 依次驱动四个 skill，自己不生产内容。全程维护一份任务清单让用户看到进度。
 
+## 第 0 步 · 凭据自检（开跑前必做）
+
+先跑一次自检，缺啥一次性告诉运营，别做到一半才卡（`{SKILL_DIR}` 沿用各 SKILL.md 既有占位约定）：
+
+```bash
+python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
+```
+
+- 退出码 0 且 `ok=true` → 发文凭据齐，继续。
+- `ok=false`（缺 `NBDPSY_BLOG_API_KEY`）→ **停下**，对运营说：
+  「打开管理后台 manage.nbdpsy.com → 博客 → API Keys → 点『生成凭据配置包』，把整段复制发给我。」
+- `doubao_ready=false` 只是提醒：视频将用免费 edge 配音，不阻塞。
+
+### 消化「凭据配置包」（运营粘贴过来时）
+
+当运营发来以 `# ===== NBDPSY 内容工具包 · 凭据配置包 =====` 开头的整段：
+
+1. 把整段原样写入一个临时文件（如 `/tmp/nbd_bundle.txt`，权限 600）。
+2. 运行 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py secret import /tmp/nbd_bundle.txt`。
+3. 删除临时文件。
+4. 复跑 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor` 确认转绿。
+
+**全程不要把密钥值回显到对话/日志**——值只经临时文件落本机凭据，不进命令行参数。
+
 ### 流程
 
 0. 确认输入：话题/想法（唯一必需）。可选：指定篇数、只到某一级停。

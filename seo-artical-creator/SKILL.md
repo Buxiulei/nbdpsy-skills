@@ -104,6 +104,10 @@ python3 {SKILL_DIR}/scripts/check_links.py "$WS/drafts/{slug}.md"
 
 > **为什么默认发布**：本项目采用「发布优先、事后复查」——AI 生成即上线、署名胡佰亿，管理员上网页核查，有问题再后台下架/改。这把人工环节从"发布前闸门"挪到"发布后兜底"，提速，但要求 ① 管理员及时核查 ② AI 自己的查证/复审必须更严（数字会带着真人署名一起上线）。如确需先压草稿，加 `--draft`。
 
+> 发布需要 `NBDPSY_BLOG_API_KEY`。缺失时先跑 `python3 scripts/nbdpsy_common.py doctor`，
+> 并让运营在管理后台「博客 → API Keys → 生成凭据配置包」取包、整段发来，
+> 按 content-pipeline 的「消化凭据配置包」配方写入后复跑。绝不回显 key 值。
+
 1. **凭据自举**（首次缺失询问并记录，密钥绝不硬编码进 skill 或仓库）：
 
    ```bash
