@@ -1,7 +1,7 @@
 {
   "name": "nbdpsy-content",
   "description": "NBDpsy 内容创作 skills：seo-artical-creator（SEO/GEO pillar 长文）+ xiaohongshu-creator（把长文拆成小红书图文笔记 + 配图提示词）+ text-to-video（把长文/小红书笔记转成带中文字幕的竖屏短视频，即梦 Seedance 2.0 + 豆包配音）+ content-reviewer（对四类产物做对抗性质量审查）+ content-pipeline（话题一句话串完长文→审查→拆笔记→审查→出图→审查→视频→审查全流程的总导演）",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": {
     "name": "Buxiulei"
   },
