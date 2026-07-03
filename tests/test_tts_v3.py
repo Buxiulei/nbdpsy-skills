@@ -172,3 +172,24 @@ def test_both_credentials_missing_error_mentions_api_key(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="API Key") as exc_info:
         tts_gen._doubao_synth("测试文本", str(tmp_path / "out.mp3"), None, 0.95)
     assert "VOLC_TTS_APPID" in str(exc_info.value)  # 旧版凭据引导仍保留（向后兼容回归）
+
+
+# ---------- 5. 错误 message 含多字节中文字符被物理 chunk 边界切断 → 增量解码不丢字 ----------
+
+def test_v3_error_message_multibyte_char_split_across_chunks_not_dropped(tmp_path, monkeypatch):
+    tts_gen = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("VOLC_TTS_API_KEY", "sk-fake-key")
+
+    payload = json.dumps({"code": 50000, "message": "音色不存在"}, ensure_ascii=False).encode("utf-8")
+    # 故意把切点落在「音」字（3 字节 UTF-8 序列）中间，制造跨 chunk 的半个字符
+    yin_idx = payload.index("音色不存在".encode("utf-8"))
+    cut = yin_idx + 1  # 切在「音」字第 1 个字节之后（序列尚未完整）
+    chunks = [payload[:cut], payload[cut:]]
+
+    def fake_post(url, headers=None, json=None, stream=False, timeout=None):
+        return _FakeStreamResponse(200, chunks)
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    with pytest.raises(RuntimeError, match="音色不存在"):
+        tts_gen._doubao_synth("测试报错", str(tmp_path / "out.mp3"), None, 0.95)

@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import codecs
 import json
 import os
 import shutil
@@ -205,32 +206,43 @@ def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str
     }
     r = requests.post(DOUBAO_V3_ENDPOINT, headers=headers, json=body, stream=True, timeout=120)
     if r.status_code != 200:
+        r.close()
         raise RuntimeError(
             f"火山 V3 TTS HTTP {r.status_code}：{r.text[:200]}"
             f"（常见：API Key 无效/未授权、X-Api-Resource-Id 或音色版本不匹配）")
     audio = bytearray()
     buf = ""
     decoder = json.JSONDecoder()
+    # 增量 UTF-8 解码器：多字节字符可能被物理 chunk 边界切断，
+    # 逐 chunk 独立 decode(errors="ignore") 会把切断的半个字符两侧都静默丢弃，
+    # 导致响应里的中文错误文案缺字（如"音色不存在"丢成"色不存在"）。
+    text_decoder = codecs.getincrementaldecoder("utf-8")()
+
+    def _drain(buf: str) -> str:
+        while buf:
+            try:
+                obj, idx = decoder.raw_decode(buf)
+            except ValueError:
+                break  # 本块内 JSON 尚不完整，攒到下一块再解析
+            buf = buf[idx:].lstrip()
+            code = obj.get("code")
+            if code not in (0, None):
+                raise RuntimeError(
+                    f"火山 V3 TTS 失败 code={code} msg={obj.get('message')}"
+                    f"（常见：模型/音色未在控制台开通 / 音色不是 2.0 系(*_uranus_bigtts) / API Key 无效）")
+            data = obj.get("data")
+            if data:
+                audio.extend(base64.b64decode(data))
+        return buf
+
     try:
         for raw_chunk in r.iter_content(chunk_size=None):
             if not raw_chunk:
                 continue
-            buf += raw_chunk.decode("utf-8", errors="ignore")
-            buf = buf.lstrip()
-            while buf:
-                try:
-                    obj, idx = decoder.raw_decode(buf)
-                except ValueError:
-                    break  # 本块内 JSON 尚不完整，攒到下一块再解析
-                buf = buf[idx:].lstrip()
-                code = obj.get("code")
-                if code not in (0, None):
-                    raise RuntimeError(
-                        f"火山 V3 TTS 失败 code={code} msg={obj.get('message')}"
-                        f"（常见：模型/音色未在控制台开通 / 音色不是 2.0 系(*_uranus_bigtts) / API Key 无效）")
-                data = obj.get("data")
-                if data:
-                    audio.extend(base64.b64decode(data))
+            buf += text_decoder.decode(raw_chunk)
+            buf = _drain(buf.lstrip())
+        buf += text_decoder.decode(b"", final=True)
+        buf = _drain(buf.lstrip())
     finally:
         r.close()
     if not audio:
