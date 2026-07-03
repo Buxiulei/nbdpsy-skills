@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""把拆分产物（00-overview.md + post-*.md）渲染成一个自包含的 preview.html。
+"""把拆分产物（00-overview.md + post-*.md）渲染成一个自包含的预览页 HTML。
 设计意图（按用户反馈）：区分两类内容——
   · 给人看的（发布文案 / 每页页面文字）→ 暖纸感、衬线、舒适排版，标签做成 pill；
   · 复制给 AI 的绘图提示词 → 深色等宽代码面板「保持原样」，每段带一键复制按钮。
-用法: render_preview.py <输出目录> [输出html路径=<输出目录>/preview.html]
+用法: render_preview.py <输出目录> [输出html路径=<输出目录>/<目录名>-preview.html]
+输出默认按内容命名（{目录名}-preview.html），不同笔记组的预览页不重名。
 零外部依赖（纯标准库），生成单文件 HTML，本地双击即看。
 """
 import sys, re, html, pathlib, json
@@ -180,9 +181,14 @@ CLIP_SVG = ('<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColo
             'stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/>'
             '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>')
 
+def default_out_html(outdir: pathlib.Path) -> pathlib.Path:
+    """按内容命名：{目录名}-preview.html，避免所有预览页都叫同一个名字。"""
+    return outdir / f"{outdir.name}-preview.html"
+
+
 def main():
-    outdir = pathlib.Path(sys.argv[1])
-    out_html = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else outdir / 'preview.html'
+    outdir = pathlib.Path(sys.argv[1]).resolve()
+    out_html = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else default_out_html(outdir)
     posts = sorted(p for p in outdir.glob('post-*.md'))
     if not posts:
         print('未找到 post-*.md，先生成拆分产物'); sys.exit(1)

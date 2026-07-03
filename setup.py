@@ -26,11 +26,13 @@ PKG_CMDS = {  # 每项: (检测可执行, {pkg管理器: 安装命令})
 FONT_HINTS = {"apt": "sudo apt-get install -y fonts-noto-cjk", "brew": "brew install --cask font-noto-sans-cjk-sc",
               "winget": "Windows 自带微软雅黑可直接用；如需 Noto 请手动安装 Noto Sans CJK SC"}
 CREDENTIALS = [  # (KEY, 是否必需, 说明)
-    ("NBDPSY_BLOG_API_KEY", True, "博客发布 API Key（管理后台 manage.nbdpsy.com → 博客 → API Keys 新建）"),
+    ("NBDPSY_BLOG_API_KEY", True,
+     "博客发布 API Key —— 请向管理员索要『凭据配置包』一键导入（secret import）；"
+     "管理员生成入口：manage.nbdpsy.com → 博客 → API Keys → 生成凭据配置包"),
     ("VOLC_TTS_APPID", False,
-     "火山豆包 TTS APPID（可跳过——跳过后旁白需用 --engine edge，即 edge-tts 免费引擎）"),
+     "火山豆包 TTS —— 找管理员要（凭据配置包会一并带上）；可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
     ("VOLC_TTS_ACCESS_TOKEN", False,
-     "火山豆包 TTS Access Token（可跳过——跳过后旁白需用 --engine edge，即 edge-tts 免费引擎）"),
+     "火山豆包 TTS —— 找管理员要（凭据配置包会一并带上）；可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
 ]
 
 _OS_DEFAULT_PKG = {"linux": "apt", "darwin": "brew", "windows": "winget"}
@@ -161,18 +163,13 @@ def step_dreamina(state: dict, interactive: bool) -> None:
         return
 
     install_cmd = "curl -fsSL https://jimeng.jianying.com/cli | bash"
-    print(f"  未检测到 dreamina CLI。官方安装命令：{install_cmd}")
-    if interactive:
-        ans = input("  是否现在执行安装？[y/N] ").strip().lower()
-        if ans == "y":
-            _run(["bash", "-c", install_cmd], timeout=300)
-            exe = shutil.which("dreamina") or (fallback if Path(fallback).exists() else None)
-            if exe:
-                report("dreamina CLI", "✓", "安装完成，请运行 dreamina login --headless 登录")
-            else:
-                report("dreamina CLI", "跳过", f"自动安装未成功，可稍后手动执行：{install_cmd}")
-            return
-    report("dreamina CLI", "跳过", f"未安装（可选，仅 text-to-video 需要）。手动安装：{install_cmd}")
+    print(f"  未检测到 dreamina CLI，自动安装：{install_cmd}")
+    _run(["bash", "-c", install_cmd], timeout=300)
+    exe = shutil.which("dreamina") or (fallback if Path(fallback).exists() else None)
+    if exe:
+        report("dreamina CLI", "✓", "安装完成，请在终端运行 dreamina login --headless 用抖音 App 扫码登录（无法代扫）")
+    else:
+        report("dreamina CLI", "跳过", f"自动安装未成功，可稍后手动执行：{install_cmd}")
 
 
 # ---------- 凭据向导 ----------
@@ -199,8 +196,12 @@ def credential_wizard(interactive: bool) -> list:
 
 def step_credentials(interactive: bool) -> None:
     print("\n=== 凭据向导 ===")
-    for key, mark, detail in credential_wizard(interactive):
+    results = credential_wizard(interactive)
+    for key, mark, detail in results:
         report(f"凭据 {key}", mark, detail)
+    if not interactive and any(mark != "✓" for _, mark, _ in results):
+        print("  提示：非交互模式未逐项询问。请向管理员索要「凭据配置包」，"
+              "然后运行 python3 nbdpsy_common.py secret import <凭据包文件> 一键导入。")
 
 
 # ---------- 每 skill 冒烟测试 ----------
@@ -233,7 +234,7 @@ def print_final_report() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="nbdpsy-skills 环境安装向导（跨平台）")
-    ap.add_argument("--yes", action="store_true", help="非交互：能装的都装，凭据/dreamina 只报缺不问")
+    ap.add_argument("--yes", action="store_true", help="非交互：能装的都装（含 dreamina CLI 自动安装），凭据只报缺不问")
     ap.add_argument("--skip-credentials", action="store_true", help="跳过凭据向导（只报缺，不问）")
     args = ap.parse_args()
 

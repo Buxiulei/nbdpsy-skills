@@ -41,9 +41,15 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
 4. 【拆笔记】触发 xiaohongshu-creator，传入 slug（自动拉文）。
 5. 【审查】content-reviewer 逐篇审笔记（checklist-note），FAIL 同返工协议。
 6. 【出图】按 xiaohongshu-creator 的宿主自适应出图章节执行：
-   宿主有图像生成能力 → 直接生成；没有 → 停下把 preview.html 路径给运营，等图回传后继续。
+   宿主有图像生成能力 → 直接生成；没有 → **⛔ 停等闸门（硬性协议）**：把预览页
+   （{note_dir}/{note_dir目录名}-preview.html）绝对路径给运营，并把 post-01 的全部页提示词
+   逐页贴在会话里，说明回传方式（图片按 P01.png… 放进 images/post-NN/ 子目录），然后
+   **立即结束当前回合等待**——不得继续第 7 步、不得假设图片已就绪。这是全流程预期内的
+   正常长停等，不算失败。运营回复后逐篇核验图片数量=页数才继续；不齐则列缺再停。
 7. 【审查】content-reviewer 审图（checklist-images），FAIL → 只重出问题页。
-8. 【视频】对用户选定的笔记（默认第 1 篇）触发 text-to-video 十步产线。
+8. 【视频】对用户选定的笔记（默认第 1 篇）触发 text-to-video 十步产线。视频走图生时同样有
+   storyboard 停等闸门（text-to-video 第 2.5 步：分镜确认页 {workdir名}-storyboard.html
+   给运营复制每镜提示词、回传 P{页号}.png 到 <workdir>/images/），停等协议同上。
 9. 【审查】content-reviewer 审片（checklist-video），FAIL → 按报告只重跑问题镜。
 10.【交付】汇总：博客地址、笔记目录、images/、成片路径、各级 review-report.md。
    提醒：小红书/视频号上传是人工步骤；上传前可再扫一眼各报告。
@@ -52,5 +58,6 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
 
 - 每级审查者必须是独立子代理（新实例加载 content-reviewer），绝不让生产 agent 自审。
 - 审查 FAIL 未消除前不进下一级；第 3 轮仍 FAIL 必须停下找人，禁止硬闯。
-- 人工等待点只有两类：宿主无生图能力时的出图回传、以及 dreamina 排队/扫码类外部依赖。
+- 人工等待点只有三类：笔记配图回传（第 6 步）、视频参考图回传（text-to-video 第 2.5 步）、
+  以及 dreamina 排队/扫码类外部依赖。停等时必须结束回合，恢复时从停等点续跑。
 - 中断恢复：重新触发本 skill 并告知已完成到哪级，从该级之后续跑（各级产物都在工作区，幂等）。

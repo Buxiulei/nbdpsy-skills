@@ -67,8 +67,8 @@ def doctor():
     ok = not required_missing
     notes = []
     if required_missing:
-        notes.append("缺发文凭据 NBDPSY_BLOG_API_KEY：打开管理后台 manage.nbdpsy.com → 博客 → "
-                     "API Keys → 点「生成凭据配置包」，把整段复制发给我。")
+        notes.append("缺发文凭据 NBDPSY_BLOG_API_KEY：找管理员要「凭据配置包」发给我一键导入"
+                     "（管理员生成入口：manage.nbdpsy.com → 博客 → API Keys → 生成凭据配置包）。")
     if not doubao_ready:
         notes.append("豆包语音未配置（可选）：不配则视频旁白用免费 edge 引擎；同一个凭据配置包会带上豆包。")
     notes.append("视频画面用的即梦需在本机终端扫码一次：dreamina login --headless（抖音 App 扫码）；"
@@ -129,6 +129,9 @@ def main(argv):
             v = get_secret(argv[2])
             if v is None:
                 print(f"MISSING:{argv[2]}", file=sys.stderr)
+                print("提示：缺少凭据。请向管理员索要「凭据配置包」，然后运行 "
+                      "python3 nbdpsy_common.py secret import <凭据包文件> 一键导入；"
+                      "python3 nbdpsy_common.py doctor 可查看全部缺项。", file=sys.stderr)
                 return 1
             print(v)
             return 0

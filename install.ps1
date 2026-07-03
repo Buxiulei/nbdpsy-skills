@@ -1,7 +1,8 @@
-﻿# NBDpsy skills 一键安装（Windows）。用法: .\install.ps1 [claude|codex|agents|all]（默认 all）
+﻿# NBDpsy skills 一键安装（Windows）。用法: .\install.ps1 [claude|codex|agents|all] [-SkillsOnly]（默认 all；-SkillsOnly 跳过自动装依赖）
 # 远程: irm https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.ps1 | iex
 param(
-    [string]$Target = "all"
+    [string]$Target = "all",
+    [switch]$SkillsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,5 +63,27 @@ switch ($Target) {
 }
 
 Write-Host ""
-Write-Host "完成 ✓ 下一步（首次必跑）："
-Write-Host "  py `"$Src\setup.py`"   # 检测系统装依赖 + 凭据向导"
+Write-Host "完成 ✓ 正在自动安装依赖 + 检测凭据..."
+if ($SkillsOnly -or $env:NBDPSY_SKIP_SETUP -eq "1") {
+    Write-Host "已跳过（-SkillsOnly）。如需稍后配置：py `"$Src\setup.py`""
+} else {
+    $PythonCmd = $null
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        $PythonCmd = "python"
+    } elseif (Get-Command py -ErrorAction SilentlyContinue) {
+        $PythonCmd = "py"
+    }
+    if ($PythonCmd) {
+        $PrevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $PythonCmd "$Src\setup.py"
+        } catch {
+            Write-Host "环境安装向导执行出错（不影响 skill 已安装）：$_"
+        }
+        $ErrorActionPreference = $PrevEAP
+        Write-Host "如报缺凭据：找管理员要「凭据配置包」，然后 py nbdpsy_common.py secret import <文件> 一键导入"
+    } else {
+        Write-Host "未检测到 Python，请先安装（winget install Python.Python.3.12），再手动运行：py `"$Src\setup.py`""
+    }
+}
