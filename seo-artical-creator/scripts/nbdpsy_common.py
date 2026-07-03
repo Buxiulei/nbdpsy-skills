@@ -102,7 +102,7 @@ def import_bundle(path):
     return written, skipped
 
 def _usage():
-    print("用法: nbdpsy_common.py workspace | doctor | secret {get K | set K V | ensure K...}",
+    print("用法: nbdpsy_common.py workspace | doctor | secret {get K | set K V | ensure K... | import FILE}",
           file=sys.stderr)
     return 2
 

@@ -4,7 +4,7 @@ import shutil, sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SKILLS = ["seo-artical-creator", "xiaohongshu-creator", "text-to-video", "content-reviewer"]
+SKILLS = ["seo-artical-creator", "xiaohongshu-creator", "text-to-video", "content-reviewer", "content-pipeline"]
 
 def main():
     changed = []
