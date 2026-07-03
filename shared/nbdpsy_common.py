@@ -76,6 +76,31 @@ def doctor():
     return {"ok": ok, "required_missing": required_missing,
             "doubao_ready": doubao_ready, "notes": notes}, (0 if ok else 1)
 
+IMPORT_ALLOWLIST_PREFIXES = ("NBDPSY_", "VOLC_TTS_")
+
+def _import_allowed(key: str) -> bool:
+    return any(key.startswith(p) for p in IMPORT_ALLOWLIST_PREFIXES)
+
+def import_bundle(path):
+    """从凭据包文件导入白名单 key。返回 (written, skipped) 均为 key 名列表；绝不返回/打印值。"""
+    text = Path(path).read_text(encoding="utf-8", errors="ignore")
+    written, skipped = [], []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if not key:
+            continue
+        if _import_allowed(key):
+            set_secret(key, value)
+            written.append(key)
+        else:
+            skipped.append(key)
+    return written, skipped
+
 def _usage():
     print("用法: nbdpsy_common.py workspace | doctor | secret {get K | set K V | ensure K...}",
           file=sys.stderr)
@@ -114,6 +139,16 @@ def main(argv):
         if sub == "ensure":
             for k in ensure_secrets(argv[2:]):
                 print(k)
+            return 0
+        if sub == "import" and len(argv) == 3:
+            written, skipped = import_bundle(Path(argv[2]))
+            if written:
+                print(f"✓ 已写入 {len(written)} 项凭据：{', '.join(written)}（值不回显，已存本机）",
+                      file=sys.stderr)
+            else:
+                print("未发现可导入的凭据（请确认粘贴了完整配置包）", file=sys.stderr)
+            if skipped:
+                print(f"已跳过非白名单键：{', '.join(skipped)}", file=sys.stderr)
             return 0
     return _usage()
 
