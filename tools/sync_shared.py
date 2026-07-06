@@ -4,7 +4,7 @@ import shutil, sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SKILLS = ["seo-artical-creator", "xiaohongshu-creator", "text-to-video", "content-reviewer", "content-pipeline"]
+SKILLS = ["nbdpsy-seo-artical-creator", "nbdpsy-xiaohongshu-creator", "nbdpsy-text-to-video", "nbdpsy-content-reviewer", "nbdpsy-content-pipeline"]
 
 def main():
     changed = []
@@ -12,7 +12,7 @@ def main():
         for skill in SKILLS:
             dst_dir = ROOT / skill / "scripts"
             if not dst_dir.parent.is_dir():
-                continue  # skill 尚未创建（如 content-reviewer 在 Task 15 才建）
+                continue  # skill 尚未创建（如 nbdpsy-content-reviewer 在 Task 15 才建）
             dst_dir.mkdir(exist_ok=True)
             dst = dst_dir / src.name
             if not dst.exists() or dst.read_bytes() != src.read_bytes():

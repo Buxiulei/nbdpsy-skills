@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent.parent / "text-to-video" / "scripts" / "render_storyboard.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts" / "render_storyboard.py"
 
 
 def make_workdir(tmp_path, name="cptsd-01"):

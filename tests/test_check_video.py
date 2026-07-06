@@ -3,9 +3,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "content-reviewer" / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-content-reviewer" / "scripts"))
 
-SCRIPT = Path(__file__).parent.parent / "content-reviewer" / "scripts" / "check_video.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-content-reviewer" / "scripts" / "check_video.py"
 
 
 def _write_cues(path: Path, cues: list[dict], duration: float | None = None) -> None:

@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent.parent / "text-to-video" / "scripts" / "build_manifest.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts" / "build_manifest.py"
 
 
 def _write_shots(workdir: Path, shots: list[dict]) -> None:

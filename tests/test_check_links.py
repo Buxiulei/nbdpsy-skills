@@ -1,6 +1,6 @@
 import json, subprocess, sys
 from pathlib import Path
-SCRIPT = Path(__file__).parent.parent / "seo-artical-creator" / "scripts" / "check_links.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-seo-artical-creator" / "scripts" / "check_links.py"
 
 def test_extract_and_classify(tmp_path, monkeypatch):
     sys.path.insert(0, str(SCRIPT.parent))

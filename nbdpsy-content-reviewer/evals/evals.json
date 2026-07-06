@@ -1,0 +1,18 @@
+{
+  "skill_name": "nbdpsy-content-reviewer",
+  "evals": [
+    {
+      "id": 0,
+      "name": "review-xhs-note",
+      "prompt": "对这篇小红书笔记进行对抗审查，使用 references/checklist-note.md 清单逐条检查。输入笔记：assets/example-xhs-note.md",
+      "files": ["assets/example-xhs-note.md"],
+      "expected_output": "生成 review-report.md，首行为「# 审查结论：PASS」或「# 审查结论：FAIL」；逐条记录脚本输出与判断项 PASS/FAIL 及证据。",
+      "assertions": [
+        {"text": "首行为「# 审查结论：」开头的 PASS 或 FAIL 结论"},
+        {"text": "包含至少一条脚本确定性检查（如 count_xhs.py 或 check_compliance.py 的 JSON 输出）"},
+        {"text": "逐条列出判断项检查（每条含 PASS/FAIL + 证据 + 位置）"},
+        {"text": "不因生产者声称「已自查通过」而省略审查步骤"}
+      ]
+    }
+  ]
+}

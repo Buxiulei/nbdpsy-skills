@@ -3,7 +3,7 @@
 # 远程: curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.sh | bash
 set -euo pipefail
 REPO_URL="https://github.com/Buxiulei/nbdpsy-skills.git"
-SKILLS=(seo-artical-creator xiaohongshu-creator text-to-video content-reviewer content-pipeline)
+SKILLS=(nbdpsy-seo-artical-creator nbdpsy-xiaohongshu-creator nbdpsy-text-to-video nbdpsy-content-reviewer nbdpsy-content-pipeline)
 
 SKILLS_ONLY=0
 TARGET=""
@@ -21,13 +21,20 @@ if [ -z "${SRC:-}" ] || [ ! -d "$SRC/${SKILLS[0]}" ]; then
   git clone --depth 1 "$REPO_URL" "$TMP/repo" >/dev/null 2>&1; SRC="$TMP/repo"
 fi
 
+# 旧版（无 nbdpsy- 前缀）skill 名，安装时顺带清理，防新旧并存重复触发
+LEGACY_SKILLS=(seo-artical-creator xiaohongshu-creator text-to-video content-reviewer content-pipeline)
+
 copy_to () {  # copy_to <dest> <label>
   mkdir -p "$1"; echo "→ 安装到 $2（$1）"
+  for s in "${LEGACY_SKILLS[@]}"; do
+    [ -e "${1:?}/$s" ] && { rm -rf "${1:?}/$s"; echo "  ✗ 清理旧名 $s"; }
+  done
   for s in "${SKILLS[@]}"; do rm -rf "${1:?}/$s"; cp -R "$SRC/$s" "$1/$s"; echo "  ✓ $s"; done
 }
 link_codex () {  # ~/.codex/skills/<s> -> ~/.agents/skills/<s>
   local dest="${CODEX_HOME:-$HOME/.codex}/skills"; mkdir -p "$dest"
   echo "→ 链接 Codex 旧路径（$dest → ~/.agents/skills）"
+  for s in "${LEGACY_SKILLS[@]}"; do rm -rf "${dest:?}/$s"; done
   for s in "${SKILLS[@]}"; do rm -rf "${dest:?}/$s"; ln -s "$HOME/.agents/skills/$s" "$dest/$s"; done
 }
 

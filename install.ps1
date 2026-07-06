@@ -8,8 +8,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoUrl = "https://github.com/Buxiulei/nbdpsy-skills.git"
-$Skills = @("seo-artical-creator", "xiaohongshu-creator", "text-to-video", "content-reviewer", "content-pipeline")
+$Skills = @("nbdpsy-seo-artical-creator", "nbdpsy-xiaohongshu-creator", "nbdpsy-text-to-video", "nbdpsy-content-reviewer", "nbdpsy-content-pipeline")
 
+# 旧版（无 nbdpsy- 前缀）名，安装时顺带清理
+$LegacySkills = @('seo-artical-creator','xiaohongshu-creator','text-to-video','content-reviewer','content-pipeline')
 # 定位 skill 源目录：脚本同级有 skill 目录则用本地；否则临时 clone（远程 irm | iex 时 $PSScriptRoot 为空）
 $Src = $PSScriptRoot
 if ([string]::IsNullOrEmpty($Src) -or -not (Test-Path (Join-Path $Src $Skills[0]))) {
@@ -29,6 +31,13 @@ function Copy-ToDest {
     if ([string]::IsNullOrEmpty($Dest)) { throw "Dest 为空，拒绝执行删除/拷贝" }
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
     Write-Host "→ 安装到 $Label（$Dest）"
+    foreach ($s in $LegacySkills) {
+        $legacyPath = Join-Path $Dest $s
+        if (Test-Path $legacyPath) {
+            Remove-Item -Path $legacyPath -Recurse -Force
+            Write-Host "  ✗ 清理旧名 $s"
+        }
+    }
     foreach ($s in $Skills) {
         $destSkill = Join-Path $Dest $s
         if (Test-Path $destSkill) {

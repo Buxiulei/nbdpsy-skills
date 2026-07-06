@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent.parent / "text-to-video" / "scripts" / "parse_note.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts" / "parse_note.py"
 FIXTURE = Path(__file__).parent / "fixtures" / "note.md"
 
 

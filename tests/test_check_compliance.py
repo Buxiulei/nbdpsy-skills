@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent.parent / "xiaohongshu-creator" / "scripts" / "check_compliance.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts" / "check_compliance.py"
 FIXTURE = Path(__file__).parent / "fixtures" / "note.md"
 
 def test_fixture_clean():

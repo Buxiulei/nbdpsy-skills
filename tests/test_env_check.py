@@ -27,7 +27,7 @@ def test_json_contract_fields(profile):
 
 def test_pipeline_profile_includes_text_to_video_note():
     result = env_check.run("pipeline", install=False)
-    note = next(c for c in result["checks"] if c["name"] == "text-to-video 视频链依赖")
+    note = next(c for c in result["checks"] if c["name"] == "nbdpsy-text-to-video 视频链依赖")
     assert note["status"] == "warn"
     assert "check_env.py" in note["detail"]
 

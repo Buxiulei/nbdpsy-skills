@@ -112,8 +112,8 @@ def step_system_deps(state: dict, interactive: bool) -> None:
 
 def step_font(state: dict) -> None:
     print("\n=== 中文字幕字体 ===")
-    sys.path.insert(0, str(REPO_ROOT / "text-to-video" / "scripts"))
-    from compose_video import resolve_font  # 复用 text-to-video 的跨平台字体解析，避免重复实现
+    sys.path.insert(0, str(REPO_ROOT / "nbdpsy-text-to-video" / "scripts"))
+    from compose_video import resolve_font  # 复用 nbdpsy-text-to-video 的跨平台字体解析，避免重复实现
     try:
         path = resolve_font()
         report("中文字幕字体", "✓", path)
@@ -214,9 +214,9 @@ def step_credentials(interactive: bool) -> None:
 def step_smoke_tests() -> None:
     print("\n=== Skill 冒烟测试 ===")
     cmds = [
-        ("seo-artical-creator", [sys.executable, str(REPO_ROOT / "seo-artical-creator" / "scripts" / "count_hanzi.py"), "--help"]),
-        ("xiaohongshu-creator", [sys.executable, str(REPO_ROOT / "xiaohongshu-creator" / "scripts" / "fetch_post.py"), "--help"]),
-        ("text-to-video", [sys.executable, str(REPO_ROOT / "text-to-video" / "scripts" / "check_env.py"), "--help"]),
+        ("nbdpsy-seo-artical-creator", [sys.executable, str(REPO_ROOT / "nbdpsy-seo-artical-creator" / "scripts" / "count_hanzi.py"), "--help"]),
+        ("nbdpsy-xiaohongshu-creator", [sys.executable, str(REPO_ROOT / "nbdpsy-xiaohongshu-creator" / "scripts" / "fetch_post.py"), "--help"]),
+        ("nbdpsy-text-to-video", [sys.executable, str(REPO_ROOT / "nbdpsy-text-to-video" / "scripts" / "check_env.py"), "--help"]),
     ]
     for skill, cmd in cmds:
         rc, _out, err = _run(cmd, timeout=30)

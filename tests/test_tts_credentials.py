@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "text-to-video" / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts"))
 
 ENV_KEYS = ["VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN", "VOLC_TTS_CLUSTER", "VOLC_TTS_VOICE"]
 

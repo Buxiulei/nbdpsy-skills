@@ -33,9 +33,9 @@
 
 1. **内容层跟进（NBDpsy 侧，非工具包）**：线上 CPTSD 文章（blog id=3）可能与范文同源存在 CDC 引用漂移与 ICD-11 年份误差，建议编辑核修。
 2. **Windows 真机**：install.ps1 / setup.py winget 分支 / py setup.py 全链留 Windows 机器实测。
-3. **Codex 交互触发**：CLI 已装（0.142.5）+ skills 目录就位；`$seo-artical-creator` 显式与描述隐式触发留登录后实测。
+3. **Codex 交互触发**：CLI 已装（0.142.5）+ skills 目录就位；`$nbdpsy-seo-artical-creator` 显式与描述隐式触发留登录后实测。
 4. **dreamina Windows**：官方 CLI 未验证 Windows，Windows 出片建议 WSL（setup.py 已引导）。
-5. **Backlog（终审 triage 判定可延后）**：publish_post slug/title 显式空值兜底（一行）；parse_note 回退分支标记行混入；check_images 两防御分支补测试；金范例补视频参考图节（注意双副本齐改）；content-pipeline 补「以报告首行为准」一句；checklist-video 非心理主题 12356 豁免口径；NBDpsy external GET 回读五字段。
+5. **Backlog（终审 triage 判定可延后）**：publish_post slug/title 显式空值兜底（一行）；parse_note 回退分支标记行混入；check_images 两防御分支补测试；金范例补视频参考图节（注意双副本齐改）；nbdpsy-content-pipeline 补「以报告首行为准」一句；checklist-video 非心理主题 12356 豁免口径；NBDpsy external GET 回读五字段。
 6. **不修（终审判定）**：sync_durations 死变量/stderr 文案、OSError 元组冗余、setup 终检表 CJK 对齐、测试 reload 仪式。
 
 ## 关键运维事实

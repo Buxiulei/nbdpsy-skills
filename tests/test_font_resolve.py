@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "text-to-video" / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts"))
 
 
 def test_env_override_wins(tmp_path, monkeypatch):

@@ -1,6 +1,6 @@
 import json, sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / "seo-artical-creator" / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-seo-artical-creator" / "scripts"))
 
 import pytest
 import requests

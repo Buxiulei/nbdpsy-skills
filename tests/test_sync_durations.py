@@ -1,6 +1,6 @@
 import json, sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / "text-to-video" / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts"))
 
 def make_shots(tmp_path, n=2):
     d = {"video": {"ratio": "9:16"}, "shots": [{"index": i+1, "duration": None} for i in range(n)]}
@@ -89,7 +89,7 @@ def test_cli_with_argparse(tmp_path):
     shots_file.write_text(json.dumps(shots), encoding="utf-8")
 
     # 调用命令行（按契约：--shots --audio-dir --min --max）
-    script = Path(__file__).parent.parent / "text-to-video" / "scripts" / "sync_durations.py"
+    script = Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts" / "sync_durations.py"
     result = subprocess.run([
         "python3", str(script),
         "--shots", str(shots_file),

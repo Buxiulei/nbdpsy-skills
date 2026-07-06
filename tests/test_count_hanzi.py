@@ -1,6 +1,6 @@
 import json, subprocess, sys
 from pathlib import Path
-SCRIPT = Path(__file__).parent.parent / "seo-artical-creator" / "scripts" / "count_hanzi.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-seo-artical-creator" / "scripts" / "count_hanzi.py"
 
 def run(md_text, tmp_path, *args):
     f = tmp_path / "a.md"; f.write_text(md_text, encoding="utf-8")

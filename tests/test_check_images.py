@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-SCRIPT = Path(__file__).parent.parent / "content-reviewer" / "scripts" / "check_images.py"
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-content-reviewer" / "scripts" / "check_images.py"
 
 
 def _make_png(path: Path, w: int, h: int) -> None:

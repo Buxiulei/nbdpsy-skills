@@ -14,8 +14,8 @@ review.html
 # 测试产物
 tests/fixtures/tmp/
 # 评测工作区产物（outputs/* 与 timing.json 不入库；任何位置的 grading.json/review.html/preview-infocard.html 入库）
-xiaohongshu-creator-workspace/**/outputs/*
-!xiaohongshu-creator-workspace/**/outputs/grading.json
-xiaohongshu-creator-workspace/**/timing.json
-!xiaohongshu-creator-workspace/**/review.html
-!xiaohongshu-creator-workspace/**/preview-infocard.html
+nbdpsy-xiaohongshu-creator-workspace/**/outputs/*
+!nbdpsy-xiaohongshu-creator-workspace/**/outputs/grading.json
+nbdpsy-xiaohongshu-creator-workspace/**/timing.json
+!nbdpsy-xiaohongshu-creator-workspace/**/review.html
+!nbdpsy-xiaohongshu-creator-workspace/**/preview-infocard.html
