@@ -1,7 +1,7 @@
 {
   "name": "nbdpsy-content",
-  "description": "NBDpsy 内容创作 skills：seo-artical-creator（SEO/GEO pillar 长文）+ xiaohongshu-creator（把长文拆成小红书图文笔记 + 配图提示词）+ text-to-video（把长文/小红书笔记转成带中文字幕的竖屏短视频，即梦 Seedance 2.0 + 豆包配音）+ content-reviewer（对四类产物做对抗性质量审查）+ content-pipeline（话题一句话串完长文→审查→拆笔记→审查→出图→审查→视频→审查全流程的总导演）",
-  "version": "1.3.1",
+  "description": "给一个心理科普话题，AI 一条龙做完全套内容：官网长文（自动发布）→ 小红书图文笔记（含配图提示词）→ 带配音字幕的竖屏短视频，每一步先过 AI 质检再交付。最简用法：装好后对 AI 说一句「做一期 ×× 的全套内容」就开跑；也可以只用某一环——「写一篇长文」「拆成小红书」「把这篇做成视频」「审查这批图」。首次使用会自动自检环境：缺的依赖自动补装，缺密钥会教你找管理员要。",
+  "version": "1.3.2",
   "author": {
     "name": "Buxiulei"
   },
