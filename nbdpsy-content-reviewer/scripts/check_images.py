@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """审查小红书轮播配图目录：页数齐全 + 尺寸合规。
 
-判定标准（对齐 nbdpsy-xiaohongshu-creator 的 9:16 竖版轮播交付要求）：
+判定标准（对齐 nbdpsy-xiaohongshu-creator 的 3:4 竖版轮播交付要求）：
   - 页数：--pages N 指定应有页数，按文件名页号映射 P01..PN，缺页记入 missing
-  - 尺寸：宽高比 9:16（w/h=0.5625）容差 ±2%；最短边 ≥1080（保证小红书上不糊，1080×1920 最短边即 1080）
+  - 尺寸：宽高比 3:4（w/h=0.75）容差 ±2%；最短边 ≥1080（保证小红书上不糊）
 
 输出 JSON（stdout 只有 JSON，进度走 stderr）：
   {"found": M, "expected": N, "missing": ["P03"],
@@ -22,9 +22,9 @@ import sys
 from pathlib import Path
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
-ASPECT = 9 / 16         # 竖版 9:16 → w/h = 0.5625
+ASPECT = 3 / 4          # 竖版 3:4 → w/h = 0.75
 ASPECT_TOL = 0.02       # 比例相对容差 ±2%
-MIN_SHORT_SIDE = 1080   # 最短边下限（9:16 的 1080×1920 最短边仍是 1080）
+MIN_SHORT_SIDE = 1080   # 最短边下限
 
 
 def _err(msg: str) -> None:
@@ -43,7 +43,7 @@ def page_number(stem: str) -> int | None:
 
 
 def check_size(w: int, h: int) -> bool:
-    """9:16 ±2% 且最短边 ≥1080。"""
+    """3:4 ±2% 且最短边 ≥1080。"""
     if h <= 0:
         return False
     ratio_dev = abs(w / h - ASPECT) / ASPECT
@@ -78,7 +78,7 @@ def run(img_dir: Path, expected_pages: int) -> dict:
             _err(f"  ✓ {f.name} {w}x{h}")
         else:
             wrong_size.append({"file": f.name, "w": w, "h": h})
-            _err(f"  ✗ {f.name} {w}x{h}（要求 9:16 ±2% 且最短边 ≥{MIN_SHORT_SIDE}）")
+            _err(f"  ✗ {f.name} {w}x{h}（要求 3:4 ±2% 且最短边 ≥{MIN_SHORT_SIDE}）")
 
     missing = [f"P{n:02d}" for n in range(1, expected_pages + 1) if n not in pages_seen]
     ok = bool(files) and not missing and not wrong_size
@@ -92,7 +92,7 @@ def run(img_dir: Path, expected_pages: int) -> dict:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="轮播配图确定性检查：页数齐全 + 9:16/≥1080 尺寸合规")
+    ap = argparse.ArgumentParser(description="轮播配图确定性检查：页数齐全 + 3:4/≥1080 尺寸合规")
     ap.add_argument("--dir", required=True, help="配图目录")
     ap.add_argument("--pages", required=True, type=int, help="应有页数 N（对照 P01..PN）")
     a = ap.parse_args()
