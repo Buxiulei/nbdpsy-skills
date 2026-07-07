@@ -150,7 +150,7 @@ def render(shots_data: dict, workdir: Path) -> str:
 <h1>{html.escape(title)}</h1>
 <p class="sub">分镜确认页 · 共 {len(shots)} 镜 · 目录 {html.escape(str(workdir))}</p>
 <div class="howto"><b>怎么用：</b>逐镜检查「旁白脚本」是否顺口；需要参考图的镜，点「复制」把提示词
-粘给 Gemini/GPT 生成 <b>3:4 竖版图</b>，下载后按每镜标注的页号命名成 <b>P01.png 两位数（写成 P1.png 也认）</b>，放进上面目录的
+粘给 Gemini/GPT 生成 <b>9:16 竖版图</b>，下载后按每镜标注的页号命名成 <b>P01.png 两位数（写成 P1.png 也认）</b>，放进上面目录的
 <code>images/</code> 文件夹；全部放好后回复 AI「图片好了」。</div>
 {''.join(cards)}
 </div><script>{JS}</script></body></html>"""

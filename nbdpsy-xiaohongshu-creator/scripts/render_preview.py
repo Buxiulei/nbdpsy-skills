@@ -254,7 +254,7 @@ def main():
 {CSS}</style></head>
 <body><div class="wrap">
   <h1>{html.escape(title)}</h1>
-  <p class="sub">共 {len(posts)} 篇。<b>发布文案</b>整段复制粘进小红书；<b>绘图提示词</b>每段一键复制喂给 Gemini/GPT 出图（导出 1080×1440，首图当封面）。</p>
+  <p class="sub">共 {len(posts)} 篇。<b>发布文案</b>整段复制粘进小红书；<b>绘图提示词</b>每段一键复制喂给 Gemini/GPT 出图（导出 1080×1920（9:16），首图当封面）。</p>
   <div class="legend">
     <span><i class="dot read"></i> 给人看 · 发布文案 / 页面文字</span>
     <span><i class="dot ai"></i> 复制给 AI · 绘图提示词（保持原样）</span>

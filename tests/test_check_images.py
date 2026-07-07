@@ -20,8 +20,8 @@ def _run(img_dir, pages: int):
 
 
 def test_wrong_size_and_missing_page(tmp_path):
-    """brief 指定场景：1080×1440 合格 + 500×500 不合格，--pages 3 报缺 P03。"""
-    _make_png(tmp_path / "P01.png", 1080, 1440)
+    """brief 指定场景：1080×1920 合格 + 500×500 不合格，--pages 3 报缺 P03。"""
+    _make_png(tmp_path / "P01.png", 1080, 1920)
     _make_png(tmp_path / "P02.png", 500, 500)
 
     r, report = _run(tmp_path, 3)
@@ -39,7 +39,7 @@ def test_wrong_size_and_missing_page(tmp_path):
 
 def test_all_good_exit_zero(tmp_path):
     for n in range(1, 4):
-        _make_png(tmp_path / f"P{n:02d}.png", 1080, 1440)
+        _make_png(tmp_path / f"P{n:02d}.png", 1080, 1920)
 
     r, report = _run(tmp_path, 3)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -51,10 +51,10 @@ def test_all_good_exit_zero(tmp_path):
 
 
 def test_aspect_tolerance_two_percent(tmp_path):
-    # 1090×1440 → 比例偏差约 0.9%，容差内应通过
-    _make_png(tmp_path / "P01.png", 1090, 1440)
-    # 1080×1500 → 比例偏差 4%，超出 ±2% 容差
-    _make_png(tmp_path / "P02.png", 1080, 1500)
+    # 1090×1920 → 比例偏差约 0.9%，容差内应通过
+    _make_png(tmp_path / "P01.png", 1090, 1920)
+    # 1080×2000 → 比例偏差 4%，超出 ±2% 容差
+    _make_png(tmp_path / "P02.png", 1080, 2000)
 
     r, report = _run(tmp_path, 2)
     assert r.returncode == 1
@@ -62,8 +62,8 @@ def test_aspect_tolerance_two_percent(tmp_path):
 
 
 def test_min_short_side_1080(tmp_path):
-    # 810×1080：3:4 比例完美，但最短边 810 < 1080 → 不合格
-    _make_png(tmp_path / "P01.png", 810, 1080)
+    # 810×1440：9:16 比例完美，但最短边 810 < 1080 → 不合格
+    _make_png(tmp_path / "P01.png", 810, 1440)
 
     r, report = _run(tmp_path, 1)
     assert r.returncode == 1
@@ -74,8 +74,8 @@ def test_min_short_side_1080(tmp_path):
 
 def test_page_number_from_loose_filenames(tmp_path):
     """页号识别：cptsd-p1-cover.png / 02.png 均应映射到页。"""
-    _make_png(tmp_path / "cptsd-p1-cover.png", 1080, 1440)
-    _make_png(tmp_path / "02.png", 1080, 1440)
+    _make_png(tmp_path / "cptsd-p1-cover.png", 1080, 1920)
+    _make_png(tmp_path / "02.png", 1080, 1920)
 
     r, report = _run(tmp_path, 2)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -98,6 +98,6 @@ def test_empty_dir_not_ok(tmp_path):
 
 
 def test_stdout_is_pure_json(tmp_path):
-    _make_png(tmp_path / "P01.png", 1080, 1440)
+    _make_png(tmp_path / "P01.png", 1080, 1920)
     r, _ = _run(tmp_path, 1)
     json.loads(r.stdout.strip())  # stdout 只有 JSON，无杂质
