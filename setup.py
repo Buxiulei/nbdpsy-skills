@@ -183,9 +183,22 @@ def _find_bash():
     return None
 
 
+def _winget_install_git() -> str | None:
+    """缺 Git 时用 winget 自动装 Git for Windows，返回新装的 bash.exe 路径或 None。"""
+    if not shutil.which("winget"):
+        print("  未找到 winget（需 Win10 1809+/Win11），无法自动装 Git")
+        return None
+    print("  未装 Git，正在用 winget 自动安装 Git for Windows（Git.Git）…")
+    _run(["winget", "install", "--id", "Git.Git", "-e", "--source", "winget",
+          "--accept-source-agreements", "--accept-package-agreements",
+          "--silent"], timeout=600)
+    # winget 刚装的 Git 未必进当前进程 PATH，直接探常见落地路径
+    return _find_bash()
+
+
 def _install_dreamina_windows() -> str | None:
-    """Windows 自动安装：优先 Git Bash 跑官方脚本（原生、面向未来），无 bash 则纯下载兜底。返回可执行路径或 None。"""
-    bash = _find_bash()
+    """Windows 自动安装：Git Bash 跑官方脚本（原生、面向未来）→ 缺 Git 用 winget 自动装 Git 再走主路 → 都不行纯下载兜底。返回可执行路径或 None。"""
+    bash = _find_bash() or _winget_install_git()
     if bash:
         print(f"  用 Git Bash 跑官方安装脚本：{bash} -lc 'curl … | bash'")
         _run([bash, "-lc", f"curl -fsSL {DREAMINA_INSTALL_URL} | bash"], timeout=300)
@@ -194,7 +207,7 @@ def _install_dreamina_windows() -> str | None:
             return found
         print("  Git Bash 安装未落地，转直连下载兜底 …")
     else:
-        print("  未找到 Git Bash（Git for Windows），转直连下载兜底 …")
+        print("  无 Git 也无 winget，转直连下载兜底 …")
     # 兜底：直连 CDN 下 exe 到 ~/bin，写入用户级 PATH（复刻官方脚本 Windows 分支）
     try:
         import urllib.request
@@ -237,8 +250,9 @@ def step_dreamina(state: dict, interactive: bool) -> None:
             report("dreamina CLI", "✓", "安装完成，请在终端运行 dreamina login --headless 用抖音 App 扫码登录（无法代扫）")
         else:
             report("dreamina CLI", "跳过",
-                   "自动安装未成功。装 Git for Windows（winget install Git.Git）后重跑本向导；或在 Git Bash 里执行 "
-                   f"curl -fsSL {DREAMINA_INSTALL_URL} | bash")
+                   "自动安装未成功（Git 自动安装/下载兜底均未落地，可能是网络或权限）。"
+                   "新开一个终端重跑本向导（winget 装的 Git 需新终端才进 PATH）；仍不行则手动 winget install Git.Git，"
+                   f"再在 Git Bash 里执行 curl -fsSL {DREAMINA_INSTALL_URL} | bash")
         return
 
     install_cmd = f"curl -fsSL {DREAMINA_INSTALL_URL} | bash"
