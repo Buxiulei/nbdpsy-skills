@@ -25,7 +25,19 @@ from pathlib import Path
 # 导入 resolve_font 从同目录的 compose_video
 from compose_video import resolve_font
 
-DREAMINA = shutil.which("dreamina") or os.path.expanduser("~/.local/bin/dreamina")
+def _dreamina_path() -> str:
+    """dreamina 可执行路径：PATH 优先，否则平台默认落地位置（POSIX ~/.local/bin/dreamina；Windows ~/bin/dreamina.exe）。"""
+    p = shutil.which("dreamina")
+    if p:
+        return p
+    for c in ("~/.local/bin/dreamina", "~/bin/dreamina.exe"):
+        e = os.path.expanduser(c)
+        if Path(e).exists():
+            return e
+    return os.path.expanduser("~/.local/bin/dreamina")  # 占位（不存在即判未装）
+
+
+DREAMINA = _dreamina_path()
 MIN_CREDIT_WARN = 200  # 低于此积分给警告(一条短片量级)
 
 
@@ -53,9 +65,19 @@ def check(install: bool) -> dict:
     dreamina = DREAMINA if Path(DREAMINA).exists() else None
     if not dreamina and install:
         _err("[install] 安装 dreamina CLI …")
-        _run(["bash", "-c", "curl -fsSL https://jimeng.jianying.com/cli | bash"], timeout=300)
-        cand = os.path.expanduser("~/.local/bin/dreamina")
-        dreamina = shutil.which("dreamina") or (cand if Path(cand).exists() else None)
+        if os.name == "nt":
+            # Windows：官方脚本原生支持，需经 bash（Git Bash）命中 MINGW 分支；无 bash 则提示手动
+            bash = shutil.which("bash") or next(
+                (b for b in (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe")
+                 if Path(b).exists()), None)
+            if bash:
+                _run([bash, "-lc", "curl -fsSL https://jimeng.jianying.com/cli | bash"], timeout=300)
+            else:
+                _err("[install] 未找到 Git Bash，无法自动装 dreamina；请装 Git for Windows 后重试或跑 setup.py")
+        else:
+            _run(["bash", "-c", "curl -fsSL https://jimeng.jianying.com/cli | bash"], timeout=300)
+        dreamina = _dreamina_path()
+        dreamina = dreamina if Path(dreamina).exists() else None
     if dreamina:
         rc, out, _ = _run([dreamina, "version"], timeout=30)
         ver = ""
@@ -66,7 +88,9 @@ def check(install: bool) -> dict:
         add("dreamina CLI", True, f"{dreamina} (version {ver or '?'})")
     else:
         add("dreamina CLI", False, "未安装",
-            fix="curl -fsSL https://jimeng.jianying.com/cli | bash")
+            fix=("在 Git Bash 里跑 curl -fsSL https://jimeng.jianying.com/cli | bash（无 Git 先 winget install Git.Git）"
+                 if os.name == "nt"
+                 else "curl -fsSL https://jimeng.jianying.com/cli | bash"))
 
     # 2) 登录态 + 积分（仅当 CLI 在）
     if dreamina:

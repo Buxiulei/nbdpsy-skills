@@ -147,10 +147,77 @@ def step_python_deps() -> None:
 
 # ---------- dreamina CLI（视频生成，可选） ----------
 
+# 官方安装入口（脚本内按 uname 分平台，含 Windows 分支 → 下载 dreamina_cli_windows_amd64.exe）
+DREAMINA_INSTALL_URL = "https://jimeng.jianying.com/cli"
+# Windows 兜底直链（从官方脚本 Windows 分支逆向；无 bash 时用，随字节改 CDN 可能失效）
+DREAMINA_WIN_EXE_URL = ("https://lf3-static.bytednsdoc.com/obj/eden-cn/psj_hupthlyk/"
+                        "ljhwZthlaukjlkulzlp/dreamina_cli_beta/dreamina_cli_windows_amd64.exe")
+
+
+def _dreamina_exe_candidates():
+    """各平台可执行文件的落地位置（官方脚本：POSIX→~/.local/bin/dreamina，Windows→~/bin/dreamina.exe）。"""
+    home = Path.home()
+    return [home / ".local" / "bin" / "dreamina", home / "bin" / "dreamina.exe"]
+
+
+def _find_dreamina():
+    exe = shutil.which("dreamina")
+    if exe:
+        return exe
+    for c in _dreamina_exe_candidates():
+        if c.exists():
+            return str(c)
+    return None
+
+
+def _find_bash():
+    """Windows 上定位 Git Bash 等 bash.exe（官方脚本靠它命中 MINGW 分支装原生 exe）。"""
+    b = shutil.which("bash")
+    if b:
+        return b
+    for p in (r"C:\Program Files\Git\bin\bash.exe",
+              r"C:\Program Files\Git\usr\bin\bash.exe",
+              r"C:\Program Files (x86)\Git\bin\bash.exe"):
+        if Path(p).exists():
+            return p
+    return None
+
+
+def _install_dreamina_windows() -> str | None:
+    """Windows 自动安装：优先 Git Bash 跑官方脚本（原生、面向未来），无 bash 则纯下载兜底。返回可执行路径或 None。"""
+    bash = _find_bash()
+    if bash:
+        print(f"  用 Git Bash 跑官方安装脚本：{bash} -lc 'curl … | bash'")
+        _run([bash, "-lc", f"curl -fsSL {DREAMINA_INSTALL_URL} | bash"], timeout=300)
+        found = _find_dreamina()
+        if found:
+            return found
+        print("  Git Bash 安装未落地，转直连下载兜底 …")
+    else:
+        print("  未找到 Git Bash（Git for Windows），转直连下载兜底 …")
+    # 兜底：直连 CDN 下 exe 到 ~/bin，写入用户级 PATH（复刻官方脚本 Windows 分支）
+    try:
+        import urllib.request
+        dest_dir = Path.home() / "bin"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "dreamina.exe"
+        print(f"  下载 {DREAMINA_WIN_EXE_URL} → {dest}")
+        urllib.request.urlretrieve(DREAMINA_WIN_EXE_URL, dest)  # noqa: S310 (固定可信 CDN)
+        # 持久化用户 PATH（幂等）
+        _run(["powershell.exe", "-NoProfile", "-Command",
+              f"$d='{dest_dir}'; $c=[Environment]::GetEnvironmentVariable('Path','User'); "
+              "if([string]::IsNullOrWhiteSpace($c)){[Environment]::SetEnvironmentVariable('Path',$d,'User')}"
+              "elseif(-not ($c.Split(';') -contains $d)){[Environment]::SetEnvironmentVariable('Path',$c+';'+$d,'User')}"],
+             timeout=30)
+        return str(dest) if dest.exists() else None
+    except Exception as e:  # noqa: BLE001 网络/权限任何失败都降级为提示
+        print(f"  直连下载兜底失败：{e}")
+        return None
+
+
 def step_dreamina(state: dict, interactive: bool) -> None:
     print("\n=== dreamina CLI（视频生成，可选） ===")
-    fallback = str(Path.home() / ".local" / "bin" / "dreamina")
-    exe = shutil.which("dreamina") or (fallback if Path(fallback).exists() else None)
+    exe = _find_dreamina()
     if exe:
         rc, out, err = _run([exe, "--version"], timeout=30)
         raw = (out or err).strip() or "已安装"
@@ -164,13 +231,20 @@ def step_dreamina(state: dict, interactive: bool) -> None:
         return
 
     if state["os"] == "windows":
-        report("dreamina CLI", "跳过", "dreamina CLI 官方暂未验证 Windows，视频生成建议 WSL")
+        print("  未检测到 dreamina CLI，尝试 Windows 自动安装（官方脚本原生支持 Windows）…")
+        exe = _install_dreamina_windows()
+        if exe:
+            report("dreamina CLI", "✓", "安装完成，请在终端运行 dreamina login --headless 用抖音 App 扫码登录（无法代扫）")
+        else:
+            report("dreamina CLI", "跳过",
+                   "自动安装未成功。装 Git for Windows（winget install Git.Git）后重跑本向导；或在 Git Bash 里执行 "
+                   f"curl -fsSL {DREAMINA_INSTALL_URL} | bash")
         return
 
-    install_cmd = "curl -fsSL https://jimeng.jianying.com/cli | bash"
+    install_cmd = f"curl -fsSL {DREAMINA_INSTALL_URL} | bash"
     print(f"  未检测到 dreamina CLI，自动安装：{install_cmd}")
     _run(["bash", "-c", install_cmd], timeout=300)
-    exe = shutil.which("dreamina") or (fallback if Path(fallback).exists() else None)
+    exe = _find_dreamina()
     if exe:
         report("dreamina CLI", "✓", "安装完成，请在终端运行 dreamina login --headless 用抖音 App 扫码登录（无法代扫）")
     else:
