@@ -10,6 +10,7 @@ from pathlib import Path
 DEFAULT_TARGET = 300
 PAGE_MIN = 6
 PAGE_MAX = 9
+TITLE_MAX = 20  # 小红书标题硬限 20 字（xiaohongshu-spec §1）——此前 spec 写了红线但脚本零守卫
 
 
 def count_body_chars(text: str) -> int:
@@ -44,6 +45,29 @@ def count_body_chars(text: str) -> int:
     return len(chinese_chars)
 
 
+def count_title_chars(text: str) -> tuple:
+    r"""提取 frontmatter 的 title 并计数「小红书显示长度」。
+
+    计数口径（与平台一致，非纯汉字数）：汉字/全角标点各 1，
+    ASCII 字符（英文字母/数字/半角标点）各 1——即 len() 后的字符数，
+    但**剔除 emoji 与变体选择符**（平台标题里 emoji 不占用可见字数配额的主体，
+    且我们的红线本意是限制"信息量"，emoji 属装饰）。
+    返回 (title, chars, found)；无 frontmatter 或无 title 时 found=False。
+    """
+    m = re.search(r"^---\n(.*?)\n---", text, re.DOTALL)
+    if not m:
+        return ("", 0, False)
+    mt = re.search(r"^title:\s*(.+)$", m.group(1), re.MULTILINE)
+    if not mt:
+        return ("", 0, False)
+    title = mt.group(1).strip().strip('"').strip("'")
+    # 剔除 emoji（含变体选择符/零宽连接符）后计数
+    cleaned = re.sub(
+        r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\uFE0F\u200D\u2190-\u21FF\u2B00-\u2BFF]",
+        "", title)
+    return (title, len(cleaned.strip()), True)
+
+
 def count_pages(text: str) -> int:
     r"""计数匹配 ^### P(\d+) 的页数。"""
     pages = re.findall(r"^### P(\d+)", text, re.MULTILINE)
@@ -67,6 +91,7 @@ def main():
 
     body_chars = count_body_chars(text)
     pages = count_pages(text)
+    title, title_chars, title_found = count_title_chars(text)
 
     # 阈值检查
     lo = DEFAULT_TARGET * 70 // 100
@@ -74,13 +99,19 @@ def main():
 
     ok_body = lo <= body_chars <= hi
     ok_pages = PAGE_MIN <= pages <= PAGE_MAX
-    ok = ok_body and ok_pages
+    # 标题缺失不判 FAIL（范例/片段文件可能无 frontmatter）；有则必须 ≤20 字
+    ok_title = (not title_found) or (title_chars <= TITLE_MAX)
+    ok = ok_body and ok_pages and ok_title
 
     result = {
         "body_chars": body_chars,
         "pages": pages,
+        "title": title,
+        "title_chars": title_chars,
+        "title_found": title_found,
         "ok_body": ok_body,
         "ok_pages": ok_pages,
+        "ok_title": ok_title,
         "ok": ok,
     }
 
