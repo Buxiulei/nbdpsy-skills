@@ -158,8 +158,19 @@ background:var(--brand);color:#fff;}
 .label-row .bar{width:3px;height:14px;border-radius:2px;background:var(--sand);}
 .label-row .txt{font-size:.8rem;font-weight:600;color:var(--muted);}
 svg.ic{width:14px;height:14px;vertical-align:-2px;}
+.ratio-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--card);
+border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:0 0 24px;}
+.ratio-bar .lbl{font-size:.85rem;font-weight:600;color:var(--brand);}
+.ratio-btns{display:inline-flex;background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:3px;}
+.ratio-btn{border:none;background:transparent;cursor:pointer;border-radius:999px;padding:6px 14px;
+font-size:.82rem;font-weight:600;color:var(--muted);transition:background .2s,color .2s;}
+.ratio-btn:hover{color:var(--brand);}
+.ratio-btn.on{background:var(--brand);color:#fff;}
+.ratio-btn:focus-visible{outline:2px solid var(--mist);outline-offset:2px;}
+#ratio-hint{font-size:.8rem;color:var(--muted);margin-left:auto;}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
-@media (max-width:560px){.wrap{padding:24px 14px 60px;}.post{padding:18px;}}
+@media (max-width:560px){.wrap{padding:24px 14px 60px;}.post{padding:18px;}
+#ratio-hint{margin-left:0;width:100%;}}
 """
 
 JS = """
@@ -175,6 +186,43 @@ navigator.clipboard.writeText(text).then(function(){flash(btn);}).catch(function
 else{fallback(text,btn);}}
 function copyEl(id,btn){copyText(document.getElementById(id).textContent,btn);}
 function copyVal(id,btn){copyText(document.getElementById(id).value,btn);}
+
+/* ---- 出图比例一键切换（小红书 3:4 ↔ Instagram 1:1）----
+   只改提示词里的「比例参数」句：背景层/文字层/元素层三层组件原样复用，
+   一套素材跨平台产出。复制按钮复制的永远是当前所选比例的版本。 */
+var RATIO_RULES = {
+  '1:1': [
+    /竖版\\s*3:4\\s*构图（1080×1440）[^\\n]*/g,
+    '正方形 1:1 构图（1080×1080），主体居中，四周留匀称空白；标题压在上 1/4 区、副标题紧随其下，整体比竖版更紧凑。'
+  ]
+};
+function applyRatio(r){
+  document.querySelectorAll('pre.prompt').forEach(function(pre){
+    var src = pre.dataset.src || pre.textContent;
+    if(!pre.dataset.src) pre.dataset.src = src;
+    if(r === '1:1'){
+      var out = src.replace(RATIO_RULES['1:1'][0], RATIO_RULES['1:1'][1]);
+      /* 兜底：提示词没写标准比例句时，末尾追加一行，绝不静默出错比例的图 */
+      if(out === src && !/1:1/.test(src)) out = src.replace(/\\s*$/, '') + '\\n画幅：正方形 1:1 构图（1080×1080），主体居中，四周留匀称空白。';
+      pre.textContent = out;
+    } else {
+      pre.textContent = src;   /* 3:4 = 原文 */
+    }
+  });
+  document.querySelectorAll('.ratio-btn').forEach(function(b){
+    b.classList.toggle('on', b.dataset.ratio === r);
+  });
+  var hint = document.getElementById('ratio-hint');
+  if(hint) hint.textContent = (r === '1:1')
+    ? 'Instagram 1:1（1080×1080）· 方形更矮，副标题请压到 ≤14 字、内容页信息点收到 4–7 个'
+    : '小红书 3:4（1080×1440）· 默认，显示面积最大、点击率最高';
+  try{ localStorage.setItem('nbdpsy_ratio', r); }catch(e){}
+}
+window.addEventListener('DOMContentLoaded', function(){
+  var saved = ' ';
+  try{ saved = localStorage.getItem('nbdpsy_ratio') || '3:4'; }catch(e){ saved = '3:4'; }
+  applyRatio(saved === '1:1' ? '1:1' : '3:4');
+});
 """
 
 CLIP_SVG = ('<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -254,10 +302,18 @@ def main():
 {CSS}</style></head>
 <body><div class="wrap">
   <h1>{html.escape(title)}</h1>
-  <p class="sub">共 {len(posts)} 篇。<b>发布文案</b>整段复制粘进小红书；<b>绘图提示词</b>每段一键复制喂给 Gemini/GPT 出图（导出 1080×1440，首图当封面）。</p>
+  <p class="sub">共 {len(posts)} 篇。<b>发布文案</b>整段复制粘进小红书；<b>绘图提示词</b>每段一键复制喂给 Gemini/GPT 出图（首图当封面）。</p>
+  <div class="ratio-bar">
+    <span class="lbl">出图比例</span>
+    <span class="ratio-btns">
+      <button class="ratio-btn on" data-ratio="3:4" onclick="applyRatio('3:4')">小红书 3:4</button>
+      <button class="ratio-btn" data-ratio="1:1" onclick="applyRatio('1:1')">Instagram 1:1</button>
+    </span>
+    <span id="ratio-hint">小红书 3:4（1080×1440）· 默认，显示面积最大、点击率最高</span>
+  </div>
   <div class="legend">
     <span><i class="dot read"></i> 给人看 · 发布文案 / 页面文字</span>
-    <span><i class="dot ai"></i> 复制给 AI · 绘图提示词（保持原样）</span>
+    <span><i class="dot ai"></i> 复制给 AI · 绘图提示词（切换比例后复制的就是该比例版本）</span>
   </div>
   <div class="toc">{''.join(toc)}</div>
   {''.join(cards)}
