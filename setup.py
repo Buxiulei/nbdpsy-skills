@@ -38,6 +38,9 @@ CREDENTIALS = [  # (KEY, 是否必需, 说明)
     ("VOLC_TTS_ACCESS_TOKEN", False,
      "火山豆包 TTS（旧版，已有 VOLC_TTS_API_KEY 可不填）—— 找管理员要（凭据配置包会一并带上）；"
      "可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
+    ("NBDPSY_XHS_API_KEY", False,
+     "小红书自动发布 API Key（nbdpsy-api 运营专属）—— 管理员在后台「小红书运营接入」生成的"
+     "接入包会带上（secret import 一并导入）；可跳过，跳过后小红书笔记只能人工发布"),
 ]
 
 _OS_DEFAULT_PKG = {"linux": "apt", "darwin": "brew", "windows": "winget"}
@@ -297,6 +300,25 @@ def step_credentials(interactive: bool) -> None:
               "然后运行 python3 nbdpsy_common.py secret import <凭据包文件> 一键导入。")
 
 
+# ---------- Claude Code 沙盒网络放行 ----------
+
+def step_claude_sandbox() -> None:
+    """把 nbdpsy 域名并进 ~/.claude/settings.json 沙盒放行名单（只追加不覆盖，
+    不碰 sandbox.enabled）。失败只降级提示，绝不让向导整体失败。"""
+    print("\n=== Claude Code 沙盒网络放行 ===")
+    try:
+        changed, path, err = nbdpsy_common.sandbox_allow()
+    except Exception as e:  # noqa: BLE001 任何异常都不阻塞安装
+        report("Claude 沙盒放行", "跳过", f"写入失败（{e}），可稍后手动执行：python3 shared/nbdpsy_common.py sandbox allow")
+        return
+    if err:
+        report("Claude 沙盒放行", "跳过", f"{err}（{path}）")
+    elif changed:
+        report("Claude 沙盒放行", "✓", f"已写入 {path}（重启 Claude Code 生效）")
+    else:
+        report("Claude 沙盒放行", "✓", f"已就位（{path}）")
+
+
 # ---------- 每 skill 冒烟测试 ----------
 
 def step_smoke_tests() -> None:
@@ -340,6 +362,7 @@ def main() -> None:
     step_python_deps()
     step_dreamina(state, interactive=interactive)
     step_credentials(interactive=not (args.yes or args.skip_credentials))
+    step_claude_sandbox()
     step_smoke_tests()
     print_final_report()
 

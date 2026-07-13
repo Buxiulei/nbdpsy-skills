@@ -25,6 +25,8 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
 - `ok=false`（缺 `NBDPSY_BLOG_API_KEY`）→ **停下**，对运营说：
   「打开管理后台 manage.nbdpsy.com → 博客 → API Keys → 点『生成凭据配置包』，把整段复制发给我。」
 - `doubao_ready=false` 只是提醒：视频将用免费 edge 配音，不阻塞。
+- `xhs_ready=false` 只是提醒：第 7.5 步小红书自动发布不可用、改人工交付，不阻塞
+  （要开通就找管理员在后台「小红书运营接入」生成接入包导入）。
 
 ### 消化「凭据配置包」（运营粘贴过来时）
 
@@ -53,12 +55,18 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
    **立即结束当前回合等待**——不得继续第 7 步、不得假设图片已就绪。这是全流程预期内的
    正常长停等，不算失败。运营回复后逐篇核验图片数量=页数才继续；不齐则列缺再停。
 7. 【审查】nbdpsy-content-reviewer 审图（checklist-images），FAIL → 只重出问题页。
+7.5【发小红书·可选】图审 PASS 且本机有 `NBDPSY_XHS_API_KEY`（看第 0 步 doctor 的 `xhs_ready`，
+   别用 `secret get` 探测——会回显密钥值）时，按 nbdpsy-xiaohongshu-creator
+   第 7 步路线 A 执行：**先问清运营**（发哪个账号、发哪几篇、立即/定时），确认后逐篇
+   `publish_note.py` 发布（异步轮询到 published，汇总 note_url）。运营不发/无凭据 → 跳过，
+   交付时走人工发布提醒。
 8. 【视频】对用户选定的笔记（默认第 1 篇）触发 nbdpsy-text-to-video 十步产线。视频走图生时同样有
    storyboard 停等闸门（nbdpsy-text-to-video 第 2.5 步：分镜确认页 {workdir名}-storyboard.html
    给运营复制每镜提示词、回传 P{页号}.png 到 <workdir>/images/），停等协议同上。
 9. 【审查】nbdpsy-content-reviewer 审片（checklist-video），FAIL → 按报告只重跑问题镜。
-10.【交付】汇总：博客地址、笔记目录、images/、成片路径、各级 review-report.md。
-   提醒：小红书/视频号上传是人工步骤；上传前可再扫一眼各报告。
+10.【交付】汇总：博客地址、笔记目录、images/、已自动发布的小红书 note_url、成片路径、
+   各级 review-report.md。提醒：未自动发布的小红书笔记与视频号上传仍是人工步骤；
+   上传前可再扫一眼各报告。
 
 ### 铁律
 

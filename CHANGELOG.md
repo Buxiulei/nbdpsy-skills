@@ -9,6 +9,34 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.13.0] — 2026-07-13
+
+### 小红书自动发布（经 nbdpsy-api，纯 REST）+ Claude 沙盒网络放行
+
+> 服务端 nbdpsy-mcp 已删除 MCP、收口为纯 REST 的 **nbdpsy-api**（仓库改名 Buxiulei/nbdpsy-server，
+> 线上 `https://mcp.nbdpsy.com`，`GET /api/manifest` 自描述）。本版让工具包直接消费该 API，
+> 小红书图文笔记从「只能人工发布」升级为「自动发布可选、人工兜底」。
+
+- **新增 `nbdpsy-xiaohongshu-creator/scripts/publish_note.py`**：解析笔记「发布文案」块 +
+  `images/post-NN/` 配图（base64 内联，服务端无上传端点）→ `POST /api/publish-jobs`（异步 202）→
+  轮询到 published/failed；支持 `--list-accounts`（选号）/ `--job`（复查）/ `--schedule`（定时，带时区
+  偏移）/ `--dry-run`；标题≤20/正文≤900/话题≤10/图 1–18 超限提前 warning（服务端会静默截断）；
+  frontmatter `hashtags: [#a, #b]` 非法 YAML 有退化解析；错误体两套形状（401/422=detail，其余=error）
+  已适配；cookie 失效提前预警。
+- **新增凭据 `NBDPSY_XHS_API_KEY`（可选）+ `NBDPSY_XHS_API_BASE`**：doctor 报 `xhs_ready`、
+  env_check xhs/pipeline profile 列为可选项（缺失只 warn 不阻塞）、setup 凭据向导第 5 问；
+  由管理后台「小红书运营接入」生成的运营接入包一键导入。
+- **新增 `nbdpsy_common.py sandbox allow`**：把 nbdpsy 域名合并进 `~/.claude/settings.json` 的
+  `sandbox.network.allowedDomains` + `permissions.allow`（只追加不覆盖、不碰 sandbox.enabled、
+  坏 JSON 拒写）——解决 Claude Code Bash 沙盒（macOS/Linux/WSL2）拦外网致发布失败；setup 向导
+  自动执行一次，运行期被拦时 skill 会引导重跑并提示 `dangerouslyDisableSandbox` 兜底。
+- **SKILL.md/README 更新**：xiaohongshu-creator 第 7 步改「发布（自动可选）或交付（人工兜底）」，
+  发布前必须经运营确认账号与篇目；content-pipeline 插入第 7.5 步可选自动发布；README 流程图/
+  凭据手册/排障表同步（新增沙盒拦网条目）。
+- 测试：新增 test_publish_note.py（16 例）+ test_sandbox_allow.py（5 例），全量 179 过。
+
+---
+
 ## [1.12.0] — 2026-07-12
 
 ### 小红书：场景深挖路径升级为 MECE 体系（12 条 · 经三路红队攻击重构）

@@ -134,15 +134,18 @@ def test_credential_wizard_interactive_records_input(tmp_path, monkeypatch):
     monkeypatch.delenv("VOLC_TTS_API_KEY", raising=False)
     monkeypatch.delenv("VOLC_TTS_APPID", raising=False)
     monkeypatch.delenv("VOLC_TTS_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("NBDPSY_XHS_API_KEY", raising=False)
 
-    answers = iter(["sk-test-12345", "", "", ""])  # 第一项输入，后三项（API_KEY/APPID/TOKEN）留空跳过
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    answers = iter([""] * (len(s.CREDENTIALS) - 1))  # 除第一项外全部留空跳过
+    monkeypatch.setattr("builtins.input",
+                        lambda prompt="": "sk-test-12345" if "NBDPSY_BLOG_API_KEY" in prompt else next(answers))
 
     results = s.credential_wizard(interactive=True)
     by_key = {k: (mark, detail) for k, mark, detail in results}
     assert by_key["NBDPSY_BLOG_API_KEY"][0] == "✓"
     assert by_key["VOLC_TTS_API_KEY"][0] == "跳过"  # 可选项留空 → 跳过而非 ✗
     assert by_key["VOLC_TTS_APPID"][0] == "跳过"  # 可选项留空 → 跳过而非 ✗
+    assert by_key["NBDPSY_XHS_API_KEY"][0] == "跳过"  # 可选项留空 → 跳过而非 ✗
 
     # 凭据已落盘到用户级文件，且第二次探测能读到（不重复问）
     assert secrets_file.is_file()
