@@ -59,7 +59,8 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
    别用 `secret get` 探测——会回显密钥值）时，按 nbdpsy-xiaohongshu-creator
    第 7 步路线 A 执行：**先问清运营**（发哪个账号、发哪几篇、立即/定时），确认后逐篇
    `publish_note.py` 发布（异步轮询到 published，汇总 note_url）。运营不发/无凭据 → 跳过，
-   交付时走人工发布提醒。
+   交付时走人工发布提醒。账号没接入/登录态失效时，按 nbdpsy-xiaohongshu-creator
+   「小红书账号接入与管理」一节引导运营装插件/扫码后再发。
 8. 【视频】对用户选定的笔记（默认第 1 篇）触发 nbdpsy-text-to-video 十步产线。视频走图生时同样有
    storyboard 停等闸门（nbdpsy-text-to-video 第 2.5 步：分镜确认页 {workdir名}-storyboard.html
    给运营复制每镜提示词、回传 P{页号}.png 到 <workdir>/images/），停等协议同上。

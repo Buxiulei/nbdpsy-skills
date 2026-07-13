@@ -242,8 +242,9 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
      `python3 {SKILL_DIR}/scripts/nbdpsy_common.py sandbox allow` 写入放行名单，提醒运营**重启
      Claude Code** 后重试；单次命令也可用 Bash 工具参数 `dangerouslyDisableSandbox` 兜底。
    - `401` → apikey 失效，找管理员轮换重发接入包；`403` → 该账号未授权给这位运营。
-   - `error` 提示 cookie 失效/登录 → 让运营用 chrome 插件重新扫码（`GET /api/extension` 有下载地址），
-     cookie 验活五态中 `error` 是基础设施失败 ≠ cookie 失效，别急着让人重登。
+   - `error` 提示 cookie 失效/登录 → 按「小红书账号接入与管理」一节走：`--check-cookie` 验活、
+     `--extension-info` + 无痕窗扫码 + `--wait-login` 重登（五态中 `error` 是基础设施失败
+     ≠ cookie 失效，别急着让人重登）。
 4. 发布成功后把每篇的 `note_url` 汇总回报运营。
 
 **路线 B · 人工发布（无凭据，或运营点名要手发）**，交付时告诉用户：
@@ -251,6 +252,54 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 - 文件路径与篇数 + 预览页（`{note_dir目录名}-preview.html`）路径 + `images/post-NN/` 各子目录。
 - **怎么发**：把「发布文案」整段复制进小红书（含可见标签行）；按 P01→PNN 顺序上传**该篇**子目录 `images/post-NN/` 里的图，首图即封面（别拿错别篇的图）。
 - **发布要点**：首图最关键、标签贴够、危机声明保留、不要在任何位置放微信/二维码导流。
+
+---
+
+## 小红书账号接入与管理（发布前的自检与运营指导）
+
+发布走的是 nbdpsy-api，账号登录态靠 **chrome 插件**维护（登录没有 API）。用户问「怎么接入 /
+怎么登录新账号 / 账号失效了 / 我有哪些号」或路线 A 发布报账号类错误时，按本节处理。
+
+### 接入自检（三步判位）
+
+1. **凭据**：`python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor` 看 `xhs_ready`（缺 → 找管理员要
+   「运营接入配置包」导入；**别用 `secret get` 探测**，会回显密钥）。
+2. **账号**：`python3 {SKILL_DIR}/scripts/publish_note.py --list-accounts`——列出被授权的号与
+   `cookie_status`。想要的号不在列表里 = 没授权，找管理员在后台「调配账号」补授（403 同理）。
+3. **插件判据**（本机测不到浏览器装没装插件，用状态倒推）：列表为空、或全部
+   `cookie_status=unknown` 且没有登录记录 → 大概率插件还没装/没用过，走下面「装插件」；
+   有号但 `invalid` → 插件在但登录态过期，走「重新扫码」。
+
+### 装插件（细致指导，逐步带运营做）
+
+跑 `python3 {SKILL_DIR}/scripts/publish_note.py --extension-info`，返回
+`download_url`（免鉴权直接下）、`version`、`install_steps`（官方步骤数组）、`server_time`。
+把步骤**翻译成人话逐条发给运营**（默认口径，以 install_steps 为准）：
+
+1. 打开 `download_url` 下载插件包 zip，解压到一个固定文件夹（别放回收站/临时目录）。
+2. Chrome 地址栏输入 `chrome://extensions` → 右上角打开「开发者模式」→「加载已解压的扩展程序」
+   → 选刚才解压的文件夹。
+3. 点开插件图标，把**你自己的 apikey** 填进去（就是接入包里那把，本机凭据库键名
+   NBDPSY_XHS_API_KEY；提醒运营别发给别人）。
+4. 装好后按下面「登录新账号」扫码。
+
+### 登录新账号 / 重新扫码（登录态过期）
+
+1. **先**跑 `--extension-info` 记下 `server_time`（必须在扫码**之前**取，它是轮询起点）。
+2. 让运营：开一个**无痕窗口**（插件账号页上有入口）打开小红书 → 手机小红书 App 扫码登录。
+   登录成功后插件会自动把 cookie 推回服务端、账号自动入库。
+3. 你轮询确认：`python3 {SKILL_DIR}/scripts/publish_note.py --wait-login --since <server_time>`
+   （重登旧号加 `--account-id <id>`）。`done=true` 即完成；新号记得让管理员授权给这位运营
+   （首次导入者自动有权）。
+4. 验活兜底：`python3 {SKILL_DIR}/scripts/publish_note.py --check-cookie <账号名或id>`——
+   五态里 `valid` 才算好；`invalid` 重新扫码；`captcha` 要人工过验证码；
+   **`error` 是服务端基础设施失败 ≠ cookie 失效，别让运营白扫一遍，稍后重测**。
+
+### 用某个账号打开小红书（人工运营场景）
+
+插件的账号卡片上有「打开小红书」：它会用服务端存的该号 cookie 开一个已登录的无痕窗口
+（评论互动、手动检查笔记都走这里），卡片上也有「检测」按钮 = 手动触发 cookie 验活。
+告诉运营用插件操作即可，这一步没有命令行。
 
 ---
 
@@ -265,7 +314,7 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 | 正文汉字计数 + 页数区间判定 | `scripts/count_xhs.py` |
 | 高置信违禁词扫描 + 危机声明在位检查 | `scripts/check_compliance.py` |
 | 渲染预览页（发布文案 UI + 提示词一键复制） | `scripts/render_preview.py` |
-| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run） | `scripts/publish_note.py` |
+| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie） | `scripts/publish_note.py` |
 | 工作区路径查询 / 凭据工具 / 沙盒放行（sandbox allow） | `scripts/nbdpsy_common.py` |
 | 源长文（输入，第 0 步拉取产物） | `{workspace}/drafts/{slug}.md` |
 

@@ -9,6 +9,22 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.14.0] — 2026-07-13
+
+### 小红书账号接入自检 + chrome 插件安装/登录/验活全套指导
+
+- **publish_note.py 新增三个接入辅助命令**：
+  - `--extension-info`：插件包 download_url + 官方 install_steps + `server_time`（登录轮询起点，须在扫码前取）
+  - `--wait-login --since <server_time> [--account-id N]`：轮询 `GET /api/login/poll` 等运营扫码完成（done=0/未等到=1）
+  - `--check-cookie <账号名或id>`：触发 cookie 验活并轮询五态到结果（valid=0；error=基础设施失败≠失效）
+- **SKILL.md 新增「小红书账号接入与管理」章节**：三步接入自检（凭据 xhs_ready / 授权账号 /
+  插件判据倒推）、装插件逐步人话指导（chrome://extensions 开发者模式加载已解压 + 填 apikey）、
+  登录新号与重扫流程（先取 server_time → 无痕窗扫码 → wait-login 确认 → check-cookie 兜底）、
+  用账号打开小红书（插件卡片 cookie 注入）。content-pipeline 7.5 步与 README 排障表同步指路。
+- 测试：+3 例（extension_info 透传 / wait_login 轮询与 URL 编码与 account_id / cookie 验活 202→轮询），全量 185 过。
+
+---
+
 ## [1.13.0] — 2026-07-13
 
 ### 小红书自动发布（经 nbdpsy-api，纯 REST）+ Claude 沙盒网络放行

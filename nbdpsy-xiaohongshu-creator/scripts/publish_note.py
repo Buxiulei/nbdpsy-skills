@@ -10,6 +10,10 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
         [--api-base URL] [--no-wait] [--wait-timeout 900] [--dry-run]
     python3 publish_note.py --job 42            # 只查已提交任务的状态
     python3 publish_note.py --list-accounts     # 列出我可操作的小红书账号
+    python3 publish_note.py --extension-info    # chrome 插件下载地址+安装步骤+server_time
+    python3 publish_note.py --wait-login --since <server_time> [--account-id N]
+                                                # 等运营扫码登录完成（新号不传 account-id）
+    python3 publish_note.py --check-cookie 账号名或ID   # 触发 cookie 验活并轮询到结果
 
 凭据：NBDPSY_XHS_API_KEY（必需）、NBDPSY_XHS_API_BASE（可选，默认 https://mcp.nbdpsy.com），
 由 nbdpsy_common 三层解析（环境变量 > workspace/.env > 用户级 secrets.env），
@@ -22,6 +26,8 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
 "job_id", "note_url", "error", "warnings"}；failed/canceled exit 1，其余 exit 0。
 unknown = 任务已入队但状态未确认（网络抖动等）——带真实 job_id 与复查提示，**绝不据此重发**；
 --no-wait 或轮询超时后仍在跑同理，稍后用 --job 复查。正文发布前会剥离 Markdown 强调符（**/*/`）。
+接入辅助命令 exit 码：--wait-login done=0/未等到=1；--check-cookie valid=0/其余=1
+（error 是基础设施失败≠cookie 失效，别据此让人重新扫码）。
 """
 import argparse
 import base64
@@ -30,6 +36,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 # 同目录 vendored 副本
 import nbdpsy_common
@@ -202,6 +209,55 @@ def resolve_account(api_base: str, key: str, account: str):
     raise ValueError(f"账号「{account}」{'匹配到多个' if hits else '不存在或未授权'}；可用：{avail}")
 
 
+def extension_info(api_base: str, key: str) -> dict:
+    """chrome 插件包信息：download_url（免鉴权可下）/version/install_steps/server_time。
+    server_time 是 --wait-login 的 since 起点——必须在运营扫码**之前**取。"""
+    resp = send_request("GET", f"{api_base}/api/extension", key)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()
+
+
+def wait_login(api_base: str, key: str, since: str, account_id=None,
+               timeout: float = 600, interval: float = 5.0) -> dict:
+    """轮询 GET /api/login/poll 等运营扫码完成。登新号不传 account_id（done 时带新号列表），
+    重登旧号传 account_id。返回最后一次 poll 响应（done 布尔）。"""
+    deadline = time.monotonic() + timeout
+    path = f"/api/login/poll?since={quote(since)}"
+    if account_id is not None:
+        path += f"&account_id={account_id}"
+    while True:
+        resp = send_request("GET", f"{api_base}{path}", key)
+        if resp.status_code >= 400:
+            raise ValueError(api_error(resp))
+        view = resp.json()
+        if view.get("done") or time.monotonic() >= deadline:
+            return view
+        print("  等待扫码登录…", file=sys.stderr)
+        time.sleep(interval)
+
+
+def check_cookie(api_base: str, key: str, account_id: int,
+                 timeout: float = 120, interval: float = 4.0) -> dict:
+    """触发 cookie 活性检测（202 拿 check_id）并轮询到结果。
+    五态：checking/valid/invalid/captcha/error——error 是基础设施失败≠cookie 失效。"""
+    resp = send_request("POST", f"{api_base}/api/accounts/{account_id}/cookie-checks", key)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    check_id = resp.json()["check_id"]
+    deadline = time.monotonic() + timeout
+    while True:
+        r = send_request("GET", f"{api_base}/api/cookie-checks/{check_id}", key)
+        if r.status_code >= 400:
+            raise ValueError(api_error(r))
+        view = r.json()
+        status = view.get("status")
+        print(f"  cookie 检测: {status}", file=sys.stderr)
+        if status != "checking" or time.monotonic() >= deadline:
+            return view
+        time.sleep(interval)
+
+
 def job_brief(view: dict) -> dict:
     return {"outcome": view.get("status"), "job_id": view.get("job_id"),
             "note_url": view.get("note_url"), "error": view.get("error")}
@@ -254,6 +310,14 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="只打 payload 摘要，不发请求")
     ap.add_argument("--job", type=int, help="只查询该发布任务状态")
     ap.add_argument("--list-accounts", action="store_true", help="列出可操作账号")
+    ap.add_argument("--extension-info", action="store_true",
+                    help="chrome 插件下载地址+安装步骤+server_time（登录前先取）")
+    ap.add_argument("--wait-login", action="store_true",
+                    help="等运营扫码登录完成（须配 --since；重登旧号加 --account-id）")
+    ap.add_argument("--since", help="--wait-login 用：--extension-info 返回的 server_time")
+    ap.add_argument("--account-id", type=int, help="--wait-login 重登旧号时指定账号 id")
+    ap.add_argument("--login-timeout", type=float, default=600, help="等登录上限秒数（默认 600）")
+    ap.add_argument("--check-cookie", metavar="账号名或ID", help="触发该账号 cookie 验活并轮询到结果")
     args = ap.parse_args()
 
     key = nbdpsy_common.get_secret(nbdpsy_common.XHS_API_KEY)
@@ -268,6 +332,25 @@ def main():
         if args.list_accounts:
             print(json.dumps({"accounts": list_accounts(api_base, key)}, ensure_ascii=False))
             return
+        if args.extension_info:
+            print(json.dumps(extension_info(api_base, key), ensure_ascii=False))
+            return
+        if args.wait_login:
+            if not args.since:
+                ap.error("--wait-login 需要 --since <server_time>（先跑 --extension-info 取）")
+            view = wait_login(api_base, key, args.since, args.account_id,
+                              timeout=args.login_timeout)
+            if not view.get("done"):
+                view["hint"] = "还没等到登录完成：确认运营已装插件并在无痕窗扫码，然后重跑本命令"
+            print(json.dumps(view, ensure_ascii=False))
+            sys.exit(0 if view.get("done") else 1)
+        if args.check_cookie:
+            aid, label, _ = resolve_account(api_base, key, args.check_cookie)
+            view = check_cookie(api_base, key, aid)
+            view["account"] = {"id": aid, "name": label}
+            print(json.dumps(view, ensure_ascii=False))
+            # valid=0；invalid/captcha 需人工处理=1；error 是基础设施失败≠失效，也回 1 但别让人重登
+            sys.exit(0 if view.get("status") == "valid" else 1)
         if args.job is not None:
             submitted_job_id = args.job
             view = poll_job(api_base, key, args.job, timeout=0)

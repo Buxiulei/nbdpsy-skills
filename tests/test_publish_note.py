@@ -184,6 +184,56 @@ def test_poll_job_permanent_404_raises_immediately(monkeypatch):
     assert calls["n"] == 1  # 永久错误不重试
 
 
+def test_extension_info_passthrough(monkeypatch):
+    import publish_note
+    info = {"download_url": "https://x/downloads/extension.zip?t=1", "version": "0.2.0",
+            "install_steps": ["下载", "解压", "加载"], "server_time": "2026-07-13T10:00:00"}
+    class R:
+        status_code = 200
+        def json(self): return info
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: R())
+    assert publish_note.extension_info("https://x", "k")["server_time"]
+
+
+def test_wait_login_polls_until_done(monkeypatch):
+    import publish_note
+    views = iter([{"done": False, "accounts": []},
+                  {"done": True, "accounts": [{"id": 9, "name": "新号"}]}])
+    seen_paths = []
+    class R:
+        status_code = 200
+        def __init__(self, v): self._v = v
+        def json(self): return self._v
+    def fake(method, url, key, payload=None, timeout=60):
+        seen_paths.append(url)
+        return R(next(views))
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    view = publish_note.wait_login("https://x", "k", "2026-07-13T10:00:00", None, timeout=60)
+    assert view["done"] and view["accounts"][0]["id"] == 9
+    assert "since=2026-07-13T10%3A00%3A00" in seen_paths[0]  # since 已 URL 编码
+    # 重登旧号带 account_id
+    views2 = iter([{"done": True, "account": {"id": 3}}])
+    monkeypatch.setattr(publish_note, "send_request",
+                        lambda m, u, k, payload=None, timeout=60: R(next(views2)) if seen_paths.append(u) is None else None)
+    publish_note.wait_login("https://x", "k", "t", 3, timeout=60)
+    assert "account_id=3" in seen_paths[-1]
+
+
+def test_check_cookie_202_then_polls_to_terminal(monkeypatch):
+    import publish_note
+    class R:
+        def __init__(self, code, v): self.status_code, self._v = code, v
+        def json(self): return self._v
+    seq = iter([R(202, {"check_id": "abc", "status": "checking"}),
+                R(200, {"status": "checking"}),
+                R(200, {"status": "valid", "user_info": {"nickname": "n"}})])
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: next(seq))
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    view = publish_note.check_cookie("https://x", "k", 1)
+    assert view["status"] == "valid"
+
+
 def test_sandbox_hint_on_blocked_network():
     import publish_note
     hint = publish_note.sandbox_hint(Exception("Failed: Host not allowed"))
