@@ -1,8 +1,13 @@
 # nbdpsy-skills
 
-**当前版本 v1.12.0** · 每版改了什么见 [CHANGELOG.md](CHANGELOG.md)
+**当前版本 v1.14.0** · 每版改了什么见 [CHANGELOG.md](CHANGELOG.md)
 
 NBDpsy 心理科普内容创作的五个 Agent Skill，覆盖「话题 → 官网 SEO 长文 → 小红书图文笔记 → 配图 → 竖屏短视频」全产线，每级产物都有对抗审查闸门。支持 **Claude Code** 与 **Codex** 一键安装。
+
+> **先选客户端**（本工具包跑在你自己的电脑上，不是云端）：
+> - **Claude Desktop 桌面版**（推荐给不熟终端的运营）：装好后点顶部 **「Code」标签页**即可。它内置 Claude Code，与终端版**同一套引擎、同一套 `~/.claude/skills`**，本工具包全部功能（含视频链）照常可用，只是多了图形界面。Windows 需先装 Git for Windows。
+> - **终端里的 Claude Code**：`npm i -g @anthropic-ai/claude-code` 后运行 `claude`。
+> - **⛔ claude.ai 网页版 / 手机 App 用不了本工具包**：它们跑在临时沙箱里，装不进你的电脑，也连不上我们的自建 API（沙箱默认禁止出网）。手机上发小红书要等管理员上线「MCP 连接器」通道。
 
 | Skill | 作用 |
 |-------|------|
