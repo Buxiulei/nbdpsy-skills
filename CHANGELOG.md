@@ -9,6 +9,17 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.15.1] — 2026-07-15
+
+### 修：装插件默认步骤漏 serverUrl，运营会卡在「插件连不上」
+
+- Chrome 插件（小红书登录用）弹窗要填 **serverUrl + apikey 两样**，SKILL「装插件」章节的
+  手写兜底步骤只写了 apikey、漏了 serverUrl（`https://mcp.nbdpsy.com`）。虽然 skill 已写
+  「以 `--extension-info` 返回的 install_steps 为准」，但兜底版补全 serverUrl + 无痕模式勾选，
+  防 agent 走简版时运营卡住。server 端 `GET /api/extension`（v0.4.0）返回的官方步骤本就完整。
+
+---
+
 ## [1.15.0] — 2026-07-15
 
 ### 一键接入自检 --self-check（配合配置包在 Claude Desktop 里傻瓜式接入）

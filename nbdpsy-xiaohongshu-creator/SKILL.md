@@ -286,9 +286,11 @@ python3 {SKILL_DIR}/scripts/publish_note.py --self-check
 1. 打开 `download_url` 下载插件包 zip，解压到一个固定文件夹（别放回收站/临时目录）。
 2. Chrome 地址栏输入 `chrome://extensions` → 右上角打开「开发者模式」→「加载已解压的扩展程序」
    → 选刚才解压的文件夹。
-3. 点开插件图标，把**你自己的 apikey** 填进去（就是接入包里那把，本机凭据库键名
-   NBDPSY_XHS_API_KEY；提醒运营别发给别人）。
-4. 装好后按下面「登录新账号」扫码。
+3. 点开插件弹窗，填**两样**（缺 serverUrl 插件连不上）：
+   - **serverUrl** = `https://mcp.nbdpsy.com`（本服务地址，即凭据 NBDPSY_XHS_API_BASE）
+   - **apikey** = 接入包里那把（本机凭据库键名 NBDPSY_XHS_API_KEY；提醒运营别外传）
+4. 进插件详情页勾选「**在无痕模式下启用**」（下一步登录用无痕窗，不勾开不了）。
+5. 装好后按下面「登录新账号」扫码。
 
 ### 登录新账号 / 重新扫码（登录态过期）
 
