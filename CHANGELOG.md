@@ -9,6 +9,22 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.15.0] — 2026-07-15
+
+### 一键接入自检 --self-check（配合配置包在 Claude Desktop 里傻瓜式接入）
+
+- **publish_note.py 新增 `--self-check`**：一条命令验证「连通性 + 身份 + 被授权账号 + 就绪」，
+  输出结构化 JSON（`ok`/`ready`/`identity`/`account_count`/`accounts`/`need_relogin`/`verdict`），
+  可反复跑（运营说「帮我做接入自检 / 我配好了吗」即触发）。whoami/accounts 失败都保持 self-check
+  信封（不落 publish 失败信封）；`cookie_status=error` 不误导重扫；`unknown` 视为可用（新号初始态）。
+- **管理后台配置包模板优化**（NBDpsy 后端）：新增 O 段环境闸门（先验本机可执行，粘错到
+  Chat/网页/手机版会被友好挡回并指去 Claude Desktop 的 Code 标签页；Windows 探针用
+  `python --version` 而非在 PowerShell/Git Bash 里不存在的 `ver`）；B 段从裸 curl 自检收敛为一条
+  `--self-check`；apikey 从正文散落 4 处收敛到凭据块 1 处（更安全）。
+- 测试：+4 例（self_check 就绪/401/无账号/accounts 失败信封），全量 189 过。
+
+---
+
 ## [1.14.0] — 2026-07-13
 
 ### 小红书账号接入自检 + chrome 插件安装/登录/验活全套指导

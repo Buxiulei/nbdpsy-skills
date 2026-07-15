@@ -1,6 +1,6 @@
 # nbdpsy-skills
 
-**当前版本 v1.14.0** · 每版改了什么见 [CHANGELOG.md](CHANGELOG.md)
+**当前版本 v1.15.0** · 每版改了什么见 [CHANGELOG.md](CHANGELOG.md)
 
 NBDpsy 心理科普内容创作的五个 Agent Skill，覆盖「话题 → 官网 SEO 长文 → 小红书图文笔记 → 配图 → 竖屏短视频」全产线，每级产物都有对抗审查闸门。支持 **Claude Code** 与 **Codex** 一键安装。
 

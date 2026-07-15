@@ -184,6 +184,70 @@ def test_poll_job_permanent_404_raises_immediately(monkeypatch):
     assert calls["n"] == 1  # 永久错误不重试
 
 
+def test_self_check_ready_and_states(monkeypatch):
+    import publish_note
+    class R:
+        def __init__(self, code, v): self.status_code, self._v = code, v
+        def json(self): return self._v
+    # whoami ok + 混合 cookie 状态：valid/unknown 可用，invalid 需重登
+    accounts = [{"id": 1, "name": "主号", "cookie_status": "valid"},
+                {"id": 2, "name": "备号", "cookie_status": "unknown"},
+                {"id": 3, "name": "废号", "cookie_status": "invalid"}]
+    def fake(method, url, key, payload=None, timeout=60):
+        if url.endswith("/api/whoami"):
+            return R(200, {"name": "小王", "role": "operator"})
+        if url.endswith("/api/accounts"):
+            return R(200, {"accounts": accounts})
+        raise AssertionError(url)
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    rep = publish_note.self_check("https://x", "k")
+    assert rep["ok"] and rep["ready"]
+    assert rep["identity"]["name"] == "小王" and rep["account_count"] == 3
+    assert rep["need_relogin"] == ["废号"]
+
+
+def test_self_check_whoami_401_reports_not_ok(monkeypatch):
+    import publish_note
+    class R:
+        status_code = 401
+        text = "x"
+        def json(self): return {"detail": "apikey 无效"}
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: R())
+    rep = publish_note.self_check("https://x", "k")
+    assert rep["ok"] is False and rep["stage"] == "whoami"
+    assert "sandbox allow" in rep["hint"]
+
+
+def test_self_check_accounts_failure_stays_in_selfcheck_envelope(monkeypatch):
+    import publish_note
+    class Ok:
+        status_code = 200
+        def json(self): return {"name": "小王", "role": "operator"}
+    def fake(method, url, key, payload=None, timeout=60):
+        if url.endswith("/api/whoami"):
+            return Ok()
+        raise ConnectionError("timed out")  # 拉账号时瞬时挂
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    rep = publish_note.self_check("https://x", "k")
+    # 不落 publish 失败信封，保持 self-check 形状
+    assert rep["ok"] is False and rep["stage"] == "accounts"
+    assert rep["identity"]["name"] == "小王"
+
+
+def test_self_check_connected_but_no_account_not_ready(monkeypatch):
+    import publish_note
+    class R:
+        def __init__(self, code, v): self.status_code, self._v = code, v
+        def json(self): return self._v
+    def fake(method, url, key, payload=None, timeout=60):
+        if url.endswith("/api/whoami"):
+            return R(200, {"name": "小王", "role": "operator"})
+        return R(200, {"accounts": []})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    rep = publish_note.self_check("https://x", "k")
+    assert rep["ok"] and rep["ready"] is False and rep["account_count"] == 0
+
+
 def test_extension_info_passthrough(monkeypatch):
     import publish_note
     info = {"download_url": "https://x/downloads/extension.zip?t=1", "version": "0.2.0",

@@ -10,6 +10,7 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
         [--api-base URL] [--no-wait] [--wait-timeout 900] [--dry-run]
     python3 publish_note.py --job 42            # 只查已提交任务的状态
     python3 publish_note.py --list-accounts     # 列出我可操作的小红书账号
+    python3 publish_note.py --self-check        # 一键接入自检：连通性+身份+账号+就绪（可反复跑）
     python3 publish_note.py --extension-info    # chrome 插件下载地址+安装步骤+server_time
     python3 publish_note.py --wait-login --since <server_time> [--account-id N]
                                                 # 等运营扫码登录完成（新号不传 account-id）
@@ -258,6 +259,44 @@ def check_cookie(api_base: str, key: str, account_id: int,
         time.sleep(interval)
 
 
+def self_check(api_base: str, key: str) -> dict:
+    """一键接入自检（REST 侧）：连通性 + 身份 + 被授权账号 + 就绪判定。
+    可反复调用——运营任何时候想确认「我配好了吗」都跑这个。凭据是否就绪由 doctor 管（本地侧）。"""
+    try:
+        who = send_request("GET", f"{api_base}/api/whoami", key)
+    except Exception as e:  # 网络/沙盒拦截
+        return {"ok": False, "stage": "whoami", "error": sandbox_hint(e),
+                "hint": "网络或沙盒拦截：跑 nbdpsy_common.py sandbox allow 后重启 Claude 再试"}
+    if who.status_code >= 400:
+        return {"ok": False, "stage": "whoami", "error": api_error(who),
+                "hint": "401=apikey 无效/已轮换（找管理员重发接入包）；000/超时=网络或沙盒拦截"
+                        "（跑 nbdpsy_common.py sandbox allow 后重启 Claude）"}
+    identity = who.json()
+    try:
+        accounts = list_accounts(api_base, key)
+    except Exception as e:  # whoami 过了 accounts 却挂，多半瞬时——保持 self-check 信封而非落 publish 失败信封
+        return {"ok": False, "stage": "accounts", "error": sandbox_hint(e),
+                "identity": {"name": identity.get("name"), "role": identity.get("role")},
+                "hint": "身份验证通过但拉账号列表失败，多半是瞬时故障，稍后重跑 --self-check"}
+    # cookie_status: valid=可发；unknown=没验过（不算失败，发布前 --check-cookie 一下）；
+    # invalid/captcha=需重新扫码；error=检测本身失败≠cookie 失效，稍后复验（不催重扫）
+    usable = [a for a in accounts if a.get("cookie_status") in ("valid", "unknown")]
+    need_login = [a for a in accounts if a.get("cookie_status") in ("invalid", "captcha")]
+    ready = bool(accounts) and bool(usable)
+    return {
+        "ok": True, "ready": ready,
+        "identity": {"name": identity.get("name"), "role": identity.get("role")},
+        "account_count": len(accounts),
+        "accounts": accounts,
+        "need_relogin": [a.get("name") or a.get("id") for a in need_login],
+        "verdict": (
+            "接入正常，可以开始发布" if ready
+            else "已连上但没有被授权任何账号（找管理员在后台『调配账号』补授）" if not accounts
+            else "没有可用账号：登录态失效的重新扫码，cookie 检测异常的稍后 --check-cookie 复验"
+        ),
+    }
+
+
 def job_brief(view: dict) -> dict:
     return {"outcome": view.get("status"), "job_id": view.get("job_id"),
             "note_url": view.get("note_url"), "error": view.get("error")}
@@ -310,6 +349,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="只打 payload 摘要，不发请求")
     ap.add_argument("--job", type=int, help="只查询该发布任务状态")
     ap.add_argument("--list-accounts", action="store_true", help="列出可操作账号")
+    ap.add_argument("--self-check", action="store_true",
+                    help="一键接入自检：连通性+身份+被授权账号+就绪判定（可反复跑）")
     ap.add_argument("--extension-info", action="store_true",
                     help="chrome 插件下载地址+安装步骤+server_time（登录前先取）")
     ap.add_argument("--wait-login", action="store_true",
@@ -332,6 +373,15 @@ def main():
         if args.list_accounts:
             print(json.dumps({"accounts": list_accounts(api_base, key)}, ensure_ascii=False))
             return
+        if args.self_check:
+            report = self_check(api_base, key)
+            if report.get("ok"):
+                print(f"✓ 已接入：{report['identity']['name']}，"
+                      f"可操作 {report['account_count']} 个账号；{report['verdict']}", file=sys.stderr)
+            else:
+                print(f"✗ 接入自检未通过（{report.get('stage')}）：{report.get('error')}", file=sys.stderr)
+            print(json.dumps(report, ensure_ascii=False))
+            sys.exit(0 if report.get("ok") and report.get("ready") else 1)
         if args.extension_info:
             print(json.dumps(extension_info(api_base, key), ensure_ascii=False))
             return

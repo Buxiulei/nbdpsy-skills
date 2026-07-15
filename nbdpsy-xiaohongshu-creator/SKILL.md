@@ -260,15 +260,22 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 发布走的是 nbdpsy-api，账号登录态靠 **chrome 插件**维护（登录没有 API）。用户问「怎么接入 /
 怎么登录新账号 / 账号失效了 / 我有哪些号」或路线 A 发布报账号类错误时，按本节处理。
 
-### 接入自检（三步判位）
+### 接入自检（用户说「帮我做接入自检 / 我配好了吗」时直接跑这个）
 
-1. **凭据**：`python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor` 看 `xhs_ready`（缺 → 找管理员要
-   「运营接入配置包」导入；**别用 `secret get` 探测**，会回显密钥）。
-2. **账号**：`python3 {SKILL_DIR}/scripts/publish_note.py --list-accounts`——列出被授权的号与
-   `cookie_status`。想要的号不在列表里 = 没授权，找管理员在后台「调配账号」补授（403 同理）。
-3. **插件判据**（本机测不到浏览器装没装插件，用状态倒推）：列表为空、或全部
-   `cookie_status=unknown` 且没有登录记录 → 大概率插件还没装/没用过，走下面「装插件」；
-   有号但 `invalid` → 插件在但登录态过期，走「重新扫码」。
+**一键自检**（连通性 + 身份 + 被授权账号 + 就绪，可反复跑）：
+
+```bash
+python3 {SKILL_DIR}/scripts/publish_note.py --self-check
+```
+
+读输出 JSON：`ok=true, ready=true` → 可以发布；`error` 提 `Host not allowed`/超时 → 沙盒拦网
+（跑 `nbdpsy_common.py sandbox allow` 后重启 Claude）；`401` → apikey 失效找管理员重发；
+`need_relogin` 非空 → 那些号要重新扫码（见下）。凭据本身是否导入用
+`nbdpsy_common.py doctor` 看 `xhs_ready`（**别用 `secret get` 探测，会回显密钥**）。
+
+**插件判据**（本机测不到浏览器装没装插件，用状态倒推）：`--self-check` 返回账号数为 0、或
+全部 `cookie_status=unknown` 且从没登录过 → 大概率插件还没装/没用过，走下面「装插件」；
+有号但 `invalid`/`captcha` → 插件在但登录态过期，走「重新扫码」。
 
 ### 装插件（细致指导，逐步带运营做）
 
