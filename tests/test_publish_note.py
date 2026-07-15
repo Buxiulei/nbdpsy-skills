@@ -248,6 +248,40 @@ def test_self_check_connected_but_no_account_not_ready(monkeypatch):
     assert rep["ok"] and rep["ready"] is False and rep["account_count"] == 0
 
 
+def test_account_notes_graceful_404_when_endpoint_not_live(monkeypatch):
+    import publish_note
+    class R404:
+        status_code = 404
+        text = "not found"
+        def json(self): return {"error": "路径不存在"}
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: R404())
+    rep = publish_note.account_notes("https://x", "k", 1)
+    assert rep["available"] is False and "上线中" in rep["hint"]
+
+
+def test_account_notes_returns_data_when_live(monkeypatch):
+    import publish_note
+    payload = {"notes": [{"title": "A", "views": 100, "likes": 9}], "total": 1}
+    class R:
+        status_code = 200
+        text = "x"
+        def json(self): return payload
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: R())
+    rep = publish_note.account_notes("https://x", "k", 1)
+    assert rep["available"] is True and rep["total"] == 1 and rep["notes"][0]["views"] == 100
+
+
+def test_account_notes_real_error_raises(monkeypatch):
+    import publish_note
+    class R500:
+        status_code = 500
+        text = "boom"
+        def json(self): return {"error": "内部错误"}
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: R500())
+    with pytest.raises(ValueError):
+        publish_note.account_notes("https://x", "k", 1)
+
+
 def test_extension_info_passthrough(monkeypatch):
     import publish_note
     info = {"download_url": "https://x/downloads/extension.zip?t=1", "version": "0.2.0",

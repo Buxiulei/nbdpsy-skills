@@ -11,6 +11,7 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
     python3 publish_note.py --job 42            # 只查已提交任务的状态
     python3 publish_note.py --list-accounts     # 列出我可操作的小红书账号
     python3 publish_note.py --self-check        # 一键接入自检：连通性+身份+账号+就绪（可反复跑）
+    python3 publish_note.py --notes 账号名或ID   # 拉该账号已发布笔记数据（供分析；server 端上线中）
     python3 publish_note.py --extension-info    # chrome 插件下载地址+安装步骤+server_time
     python3 publish_note.py --wait-login --since <server_time> [--account-id N]
                                                 # 等运营扫码登录完成（新号不传 account-id）
@@ -297,6 +298,20 @@ def self_check(api_base: str, key: str) -> dict:
     }
 
 
+def account_notes(api_base: str, key: str, account_id: int) -> dict:
+    """拉某账号已发布笔记的清单与互动数据（供 Claude 分析）。
+    server 端该端点正在上线中——404 时优雅降级为『还没上线』而非报错。
+    假定路径 GET /api/accounts/{id}/notes；server 若最终用别的路径，改这一处即可。"""
+    resp = send_request("GET", f"{api_base}/api/accounts/{account_id}/notes", key)
+    if resp.status_code == 404:
+        return {"available": False,
+                "hint": "『笔记数据拉取』接口 server 端还在上线中，等管理员通知后即可用（不是故障）"}
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    data = resp.json() if resp.text.strip() else {}
+    return {"available": True, **(data if isinstance(data, dict) else {"notes": data})}
+
+
 def job_brief(view: dict) -> dict:
     return {"outcome": view.get("status"), "job_id": view.get("job_id"),
             "note_url": view.get("note_url"), "error": view.get("error")}
@@ -359,6 +374,8 @@ def main():
     ap.add_argument("--account-id", type=int, help="--wait-login 重登旧号时指定账号 id")
     ap.add_argument("--login-timeout", type=float, default=600, help="等登录上限秒数（默认 600）")
     ap.add_argument("--check-cookie", metavar="账号名或ID", help="触发该账号 cookie 验活并轮询到结果")
+    ap.add_argument("--notes", metavar="账号名或ID",
+                    help="拉该账号已发布笔记的清单与互动数据（供分析；server 端上线中，未上线优雅提示）")
     args = ap.parse_args()
 
     key = nbdpsy_common.get_secret(nbdpsy_common.XHS_API_KEY)
@@ -401,6 +418,12 @@ def main():
             print(json.dumps(view, ensure_ascii=False))
             # valid=0；invalid/captcha 需人工处理=1；error 是基础设施失败≠失效，也回 1 但别让人重登
             sys.exit(0 if view.get("status") == "valid" else 1)
+        if args.notes:
+            aid, label, _ = resolve_account(api_base, key, args.notes)
+            view = account_notes(api_base, key, aid)
+            view["account"] = {"id": aid, "name": label}
+            print(json.dumps(view, ensure_ascii=False))
+            return  # available=false（未上线）不算失败，exit 0
         if args.job is not None:
             submitted_job_id = args.job
             view = poll_job(api_base, key, args.job, timeout=0)
