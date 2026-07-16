@@ -34,6 +34,7 @@ CREDENTIALS = [  # (KEY, 是否必需, 说明)
      "或去火山控制台 speech/new/setting/apikeys 自建；三者都可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
     ("VOLC_TTS_APPID", False,
      "火山豆包 TTS（旧版，已有 VOLC_TTS_API_KEY 可不填）—— 找管理员要（凭据配置包会一并带上）；"
+     "另：用克隆音色（VOLC_TTS_VOICE=S_xxx，走 seed-icl-2.0）时它作 X-Api-App-Id 头，此时必填；"
      "可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
     ("VOLC_TTS_ACCESS_TOKEN", False,
      "火山豆包 TTS（旧版，已有 VOLC_TTS_API_KEY 可不填）—— 找管理员要（凭据配置包会一并带上）；"

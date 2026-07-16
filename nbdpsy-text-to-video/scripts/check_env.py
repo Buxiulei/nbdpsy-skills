@@ -166,10 +166,16 @@ def check(install: bool) -> dict:
     # 7) 豆包 TTS 凭据（三级链：环境变量 > skill .env > 用户级凭据；高音质旁白需要，edge 免费兜底不需要）
     #    新版 VOLC_TTS_API_KEY（单一凭据，优先）或旧版 VOLC_TTS_APPID+VOLC_TTS_ACCESS_TOKEN 任一齐备即算就绪
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    cloned_needs_appid = False  # 默认音色填成克隆音色(S_) 但缺 appid → 克隆合成必失败
     try:
-        from tts_gen import resolve_credentials
+        from tts_gen import resolve_credentials, _is_cloned_voice
         creds = resolve_credentials()
         volc_ok = bool(creds.get("api_key")) or bool(creds.get("appid") and creds.get("token"))
+        # 克隆音色（默认音色 VOLC_TTS_VOICE=S_xxx）走 seed-icl-2.0，X-Api-App-Id(appid) 必需；
+        # 缺 appid 时即便有 api_key 也无法合成，判为未就绪并给针对性修复。
+        if _is_cloned_voice(creds.get("voice")) and not creds.get("appid"):
+            cloned_needs_appid = True
+            volc_ok = False
     except (ImportError, Exception):
         # tts_gen import 失败时，降级为老方案（文本包含检查）
         env_p = Path(__file__).resolve().parent.parent / ".env"
@@ -177,12 +183,19 @@ def check(install: bool) -> dict:
         if env_p.is_file():
             txt = env_p.read_text(encoding="utf-8", errors="ignore")
             volc_ok = "VOLC_TTS_API_KEY" in txt or ("VOLC_TTS_APPID" in txt and "VOLC_TTS_ACCESS_TOKEN" in txt)
-    add("豆包 TTS 凭据(可选)", volc_ok,
-        "已配（环境变量/skill .env/用户级凭据三级链之一）" if volc_ok else "未配；用豆包高音质旁白才需要(edge 免费兜底可不配)",
-        fix="优先配 VOLC_TTS_API_KEY（新版控制台单一凭据，火山控制台 speech/new/setting/apikeys 自建）；"
-            "也可配旧版 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN；写入 skill .env / 环境变量 / "
-            "~/.config/nbdpsy/secrets.env 任一处均可",
-        critical=False)
+    if cloned_needs_appid:
+        add("豆包 TTS 凭据(可选)", False,
+            "默认音色是克隆音色(S_ 开头) 但缺 VOLC_TTS_APPID —— 克隆音色走 seed-icl-2.0 需 X-Api-App-Id 头",
+            fix="在后台豆包卡片『AppID』框填火山 appid（VOLC_TTS_APPID），克隆音色必需；"
+                "或把默认音色换成非 S_ 的普通 2.0 音色",
+            critical=False)
+    else:
+        add("豆包 TTS 凭据(可选)", volc_ok,
+            "已配（环境变量/skill .env/用户级凭据三级链之一）" if volc_ok else "未配；用豆包高音质旁白才需要(edge 免费兜底可不配)",
+            fix="优先配 VOLC_TTS_API_KEY（新版控制台单一凭据，火山控制台 speech/new/setting/apikeys 自建）；"
+                "也可配旧版 VOLC_TTS_APPID / VOLC_TTS_ACCESS_TOKEN；写入 skill .env / 环境变量 / "
+                "~/.config/nbdpsy/secrets.env 任一处均可",
+            critical=False)
 
     ready = all(c["ok"] for c in checks if c["critical"])
     return {"ready": ready, "checks": checks}

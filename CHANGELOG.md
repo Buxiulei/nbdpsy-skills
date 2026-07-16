@@ -9,6 +9,23 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.17.0] — 2026-07-16
+
+### 视频配音支持火山克隆音色（seed-icl-2.0）——用运营自己的声音
+
+- **tts_gen.py 新增克隆音色路由**：默认音色（VOLC_TTS_VOICE）以 `S_` 开头（火山声音复刻 speaker）时，
+  旁白走 `X-Api-Resource-Id: seed-icl-2.0` + `X-Api-App-Id` 头（VOLC_TTS_APPID）+ body 带 user.uid，
+  speaker=S_xxx；否则回归 seed-tts-2.0 默认音色；再不行 edge。同一个 unidirectional 端点、复用现有
+  流式解析器。纯人声（声音复刻是标准 TTS，无自带 BGM/音效，与 BGM 层不冲突）、全片音色一致。
+  缺 VOLC_TTS_APPID 时报清晰错误（不静默失败）。凭据零新增槽位（复用 API Key/AppID/默认音色）。
+- check_env.py / .env.example / SKILL.md / setup.py 同步克隆音色说明。
+- 实测：用真实克隆音色 S_moiqVFN72 出合法 mp3（24kHz、ID3）。测试 +3，全量 199 过。
+
+> 管理端：后台豆包卡片填 API Key + AppID + 默认音色（S_xxx），凭据包/运营接入包自动带上
+> （需 NBDpsy 后端 assemble_bundle 更新，见该仓库同日提交）。
+
+---
+
 ## [1.16.0] — 2026-07-15
 
 ### 新增 nbdpsy-guide 上手向导 + 小红书运营 API 操作手册 + 凭据持久化澄清

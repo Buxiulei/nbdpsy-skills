@@ -215,3 +215,82 @@ def test_v3_end_of_stream_sentinel_20000000_is_not_an_error(tmp_path, monkeypatc
     tts_gen._doubao_synth("哨兵测试", str(out), None, 0.95)
 
     assert out.read_bytes() == piece
+
+
+# ---------- 6. 克隆音色路由：voice=S_xxx + api_key + appid → seed-icl-2.0 + App-Id 头 + user.uid ----------
+
+def test_cloned_voice_routes_to_seed_icl_with_appid_and_user(tmp_path, monkeypatch):
+    """火山「声音复刻」克隆音色（S_ 开头）走同一 unidirectional 端点，
+    但换 resource-id=seed-icl-2.0、加 X-Api-App-Id 头、body 带 user.uid，speaker=S_xxx，
+    流式响应格式与默认音色相同 → 复用同一解析器拼出音频。"""
+    tts_gen = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("VOLC_TTS_API_KEY", "sk-fake-key")
+    monkeypatch.setenv("VOLC_TTS_APPID", "appid-clone-123")
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, stream=False, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["stream"] = stream
+        return _FakeStreamResponse(200, _v3_chunk_bytes(b"CLONED-VOICE-AUDIO"))
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    out = tmp_path / "out.mp3"
+    voice = tts_gen._doubao_synth("你好，这是克隆音色测试", str(out), "S_moiqVFN72", 0.95)
+
+    assert captured["url"] == tts_gen.DOUBAO_V3_ENDPOINT  # 同端点
+    assert captured["stream"] is True
+    assert captured["headers"]["X-Api-Key"] == "sk-fake-key"
+    assert captured["headers"]["X-Api-Resource-Id"] == "seed-icl-2.0" == tts_gen.DOUBAO_ICL_RESOURCE_ID
+    assert captured["headers"]["X-Api-App-Id"] == "appid-clone-123"  # 克隆音色必需的新增头
+    assert "X-Api-Request-Id" in captured["headers"]
+    assert captured["json"]["req_params"]["speaker"] == "S_moiqVFN72" == voice
+    assert captured["json"]["user"]["uid"] == "tts"  # 克隆音色 body 带 user.uid
+    assert out.read_bytes() == b"CLONED-VOICE-AUDIO"
+
+
+# ---------- 7. 克隆音色缺 appid → 抛清晰错误（不静默、不发请求） ----------
+
+def test_cloned_voice_without_appid_raises_readable_error(tmp_path, monkeypatch):
+    tts_gen = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("VOLC_TTS_API_KEY", "sk-fake-key")
+    # 故意不配 VOLC_TTS_APPID
+
+    def fake_post(*a, **k):
+        raise AssertionError("缺 appid 时不应发起网络请求")
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    with pytest.raises(RuntimeError, match="appid") as exc_info:
+        tts_gen._doubao_synth("测试", str(tmp_path / "out.mp3"), "S_moiqVFN72", 0.95)
+    assert "VOLC_TTS_APPID" in str(exc_info.value)
+
+
+# ---------- 8. 普通音色回归：非 S_ 音色仍走 seed-tts-2.0、不带 App-Id 头 / user（即便配了 appid） ----------
+
+def test_default_voice_stays_on_seed_tts_no_appid_header(tmp_path, monkeypatch):
+    tts_gen = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("VOLC_TTS_API_KEY", "sk-fake-key")
+    monkeypatch.setenv("VOLC_TTS_APPID", "appid-should-be-ignored")  # 配了也不该影响普通音色
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, stream=False, timeout=None):
+        captured["headers"] = headers
+        captured["json"] = json
+        return _FakeStreamResponse(200, _v3_chunk_bytes(b"DEFAULT-AUDIO"))
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    out = tmp_path / "out.mp3"
+    voice = tts_gen._doubao_synth("普通音色回归", str(out), "zh_female_wenroushunv_uranus_bigtts", 0.95)
+
+    assert captured["headers"]["X-Api-Resource-Id"] == "seed-tts-2.0" == tts_gen.DOUBAO_V3_RESOURCE_ID
+    assert "X-Api-App-Id" not in captured["headers"]  # 普通音色不带 App-Id 头
+    assert "user" not in captured["json"]              # 普通音色 body 不带 user
+    assert captured["json"]["req_params"]["speaker"] == voice
+    assert "speech_rate" in captured["json"]["req_params"]  # 普通音色保留 speech_rate（--speed 生效）
+    assert out.read_bytes() == b"DEFAULT-AUDIO"

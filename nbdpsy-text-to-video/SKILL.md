@@ -139,6 +139,7 @@ python3 {SKILL_DIR}/scripts/tts_gen.py --engine doubao --timed \
 
 - `--timed` **必开**：逐句合成+ffprobe 实测时长，sidecar 自动落 `narr-NN.mp3.cues.json`——字幕真同步的根。
 - 豆包凭据缺失会直接报错 → 改 `--engine edge` 免费兜底（音色/语速选项见「旁白与 BGM 细节」节）。
+- **克隆音色**：配了克隆音色（默认音色 `VOLC_TTS_VOICE=S_xxx` + `VOLC_TTS_APPID`）则旁白自动用你克隆的专属声音，走 `seed-icl-2.0`，纯人声、全片一致（缺 appid 会直接报错）。
 - ⚠️ 别用 `--plan` 批量模式出旁白：它落名 `000.mp3`（三位、0 起），**不符合工作目录契约**，后续脚本找不到文件。
 
 **4. 时长写回（脚本化，禁止跳过）**
@@ -267,6 +268,7 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py gen --operation text2video \
 
 **双引擎**：`edge`（免费无 key）/ `doubao`（火山豆包大模型，高音质，需 `.env` 配凭据；凭据缺失即报错，兜底改 `--engine edge`）。`doubao` 引擎内部按凭据自动路由两套接口，互不干扰：
 - 配了 `VOLC_TTS_API_KEY`（新版单一凭据，**优先**）→ 走 V3 单向流式接口，默认音色「温柔淑女 2.0」`zh_female_wenroushunv_uranus_bigtts`。
+- **克隆音色（火山「声音复刻」）**：默认音色（`VOLC_TTS_VOICE` / `--voice`）填成 `S_` 开头的克隆音色 id（如 `S_moiqVFN72`）→ 旁白自动用你克隆的专属声音，走 `seed-icl-2.0`（同端点换 resource-id + 带 `X-Api-App-Id` 头），**纯人声、全片一致**。此时**必须**同时配 `VOLC_TTS_APPID`（作 `X-Api-App-Id`），缺失直接报错不静默。没填 S_ 音色则用上面的默认音色，行为不变。
 - 未配 API Key 但配了 `VOLC_TTS_APPID` + `VOLC_TTS_ACCESS_TOKEN`（旧版双凭据）→ 走 V1 接口（官方已标"不推荐"，仅向后兼容），默认音色「温柔淑女」`zh_female_wenroushunv_mars_bigtts`。
 - ⚠️ V3 只认 2.0 系音色（`*_uranus_bigtts`），V1 的音色名（`*_mars_bigtts`/`*_moon_bigtts`）在 V3 下不可用——两套接口的 `--voice` 不能混用，按当前生效的凭据选对应版本的音色名。
 

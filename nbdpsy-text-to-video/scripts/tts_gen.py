@@ -13,6 +13,9 @@
             默认音色 zh_female_wenroushunv_uranus_bigtts「温柔淑女 2.0」——
             V3 仅认 2.0 系音色（*_uranus_bigtts），旧版 V1 音色如
             zh_female_wenroushunv_mars_bigtts 在 V3 下不可用）。
+            · 若音色（--voice / VOLC_TTS_VOICE）以 S_ 开头（火山「声音复刻」克隆音色）→
+              同端点换 resource-id=seed-icl-2.0 + 额外带 X-Api-App-Id 头（用 VOLC_TTS_APPID）
+              + body 带 user.uid，旁白即用用户克隆的专属声音（缺 appid 直接报错，不静默）。
           · 无 API Key 但有 VOLC_TTS_APPID+VOLC_TTS_ACCESS_TOKEN（旧版双凭据）
             → 走 V1 接口（/api/v1/tts，官方已标"不推荐"但保留向后兼容），
             默认音色仍是 zh_female_wenroushunv_mars_bigtts「温柔淑女」。
@@ -63,7 +66,11 @@ DOUBAO_ENDPOINT = "https://openspeech.bytedance.com/api/v1/tts"
 # 与 https://www.volcengine.com/docs/6561/1257544 （2.0 音色列表）。
 DOUBAO_V3_DEFAULT_VOICE = "zh_female_wenroushunv_uranus_bigtts"
 DOUBAO_V3_ENDPOINT = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
-DOUBAO_V3_RESOURCE_ID = "seed-tts-2.0"  # 豆包语音合成大模型2.0（另有 seed-icl-2.0 用于声音复刻音色，本产线不用）
+DOUBAO_V3_RESOURCE_ID = "seed-tts-2.0"  # 豆包语音合成大模型2.0（默认音色）
+# 声音复刻（seed-icl-2.0）：用户在火山「声音复刻」克隆出的专属音色，id 以 S_ 开头。
+# 与 seed-tts-2.0 同一个 unidirectional 端点、同一套流式响应格式，仅换 resource-id
+# 并额外要求 X-Api-App-Id 头 + body 带 user.uid（实测契约，speaker=S_xxx 出合法 mp3）。
+DOUBAO_ICL_RESOURCE_ID = "seed-icl-2.0"
 
 
 def _err(m: str) -> None:
@@ -178,32 +185,49 @@ def _doubao_v3_speech_rate(speed: float) -> int:
     return max(-50, min(100, round((speed - 1.0) * 100)))
 
 
-def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str) -> None:
-    """V3 单向流式合成（新版单一 API Key）。
-    契约锁定自官方文档 https://www.volcengine.com/docs/6561/2528925：
-      POST https://openspeech.bytedance.com/api/v3/tts/unidirectional
-      请求头：X-Api-Key(必选) / X-Api-Resource-Id(必选，seed-tts-2.0) / X-Api-Request-Id(必选，uuid)
-      请求体：{"req_params": {"text","speaker","audio_params":{"format","sample_rate"},"speech_rate"}}
-      响应：基于 HTTP Chunked 的连续 JSON 对象流（官方 curl 示例用 -N 免缓冲），
+def _is_cloned_voice(v: str | None) -> bool:
+    """是否为火山「声音复刻」克隆音色——克隆音色 id 以 S_ 开头（如 S_moiqVFN72）。
+    默认大模型音色都是 zh_*/en_* 等，不以 S_ 打头，故可据此路由到 seed-icl-2.0。"""
+    return bool(v) and v.startswith("S_")
+
+
+def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str,
+                     appid: str | None = None) -> None:
+    """V3 单向流式合成（新版单一 API Key）。同一个 unidirectional 端点、同一套流式响应，
+    按音色是否为克隆音色（S_ 开头）在请求侧分叉：
+      · 默认音色 → resource-id=seed-tts-2.0，body={"req_params":{...,"speech_rate"}}，无 App-Id 头。
+        契约锁定自官方文档 https://www.volcengine.com/docs/6561/2528925。
+      · 克隆音色（声音复刻 seed-icl-2.0，speaker=S_xxx）→ resource-id=seed-icl-2.0，
+        额外加 X-Api-App-Id 头（必需，缺失即报错）+ body 带 user.uid（实测契约）。
+    请求头共有：X-Api-Key(必选) / X-Api-Resource-Id(必选) / X-Api-Request-Id(必选，uuid)。
+    响应（两种音色同格式）：基于 HTTP Chunked 的连续 JSON 对象流（官方 curl 示例用 -N 免缓冲），
       每个 JSON 对象形如 {"code":0,"message":"OK","data":"<base64 音频分片>","sentence":{...}}，
-      data 逐段 base64 解码后按到达顺序拼接即完整音频；文档未给出显式"流结束"字段，
+      data 逐段 base64 解码后按到达顺序拼接即完整音频；末帧 code=20000000 是结束哨兵非错误，
       以 HTTP 响应流关闭（无更多数据）作为结束判定。"""
     import requests
-    speech_rate = _doubao_v3_speech_rate(speed)
-    body = {
-        "req_params": {
-            "text": text,
-            "speaker": voice,
-            "audio_params": {"format": "mp3", "sample_rate": 24000},
-            "speech_rate": speech_rate,
-        }
+    cloned = _is_cloned_voice(voice)
+    if cloned and not appid:
+        raise RuntimeError(
+            "克隆音色需要 VOLC_TTS_APPID（X-Api-App-Id），"
+            "请在后台豆包卡片『AppID』框填火山 appid")
+    req_params = {
+        "text": text,
+        "speaker": voice,
+        "audio_params": {"format": "mp3", "sample_rate": 24000},
     }
     headers = {
         "X-Api-Key": api_key,
-        "X-Api-Resource-Id": DOUBAO_V3_RESOURCE_ID,
         "X-Api-Request-Id": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
+    if cloned:
+        headers["X-Api-Resource-Id"] = DOUBAO_ICL_RESOURCE_ID
+        headers["X-Api-App-Id"] = appid
+        body = {"user": {"uid": "tts"}, "req_params": req_params}
+    else:
+        headers["X-Api-Resource-Id"] = DOUBAO_V3_RESOURCE_ID
+        req_params["speech_rate"] = _doubao_v3_speech_rate(speed)
+        body = {"req_params": req_params}
     r = requests.post(DOUBAO_V3_ENDPOINT, headers=headers, json=body, stream=True, timeout=120)
     if r.status_code != 200:
         r.close()
@@ -259,7 +283,8 @@ def _doubao_synth(text: str, out: str, voice: str | None, speed: float) -> str:
     api_key = creds.get("api_key")
     if api_key:
         resolved_voice = voice or creds["voice"] or DOUBAO_V3_DEFAULT_VOICE
-        _doubao_v3_synth(text, out, resolved_voice, speed, api_key)
+        # appid 仅克隆音色（seed-icl-2.0，S_ 开头）需要作 X-Api-App-Id 头；默认音色忽略
+        _doubao_v3_synth(text, out, resolved_voice, speed, api_key, creds.get("appid"))
         return resolved_voice
 
     import requests
