@@ -12,6 +12,7 @@ description: NBDpsy 内容运营工具包的「上手向导 + 客服台」，新
 
 > **路径约定**：下面命令里
 > `PUB` = `~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/publish_note.py`
+> `TV` = `~/.claude/skills/nbdpsy-youtube-transport/scripts/transport_video.py`
 > `COMMON` = `~/.claude/skills/nbdpsy-content-pipeline/scripts/nbdpsy_common.py`
 > （Windows 把 `~` 换成 `%USERPROFILE%`、`/` 换成 `\`，`python3` 换成 `python`。）
 
@@ -45,6 +46,7 @@ python3 PUB --self-check              # 小红书 API：连通性 + 身份 + 被
 | 写一篇官网博客长文并发布 | 「写一篇 XX 主题的科普长文」 | nbdpsy-seo-artical-creator |
 | 把长文拆成小红书图文笔记 + 配图提示词 | 「把这篇拆成小红书」 | nbdpsy-xiaohongshu-creator |
 | 把笔记做成带字幕的竖屏短视频 | 「把这篇做成视频」 | nbdpsy-text-to-video |
+| **搬运一条 YouTube 视频**（翻译+配音+烧中文字幕，自动带品牌 logo） | 「搬运这个 YouTube 视频」+ 链接 | nbdpsy-youtube-transport |
 | 质检（找茬、查合规） | 自动在每步之间跑，不用单独喊 | nbdpsy-content-reviewer |
 | **一句话全套**（最省事） | 「**做一期 XX 的全套内容**」 | nbdpsy-content-pipeline |
 | 把做好的笔记**发到小红书** + 管账号 + 看数据 | 见第 3 步「小红书运营手册」 | 本向导 + publish_note.py |
@@ -125,12 +127,32 @@ python3 PUB --notes <账号名或id>      # 拉该号已发布笔记的清单与
 
 ---
 
+## 第 3.5 步 · 搬运 YouTube 视频（server 新能力）
+
+把一条 YouTube 视频搬成**带中文字幕/配音的成片**——服务端全自动下载→转写→翻译→豆包配音→
+烧中文字幕→加 NBDpsy 品牌 logo 与片头版权声明。**用的是同一把运营接入凭据**（`NBDPSY_XHS_API_KEY`），
+配过小红书发布就能直接搬，不用另外要凭据。
+
+```bash
+python3 TV --url "https://www.youtube.com/watch?v=xxxx"   # 建任务 + 轮询到完成（几分钟级）
+python3 TV --job 42            # 查进度/取产物   python3 TV --list  # 列我的任务
+python3 TV --retry 42          # 重试失败        python3 TV --delete 42  # 删除
+```
+
+- 只认 **youtube.com / youtu.be** 链接；别的站点直接告诉运营「本搬运只支持 YouTube」。
+- 完成后 `products` 里是**免鉴权公网链接**：`video_url`（成片）、中文/英文字幕、中英双语逐字稿——
+  把 `video_url` 回给运营即可播放/下载；要本地留档加 `--download`。
+- `outcome=unknown` 或轮询超时 = **仍在跑，别重新提交**，用 `--job <id>` 复查（重复提交会重复搬运）。
+- 配音音色默认服务端牧羊音色，一般不用管；需要换加 `--voice`。
+
+---
+
 ## 第 4 步 · 带做第一个任务（把话头接住）
 
 介绍完就主动问一句，别让运营悬着：
 
 > 「想先从哪件开始？① 写一篇科普长文　② 做一期完整内容（长文+小红书+视频）　③ 把已有笔记发到小红书
-> 　④ 教我装插件/登录账号　⑤ 看某个账号的数据。你说一个，我这就带你做。」
+> 　④ 教我装插件/登录账号　⑤ 看某个账号的数据　⑥ 搬运一条 YouTube 视频。你说一个，我这就带你做。」
 
 运营选了就**直接触发对应 skill 或跑对应命令**，全程替他执行，只在扫码/出图/浏览器操作这类
 必须他本人做的地方一步步指路。做完汇报结果 + 下一步能干啥。
@@ -146,5 +168,6 @@ python3 PUB --notes <账号名或id>      # 拉该号已发布笔记的清单与
 | 「我有哪些号 / 账号能用吗」 | 第 3 步③④（`--self-check` 一把梭） |
 | 「怎么登录 / 账号掉线了」 | 第 3 步①②（装插件 + 扫码） |
 | 「看看数据 / 哪篇火了」 | 第 3 步⑥（`--notes` + 你来分析） |
+| 「搬运这个 YouTube / 把这条油管翻译配音」 | 第 3.5 步（`TV --url <链接>`，只收 YouTube） |
 | 「提示缺 key / 连不上」 | 第 1 步的两个兜底（要接入包 / sandbox allow） |
 | 「装不了 / 你说没有本机执行能力」 | 提醒他用 **Claude Desktop 的「Code」标签页**，别用 Chat/网页/手机版 |

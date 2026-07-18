@@ -1,8 +1,8 @@
 # nbdpsy-skills
 
-**当前版本 v1.17.0** · 每版改了什么见 [CHANGELOG.md](CHANGELOG.md)
+**当前版本 v1.18.0** · 每版改了什么见 [CHANGELOG.md](CHANGELOG.md)
 
-NBDpsy 心理科普内容创作的五个 Agent Skill（外加一个上手向导 **nbdpsy-guide**，共 6 个），覆盖「话题 → 官网 SEO 长文 → 小红书图文笔记 → 配图 → 竖屏短视频」全产线，每级产物都有对抗审查闸门。支持 **Claude Code** 与 **Codex** 一键安装。
+NBDpsy 心理科普内容创作的六个 Agent Skill（外加一个上手向导 **nbdpsy-guide**，共 7 个），覆盖「话题 → 官网 SEO 长文 → 小红书图文笔记 → 配图 → 竖屏短视频」全产线（另含 YouTube 视频搬运），每级产物都有对抗审查闸门。支持 **Claude Code** 与 **Codex** 一键安装。
 
 > **先选客户端**（本工具包跑在你自己的电脑上，不是云端）：
 > - **Claude Desktop 桌面版**（推荐给不熟终端的运营）：装好后点顶部 **「Code」标签页**即可。它内置 Claude Code，与终端版**同一套引擎、同一套 `~/.claude/skills`**，本工具包全部功能（含视频链）照常可用，只是多了图形界面。Windows 需先装 Git for Windows。
@@ -15,6 +15,7 @@ NBDpsy 心理科普内容创作的五个 Agent Skill（外加一个上手向导 
 | **nbdpsy-seo-artical-creator** | 把心理科普主题写成面向 SEO + GEO 的 pillar 长文（查证优先 → GEO 化结构 → 合规校验 → 生成即发布），产物入官网博客。 |
 | **nbdpsy-xiaohongshu-creator** | 承接上面的长文，拆成多篇可直接发小红书的图文笔记：每篇 ~300 字正文 + 一套 6–9 页「PPT 式」竖版（3:4）轮播插图。**正文强制三段式**——痛点场景开头 + 科普干货主体 + 结尾轻引导（解决「纯科普难转化 / 硬广难曝光」，且更易过投流审核）。内容页不只是「列要点」——会按内容形态挑最出干货的**信息图版式**（对比图 / 流程步骤图 / 象限图 / 隐喻图 / 数据图 / 拆解结构图 / 要点卡等 17 种），图文一体、信息密度更高。**封面按「背景层 + 文字层 + 元素层」三层组件**产出，换篇只改后两层。每页给出页面文字 + 可喂给 Gemini/GPT 的中文绘图提示词，并生成带一键复制按钮的预览页（`{笔记目录名}-preview.html`）——预览页顶部可**一键切换「小红书 3:4 / Instagram 1:1」**，切完复制即得对应比例版本，一套素材跨平台。 |
 | **nbdpsy-text-to-video** | 把长文 / 小红书笔记转成带中文字幕的竖屏短视频：即梦 Seedance 2.0 生成画面（走会员积分）+ 豆包 TTS 旁白 + 纯 ffmpeg 合成。可衔接 nbdpsy-xiaohongshu-creator，给每篇笔记按「文生」或「图生」生成视频。**需另配** dreamina CLI 登录 + 豆包 TTS key（可选，见下）+ ffmpeg（首次跑 `nbdpsy-text-to-video/scripts/check_env.py --install` 自检自装）。 |
+| **nbdpsy-youtube-transport** | 把一条 YouTube 视频「搬运」成带中文字幕/配音、可直接发布的成片。所有重活在服务端（小红书运营工具后台）全自动完成：下载 → 转写 → qwen-mt 翻译 → 豆包配音 → 音画同步 → 烧中文字幕 → 出成片，并自动打 NBDpsy 品牌 logo + 片头版权声明。经 video-transport REST API 建任务/轮询/取产物（成片 + 中英字幕 + 中英双语逐字稿的免鉴权公网链接）。**复用小红书运营接入的 `NBDPSY_XHS_API_KEY`，无需另配凭据。** |
 | **nbdpsy-content-reviewer** | 内容产线的对抗审查员：对长文 / 笔记 / 配图 / 视频四类产物先跑确定性检查脚本、再逐条「找茬」核对合规清单，产出 PASS/FAIL 审查报告。必须由独立子代理执行（生产者不自审），是发布前最后一道闸门。 |
 | **nbdpsy-content-pipeline** | 内容产线总导演：运营只给一个话题，说一句「做一期 XX 的全套内容」，就自动把长文创作→审查→拆笔记→审查→出图→审查→出视频→审查整条流水线串完，每级产物过审才进下一级。适合非专业兼职运营的傻瓜式入口；各生产 skill 也可单独使用。 |
 

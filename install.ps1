@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoUrl = "https://github.com/Buxiulei/nbdpsy-skills.git"
-$Skills = @("nbdpsy-seo-artical-creator", "nbdpsy-xiaohongshu-creator", "nbdpsy-text-to-video", "nbdpsy-content-reviewer", "nbdpsy-content-pipeline", "nbdpsy-guide")
+$Skills = @("nbdpsy-seo-artical-creator", "nbdpsy-xiaohongshu-creator", "nbdpsy-text-to-video", "nbdpsy-youtube-transport", "nbdpsy-content-reviewer", "nbdpsy-content-pipeline", "nbdpsy-guide")
 
 # 旧版（无 nbdpsy- 前缀）名，安装时顺带清理
 $LegacySkills = @('seo-artical-creator','xiaohongshu-creator','text-to-video','content-reviewer','content-pipeline')

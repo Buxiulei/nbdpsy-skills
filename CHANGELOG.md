@@ -9,6 +9,28 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.18.0] — 2026-07-18
+
+### 新增 skill：nbdpsy-youtube-transport（YouTube 视频搬运）
+
+- **新技能**：给一条 YouTube 链接，产出带中文字幕/配音、可直接发布的成片 + 中英字幕 + 中英双语逐字稿。
+  重活全在服务端（小红书运营工具后台 `https://xhs.nbdpsy.com`）：下载 → 转写 → qwen-mt 翻译 →
+  豆包配音 → 音画同步 → 烧中文字幕 → 出成片，并自动打 NBDpsy 品牌 logo + 片头版权声明。
+- **scripts/transport_video.py**：经 video-transport REST 建任务（`POST /api/video-transport/jobs`，
+  异步 202）→ 轮询（`GET .../jobs/{id}`，pending→running→completed/failed，每 ~15s，瞬时故障容忍）→
+  取产物（相对 `/uploads/…` 拼成免鉴权公网绝对 URL）。含 `--url/--job/--list/--retry/--delete/
+  --download/--no-wait`。沿用发布脚本的**防重发**范式：状态未确认落 `unknown` 带 job_id，绝不重建任务。
+  客户端预检只放行 youtube.com / youtu.be（防子串绕过）。
+- **凭据零新增**：复用小红书运营接入的 `NBDPSY_XHS_API_KEY`（同一套 `get_current_user` 鉴权），
+  配过自动发布即可直接搬运；基址可选 `NBDPSY_VIDEO_API_BASE`（默认 `https://xhs.nbdpsy.com`）。
+- **沙盒放行**新增 `xhs.nbdpsy.com`（nbdpsy_common.SANDBOX_ALLOW_DOMAINS）。
+- **登记**：install.sh / install.ps1 / plugin.json / marketplace.json / sync_shared.py 加入新技能；
+  nbdpsy-guide 增「第 3.5 步 · 搬运 YouTube 视频」操作引导与能力表/菜单/FAQ 条目。
+- 测试 +12（test_transport_video.py：URL 预检、错误体两形、产物 URL 拼接、建任务 payload、轮询终态/
+  瞬时容忍/永久错误、CLI 拒非 YouTube/缺 key），全量 210 过。
+
+---
+
 ## [1.17.0] — 2026-07-16
 
 ### 视频配音支持火山克隆音色（seed-icl-2.0）——用运营自己的声音

@@ -40,8 +40,9 @@ CREDENTIALS = [  # (KEY, 是否必需, 说明)
      "火山豆包 TTS（旧版，已有 VOLC_TTS_API_KEY 可不填）—— 找管理员要（凭据配置包会一并带上）；"
      "可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
     ("NBDPSY_XHS_API_KEY", False,
-     "小红书自动发布 API Key（nbdpsy-api 运营专属）—— 管理员在后台「小红书运营接入」生成的"
-     "接入包会带上（secret import 一并导入）；可跳过，跳过后小红书笔记只能人工发布"),
+     "小红书运营接入 API Key（nbdpsy-api 运营专属）—— 同一把 key 既用于小红书自动发布，"
+     "也用于 YouTube 视频搬运（video-transport）；管理员在后台「小红书运营接入」生成的"
+     "接入包会带上（secret import 一并导入）；可跳过，跳过后小红书笔记只能人工发布、无法搬运视频"),
 ]
 
 _OS_DEFAULT_PKG = {"linux": "apt", "darwin": "brew", "windows": "winget"}
