@@ -9,6 +9,18 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.19.1] — 2026-07-20
+
+### nbdpsy-guide 补「更新工具包」指引
+
+- 此前 7 个 skill 里无任何一处写更新命令，运营说「更新 nbdpsy-skills」时 agent 只能靠猜。
+  nbdpsy-guide 新增「更新工具包」节：**命令由 agent 替运营跑**（Windows 借
+  `powershell.exe -NoProfile -ExecutionPolicy Bypass` 跑 irm 一条命令；Linux/macOS 用 curl|bash），
+  说明凭据不受覆盖影响（用户级 secrets.env / ~/.dreamina_cli/ 均在仓库外）、完成后提醒重启 Claude Code。
+- description 触发词补「更新工具包 / 更新 nbdpsy-skills / 升级 skill / 装最新版」；常见问题速查表同步加行。
+
+---
+
 ## [1.19.0] — 2026-07-20
 
 ### 即梦登录一键化（dreamina_login.py）
