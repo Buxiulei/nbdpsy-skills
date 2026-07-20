@@ -9,6 +9,33 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.19.0] — 2026-07-20
+
+### 即梦登录一键化（dreamina_login.py）
+
+- **事故动机**：Windows 小白运营被旧文案引导跑 `dreamina login --headless`，终端字符二维码显示不出
+  （headless 需 google-chrome + 终端字体），PowerShell 折行又把 verification_uri 里的 user_code 参数
+  截断（浏览器报"没有 user_code"），每次重跑还生成新码作废旧网址——反复登录失败。而有屏机器根本
+  不该用 `--headless`：`dreamina login` 默认模式本就会自动弹默认浏览器完成登录。
+- **新脚本 scripts/dreamina_login.py**：登录全程 agent 包办，用户唯一动作是用**抖音 App 扫码/点确认**。
+  - `--mode auto`（默认）自动判断：Windows/macOS 或有 DISPLAY/WAYLAND 的 Linux → 弹默认浏览器
+    （`dreamina login`）；无屏 Linux 服务器 → `dreamina login --headless` 并把抖音二维码生成 PNG 图片
+    交给 agent 展示给用户扫（缺 `qrcode` 库先自动 pip 装，装不上降级为只给完整网址）。
+  - 浏览器模式下 CLI 若弹不开浏览器（设备流回退），脚本从管道拿到**完整逻辑行**的 verification_uri
+    自己 `webbrowser.open()`——天然免疫终端折行截断（根治 Windows 事故）。
+  - 成功判据 = 每 4s 轮询 `dreamina user_credit` 拿到 `total_credit`，不依赖子进程退出码；已登录则幂等直接返回。
+  - 二维码几分钟过期 → `--timeout`（默认 240s）超时自动杀进程换新码，`--retries`（默认 3）次。
+  - 所有子进程 `encoding=utf-8, errors=replace`（防 Windows GBK 崩），异常/退出路径 finally 杀子进程。
+  - `--check-only` 只查登录态不发起登录；stdout=JSON / stderr=中文进度。
+- **全仓话术统一**：check_env.py / SKILL.md / setup.py / README.md / jimeng_gen.py / seedance_jimeng.py /
+  nbdpsy_common.py（含 6 份副本）里教用户手敲 `dreamina login --headless` 的引导，一律改为
+  「让 AI 帮你登录（自动弹浏览器/出二维码，抖音 App 扫码即可）」；`--headless` 仅保留在脚本内部实现
+  与「无屏服务器」说明语境。
+- 测试 +8（test_dreamina_login.py：设备流行解析提完整 URL/user_code + 干扰行/缺项、auto 模式选择
+  Windows/macOS/Linux±DISPLAY/Wayland 五场景），不跑网络/真 CLI。
+
+---
+
 ## [1.18.0] — 2026-07-18
 
 ### 新增 skill：nbdpsy-youtube-transport（YouTube 视频搬运）

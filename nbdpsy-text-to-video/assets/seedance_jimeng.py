@@ -6,7 +6,8 @@
 
 部署：把本文件放到 OpenMontage 的 `tools/video/` 目录即可被自动发现注册。
 前置：`dreamina` 已安装并登录（curl -fsSL https://jimeng.jianying.com/cli | bash；
-       dreamina login --headless 抖音扫码）。`dreamina user_credit` 应能看到积分。
+       登录跑 nbdpsy-text-to-video/scripts/dreamina_login.py 一键完成——自动弹浏览器/出二维码，抖音 App 扫码）。
+       `dreamina user_credit` 应能看到积分。
 
 实测约束（即梦 CLI，Seedance 2.0 家族）：
   - 分辨率仅 720p；duration 4-15s；
@@ -60,7 +61,7 @@ class SeedanceJimeng(BaseTool):
     install_instructions = (
         "Install the official 即梦/Dreamina CLI and log in:\n"
         "  curl -fsSL https://jimeng.jianying.com/cli | bash\n"
-        "  dreamina login --headless   # scan QR with the Douyin app\n"
+        "  python3 nbdpsy-text-to-video/scripts/dreamina_login.py   # auto-opens browser / QR image; scan with the Douyin app\n"
         "  dreamina user_credit        # confirm membership credits\n"
         "Generation spends your membership credits (cost_usd is reported as 0)."
     )

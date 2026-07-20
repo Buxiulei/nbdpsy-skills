@@ -245,14 +245,16 @@ def step_dreamina(state: dict, interactive: bool) -> None:
         except (json.JSONDecodeError, AttributeError):
             detail = raw.splitlines()[0] if raw else "已安装"  # 单行化，避免撑破报告表
         report("dreamina CLI", "✓", detail)
-        print("  提示：若未登录，请运行 dreamina login --headless，用抖音 App 扫码（该步骤无法代扫）")
+        print("  提示：若未登录，让 AI 继续完成即梦登录（AI 会自动弹浏览器，你只需抖音 App 扫码）；"
+              "手动方式：终端跑 dreamina login（不要加 --headless，会自动弹出浏览器）")
         return
 
     if state["os"] == "windows":
         print("  未检测到 dreamina CLI，尝试 Windows 自动安装（官方脚本原生支持 Windows）…")
         exe = _install_dreamina_windows()
         if exe:
-            report("dreamina CLI", "✓", "安装完成，请在终端运行 dreamina login --headless 用抖音 App 扫码登录（无法代扫）")
+            report("dreamina CLI", "✓", "安装完成。登录交给 AI：让 AI 继续完成即梦登录（自动弹浏览器，你只需抖音 App 扫码）；"
+               "手动方式：终端跑 dreamina login（不要加 --headless，会自动弹出浏览器）")
         else:
             report("dreamina CLI", "跳过",
                    "自动安装未成功（Git 自动安装/下载兜底均未落地，可能是网络或权限）。"
@@ -265,7 +267,8 @@ def step_dreamina(state: dict, interactive: bool) -> None:
     _run(["bash", "-c", install_cmd], timeout=300)
     exe = _find_dreamina()
     if exe:
-        report("dreamina CLI", "✓", "安装完成，请在终端运行 dreamina login --headless 用抖音 App 扫码登录（无法代扫）")
+        report("dreamina CLI", "✓", "安装完成。登录交给 AI：让 AI 继续完成即梦登录（自动弹浏览器，你只需抖音 App 扫码）；"
+               "手动方式：终端跑 dreamina login（不要加 --headless，会自动弹出浏览器）")
     else:
         report("dreamina CLI", "跳过", f"自动安装未成功，可稍后手动执行：{install_cmd}")
 

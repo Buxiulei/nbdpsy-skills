@@ -91,7 +91,7 @@ def doctor():
     if not xhs_ready:
         notes.append("小红书自动发布未配置（可选）：缺 NBDPSY_XHS_API_KEY——管理员在后台"
                      "「小红书运营接入」生成的接入包里带此凭据；不配则小红书笔记只能人工发布。")
-    notes.append("视频画面用的即梦需在本机终端扫码一次：dreamina login --headless（抖音 App 扫码）；"
+    notes.append("视频画面用的即梦需登录一次：让 AI 帮你登录（会自动弹浏览器，用抖音 App 扫码/点确认即可）；"
                  "登录态由 nbdpsy-text-to-video/scripts/check_env.py 检测。")
     return {"ok": ok, "required_missing": required_missing,
             "doubao_ready": doubao_ready, "xhs_ready": xhs_ready, "notes": notes}, (0 if ok else 1)

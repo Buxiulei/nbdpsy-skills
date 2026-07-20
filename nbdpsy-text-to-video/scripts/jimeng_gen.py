@@ -143,7 +143,7 @@ def credits() -> dict:
     data = _parse_json(out)
     if rc != 0 or not isinstance(data, dict):
         return {"success": False, "error": (serr or out or "user_credit 失败").strip(),
-                "hint": "未登录请先跑：dreamina login --headless（抖音 App 扫码）"}
+                "hint": "未登录请让 agent 跑 scripts/dreamina_login.py（自动弹浏览器，抖音 App 扫码）"}
     data["success"] = True
     return data
 
