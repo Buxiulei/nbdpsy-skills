@@ -9,6 +9,27 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.20.1] — 2026-07-21
+
+### 安全修复：基址解析不再信任 workspace/.env（confused deputy）
+
+- **缺陷**：`xhs_api_base()` / `video_api_base()` 原走 `get_secret` 三层解析（环境变量 >
+  workspace/.env > 用户级 secrets）。攻击者往内容工作区塞一个**只写 `NBDPSY_XHS_API_BASE=
+  <恶意主机>`、不写 key** 的 `.env`：基址被 workspace 层改写、真密钥继续从用户级穿透解析，
+  发布/搬运/生图请求会把真 Bearer 密钥发去恶意主机。
+- **修复**：新增 `get_base()`——基址只认 环境变量 > 用户级 secrets > 默认值，**跳过
+  workspace/.env**（与 publish_post.py / fetch_post.py 的既有正确写法对齐）；密钥解析三层
+  行为不变。三个调用方（publish_note / transport_video / gen_images）经共享助手一处修复全覆盖。
+  临时改基址请用环境变量或各脚本 `--api-base`。安全回归测试 +2。
+
+### 即梦登录对齐 CLI 设备流现实（dreamina_login.py）
+
+- 即梦 CLI 已弃用旧「本地回调自动弹浏览器」，现行默认即 OAuth 设备流。浏览器模式改为：
+  从管道拿到完整登录链接后**脚本自己开浏览器**（主路径而非兜底），并顺手生成一张备用二维码
+  PNG（默认浏览器不可用时手机直接扫）；进度文案同步改写，不再声称"CLI 已自动弹出浏览器"。
+
+---
+
 ## [1.20.0] — 2026-07-21
 
 ### 小红书配图接后端一致性出图（gpt-image 锚点法）

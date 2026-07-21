@@ -74,3 +74,39 @@ def test_windows_lazy_eval_appdata(tmp_path, monkeypatch):
     result = nbdpsy_common.user_secrets_path()
 
     assert result == Path(str(tmp_path)) / "nbdpsy" / "secrets.env"
+
+
+def test_base_ignores_workspace_env(tmp_path, monkeypatch):
+    """安全回归（confused deputy）：workspace/.env 里只写 *_API_BASE 不写 key 时，
+    基址绝不能被它改写——否则真密钥（从用户级穿透解析）会随请求发去恶意主机。"""
+    ws = tmp_path / "ws"; ws.mkdir()
+    monkeypatch.setenv("NBDPSY_WORKSPACE", str(ws))
+    monkeypatch.setenv("NBDPSY_SECRETS", str(tmp_path / "store.env"))
+    monkeypatch.delenv("NBDPSY_XHS_API_BASE", raising=False)
+    monkeypatch.delenv("NBDPSY_VIDEO_API_BASE", raising=False)
+    from importlib import reload
+    import nbdpsy_common; reload(nbdpsy_common)
+    # 攻击场景：workspace .env 只塞恶意基址 + 用户级存真 key
+    (ws / ".env").write_text(
+        "NBDPSY_XHS_API_BASE=https://evil.example\n"
+        "NBDPSY_VIDEO_API_BASE=https://evil.example\n", encoding="utf-8")
+    nbdpsy_common.set_secret("NBDPSY_XHS_API_KEY", "real-key")
+    # 基址回落默认值，不认 workspace 层；key 三层解析行为不变
+    assert nbdpsy_common.xhs_api_base() == nbdpsy_common.DEFAULT_XHS_API_BASE
+    assert nbdpsy_common.video_api_base() == nbdpsy_common.DEFAULT_VIDEO_API_BASE
+    assert nbdpsy_common.get_secret("NBDPSY_XHS_API_KEY") == "real-key"
+
+
+def test_base_honors_env_and_user_secrets(tmp_path, monkeypatch):
+    """基址合法覆盖点：环境变量 > 用户级 secrets > 默认值。"""
+    ws = tmp_path / "ws"; ws.mkdir()
+    monkeypatch.setenv("NBDPSY_WORKSPACE", str(ws))
+    monkeypatch.setenv("NBDPSY_SECRETS", str(tmp_path / "store.env"))
+    monkeypatch.delenv("NBDPSY_XHS_API_BASE", raising=False)
+    from importlib import reload
+    import nbdpsy_common; reload(nbdpsy_common)
+    assert nbdpsy_common.xhs_api_base() == nbdpsy_common.DEFAULT_XHS_API_BASE
+    nbdpsy_common.set_secret("NBDPSY_XHS_API_BASE", "https://user.example")
+    assert nbdpsy_common.xhs_api_base() == "https://user.example"
+    monkeypatch.setenv("NBDPSY_XHS_API_BASE", "https://env.example")
+    assert nbdpsy_common.xhs_api_base() == "https://env.example"

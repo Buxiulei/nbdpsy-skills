@@ -68,11 +68,21 @@ DEFAULT_XHS_API_BASE = "https://mcp.nbdpsy.com"
 VIDEO_API_BASE_KEY = "NBDPSY_VIDEO_API_BASE"
 DEFAULT_VIDEO_API_BASE = "https://xhs.nbdpsy.com"
 
+def get_base(key: str):
+    """服务基址解析：只认 环境变量 > 用户级 secrets，**跳过 workspace/.env**。
+    基址决定密钥被发往哪台主机——workspace/.env 可能随内容产物/克隆仓库到达，一旦允许它改写基址，
+    攻击者放一个只写 *_API_BASE、不写 key 的 .env，密钥仍会从用户级穿透解析出来并随请求发去
+    恶意主机（confused deputy）。密钥本身仍走 get_secret 三层不变；要临时改基址用环境变量或
+    各脚本的 --api-base 参数（都需明确操作本机，不受工作区文件影响）。"""
+    if os.environ.get(key):
+        return os.environ[key]
+    return _read_env_file(user_secrets_path(), key)
+
 def xhs_api_base() -> str:
-    return get_secret(XHS_API_BASE_KEY) or DEFAULT_XHS_API_BASE
+    return get_base(XHS_API_BASE_KEY) or DEFAULT_XHS_API_BASE
 
 def video_api_base() -> str:
-    return get_secret(VIDEO_API_BASE_KEY) or DEFAULT_VIDEO_API_BASE
+    return get_base(VIDEO_API_BASE_KEY) or DEFAULT_VIDEO_API_BASE
 
 def doctor():
     """自检可复制类凭据。返回 (report, exit_code)。绝不把密钥值放进 report。"""

@@ -8,9 +8,10 @@
 截断（浏览器报"没有 user_code"），每次重跑还生成新码作废旧网址——反复登录失败。而有屏机器根本
 不该用 `--headless`：`dreamina login` 默认模式本就会自动弹默认浏览器完成登录。
 
-本脚本据此分流：有屏机器走默认浏览器模式；无屏服务器才走 headless 并把抖音二维码渲染成 PNG 图片
-交给 agent 展示。浏览器模式下 CLI 若弹不开浏览器（设备流回退），脚本从管道拿到**完整逻辑行**的
-verification_uri 自己 webbrowser.open()——天然免疫终端折行截断。
+本脚本据此分流：有屏机器走浏览器模式；无屏服务器才走 headless 并把抖音二维码渲染成 PNG 图片
+交给 agent 展示。浏览器模式下（即梦 CLI 现行默认即 OAuth 设备流，旧「本地回调自动弹浏览器」
+已被官方弃用），脚本从管道拿到**完整逻辑行**的 verification_uri 自己 webbrowser.open() 并顺手
+出一张备用二维码图——天然免疫终端折行截断。
 
 约定同目录其他脚本：stdout=最终 JSON / stderr=中文进度。
 
@@ -253,11 +254,16 @@ def _on_verification_uri(mode: str, uri: str, result: dict) -> None:
         else:
             _err(f"[login] 二维码库不可用；请用抖音 App 打开此网址完成登录：\n{uri}")
     else:
-        _err("[login] CLI 未能自动弹出浏览器，脚本改用设备流网址自动打开浏览器…")
+        # 即梦 CLI 现行默认即设备流（旧「本地回调自动弹浏览器」已被官方弃用）：
+        # 脚本从管道拿到完整登录链接后自己开浏览器，这是主路径而非兜底
         try:
             webbrowser.open(uri)
+            _err("[login] 已在你的默认浏览器打开即梦登录页，请用**抖音 App 扫码或点确认**…")
         except Exception:  # noqa: BLE001
-            pass
+            _err("[login] 打开浏览器失败，请手动打开下方网址")
+        result["qr_image"] = make_qr(uri)  # 顺手出一张二维码图备用（默认浏览器不可用时手机直接扫）
+        if result["qr_image"]:
+            _err(f"[login] 备用二维码图片（浏览器打不开时用抖音 App 扫这张）：{result['qr_image']}")
         _err(f"[login] 若浏览器没弹出，请手动打开（这是完整网址，勿手抄以免截断）：\n{uri}")
 
 
@@ -278,7 +284,7 @@ def login(mode: str, timeout: int, retries: int) -> dict:
         if attempt > 1:
             _err(f"[login] 二维码已过期，自动换新码重试（第 {attempt}/{retries} 次）…")
         if resolved == "browser":
-            _err("[login] 已自动打开浏览器登录页，请在弹出的页面用**抖音 App 扫码或点确认**…")
+            _err("[login] 正在向即梦获取登录链接（设备流），拿到后会自动在你的默认浏览器打开…")
         else:
             _err("[login] 正在生成登录二维码（无屏服务器模式），稍候把图片给你扫…")
 
