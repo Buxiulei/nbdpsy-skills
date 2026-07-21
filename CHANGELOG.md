@@ -9,6 +9,33 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.20.0] — 2026-07-21
+
+### 小红书配图接后端一致性出图（gpt-image 锚点法）
+
+- **动机**：轮播配图此前只有「宿主自己画 / 人工喂 Gemini-GPT」两条路，一套 5–8 篇 × 6–9 页 = 30–70 张，
+  品牌基底一漂移（配色跑偏 / 人物换脸 / 出成方图）就整批全废重出——最贵的事故。后端上线 gpt-image
+  **锚点法一致性出图**后，本级接上它，让「先出封面过闸门、确认后整号锚定同一张 P1 批量出」变成命令。
+- **新脚本 nbdpsy-xiaohongshu-creator/scripts/gen_images.py**：经运营工具 op API 出图（复用
+  `NBDPSY_XHS_API_KEY` 同一把运营接入 JWT，base 用 `NBDPSY_VIDEO_API_BASE`，默认 `https://xhs.nbdpsy.com`）。
+  - **本地提取**每页提示词，判据与后端 `extract_slide_prompts` 完全一致（行首 `### P<数字>` 定位页 +
+    页区间内第一个完整 ``` 围栏块）；**完整性校验**拦缺围栏页（后端会静默跳过导致页序错位）；
+    `## 视频参考图提示词` 节的 `**P1**` 加粗标记天然不被计入。
+  - **P1 锚点闸门**：`--cover-only` 只出封面 → 运营确认配色/人物/比例/图中中文 → 输出里的 `anchor_url`
+    喂给**整套所有篇所有页**（`--anchor-url`），各页独立锚定生成，整个号调性统一。
+  - 异步 job（202 拿 job_id + session_id）+ 轮询到终态（间隔 10s，默认超时 max(180, 页数×90)）+
+    逐页下载到 `{note目录}/images/{note名}/P01.png…`；`--pages 2-9 / 3,5` 只重出失败页（带同一锚点）；
+    `--job/--session` 复查补下（状态文件恢复页映射）；`--dry-run` 离线看 payload。
+  - stdout 纯 JSON（done/partial/failed/pending/unknown）：额度/限流表现为 done+errors，透传到该页 `error`；
+    `pending/unknown` 绝不重发（防重复生成烧额度）——与 publish_note / transport_video 同款不重发范式。
+- **SKILL.md 第 6 步**改名「出图（后端一致性出图优先，宿主自适应兜底）」，新增**路线 0 · 后端一致性出图**
+  （凭据在位默认首选，把风格闸门映射成三条命令）；原「有/没有图像生成能力」两分支降为凭据缺失时的兜底；
+  风格确认闸门 blockquote 原样保留；关键文件表与铁律 3 同步。
+- 单测 `tests/test_gen_images.py`（24 例，纯函数不打网）：提取器 / 完整性校验 / 视频参考图节不被提取 /
+  页选择解析与越界 / 两位数命名 / 相对 URL 拼绝对 / 终态映射与 errors 透传 / dry-run CLI 契约。
+
+---
+
 ## [1.19.1] — 2026-07-20
 
 ### nbdpsy-guide 补「更新工具包」指引
