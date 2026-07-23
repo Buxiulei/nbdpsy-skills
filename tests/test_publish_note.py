@@ -367,3 +367,201 @@ def test_cli_missing_key_exit1(tmp_path):
                        capture_output=True, text=True, env=env)
     assert p.returncode == 1
     assert "MISSING:NBDPSY_XHS_API_KEY" in p.stderr
+
+
+# ---- v1.23.0 发布线增强：改期 / 撤稿 / 列任务 / 图床 / whoami ----
+
+class _Resp:
+    def __init__(self, code, v): self.status_code, self._v = code, v
+    def json(self): return self._v
+
+
+def test_reschedule_sends_patch_schedule_only(monkeypatch):
+    """PATCH 只带 schedule_time，绝不多带字段（部分更新契约核心）。"""
+    import publish_note
+    seen = {}
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        seen.update(method=method, url=url, payload=payload)
+        return _Resp(200, {"ok": True, "job": {"job_id": 7, "status": "pending"}})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    view = publish_note.reschedule_job("https://x", "k", 7, "2026-07-16T09:00:00+08:00")
+    assert seen["method"] == "PATCH"
+    assert seen["url"].endswith("/api/publish-jobs/7")
+    assert seen["payload"] == {"schedule_time": "2026-07-16T09:00:00+08:00"}
+    assert view["ok"] is True
+
+
+def test_reschedule_now_sends_null(monkeypatch):
+    """--schedule now → PATCH {"schedule_time": null}（清空转立即发）。"""
+    import publish_note
+    seen = {}
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        seen["payload"] = payload
+        return _Resp(200, {"ok": True, "job": {}})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    publish_note.reschedule_job("https://x", "k", 7, "now")
+    assert seen["payload"] == {"schedule_time": None}
+
+
+def test_reschedule_non_pending_returns_ok_false(monkeypatch):
+    """非 pending → 服务端 {ok:false,status}；函数原样返回，由 main 转非零退出。"""
+    import publish_note
+    monkeypatch.setattr(publish_note, "send_request",
+                        lambda *a, **k: _Resp(200, {"ok": False, "status": "published"}))
+    view = publish_note.reschedule_job("https://x", "k", 7, "now")
+    assert view["ok"] is False and view["status"] == "published"
+
+
+def test_schedule_offset_warning():
+    import publish_note
+    assert publish_note.schedule_offset_warning("2026-07-16T09:00:00+08:00") is None
+    assert "偏移" in publish_note.schedule_offset_warning("2026-07-16T09:00:00")
+    assert "无法解析" in publish_note.schedule_offset_warning("不是时间")
+
+
+def test_cancel_job_ok_and_path(monkeypatch):
+    import publish_note
+    seen = {}
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        seen.update(method=method, url=url)
+        return _Resp(200, {"ok": True})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    assert publish_note.cancel_job("https://x", "k", 9)["ok"] is True
+    assert seen["method"] == "POST" and seen["url"].endswith("/api/publish-jobs/9/cancel")
+
+
+def test_cancel_job_non_pending(monkeypatch):
+    import publish_note
+    monkeypatch.setattr(publish_note, "send_request",
+                        lambda *a, **k: _Resp(200, {"ok": False, "status": "publishing"}))
+    v = publish_note.cancel_job("https://x", "k", 9)
+    assert v["ok"] is False and v["status"] == "publishing"
+
+
+def test_list_jobs_query_and_brief_fields(monkeypatch):
+    """GET query 组装 + 读 jobs 键 + 精简字段（去掉 retries/note_id 等）。"""
+    import publish_note
+    seen = {}
+    full = {"job_id": 3, "account_id": 1, "title": "T", "status": "pending",
+            "schedule_time": None, "note_url": None, "error": None,
+            "created_at": "2026-07-16T00:00:00", "retries": 0, "note_id": None,
+            "next_retry_at": None}
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        seen.update(method=method, url=url)
+        return _Resp(200, {"jobs": [full]})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    out = publish_note.list_jobs("https://x", "k", account_id=1, status="pending", limit=20)
+    assert seen["method"] == "GET" and "/api/publish-jobs?" in seen["url"]
+    assert "account_id=1" in seen["url"] and "status=pending" in seen["url"] and "limit=20" in seen["url"]
+    j = out["jobs"][0]
+    assert j["job_id"] == 3 and j["title"] == "T"
+    assert "retries" not in j and "note_id" not in j and "next_retry_at" not in j
+
+
+def test_collect_upload_paths_dir_sorted(tmp_path):
+    import publish_note
+    d = tmp_path / "imgs"; d.mkdir()
+    for n in ["P03.png", "P01.png", "P02.jpg", "note.txt"]:
+        (d / n).write_bytes(b"x")
+    paths = publish_note.collect_upload_paths([str(d)])
+    assert [p.name for p in paths] == ["P01.png", "P02.jpg", "P03.png"]  # 排序 + 过滤非图
+
+
+def test_collect_upload_paths_files_order_preserved(tmp_path):
+    import publish_note
+    a = tmp_path / "a.png"; b = tmp_path / "b.png"
+    a.write_bytes(b"x"); b.write_bytes(b"y")
+    paths = publish_note.collect_upload_paths([str(b), str(a)])
+    assert [p.name for p in paths] == ["b.png", "a.png"]  # 显式文件保留给定顺序
+
+
+def test_collect_upload_paths_missing_raises(tmp_path):
+    import publish_note
+    with pytest.raises(ValueError):
+        publish_note.collect_upload_paths([str(tmp_path / "nope.png")])
+
+
+def test_upload_image_batch_multipart_field_and_order(tmp_path, monkeypatch):
+    """multipart 字段名统一 files、多文件、顺序。"""
+    import publish_note
+    seen = {}
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        seen.update(method=method, url=url, files=files)
+        return _Resp(200, {"batch_id": "b1", "urls": ["https://u/1", "https://u/2"],
+                           "expires_at": "2026-07-23"})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    p1 = tmp_path / "01.png"; p2 = tmp_path / "02.png"
+    p1.write_bytes(b"a"); p2.write_bytes(b"b")
+    out = publish_note.upload_image_batch("https://x", "k", [p1, p2])
+    assert seen["method"] == "POST" and seen["url"].endswith("/api/uploads/images")
+    assert [f[0] for f in seen["files"]] == ["files", "files"]  # 字段名统一 files
+    assert seen["files"][0][1][0] == "01.png" and seen["files"][1][1][0] == "02.png"  # 顺序
+    assert seen["files"][0][1][2] == "image/png"  # mime 按扩展名
+    assert out["batch_id"] == "b1"
+
+
+def test_upload_image_batch_precheck_bounds(tmp_path):
+    """客户端预检 1–18 张：0 张与 19 张都拦截。"""
+    import publish_note
+    with pytest.raises(ValueError):
+        publish_note.upload_image_batch("https://x", "k", [])
+    many = []
+    for i in range(19):
+        p = tmp_path / f"{i:02d}.png"; p.write_bytes(b"x"); many.append(p)
+    with pytest.raises(ValueError):
+        publish_note.upload_image_batch("https://x", "k", many)
+
+
+def test_list_uploads_passthrough(monkeypatch):
+    import publish_note
+    batches = {"batches": [{"batch_id": "b1", "file_count": 3,
+                            "created_at": "2026-07-16", "expires_at": "2026-07-23"}]}
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: _Resp(200, batches))
+    assert publish_note.list_uploads("https://x", "k")["batches"][0]["file_count"] == 3
+
+
+def test_self_check_calls_whoami_first_and_includes_identity(monkeypatch):
+    """--self-check 第一步先打 GET /api/whoami，{name,role} 并入输出。"""
+    import publish_note
+    calls = []
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        calls.append(url)
+        if url.endswith("/api/whoami"):
+            return _Resp(200, {"name": "小李", "role": "operator"})
+        return _Resp(200, {"accounts": []})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    rep = publish_note.self_check("https://x", "k")
+    assert calls[0].endswith("/api/whoami")  # whoami 先行
+    assert rep["identity"] == {"name": "小李", "role": "operator"}
+
+
+def test_send_request_multipart_branch(monkeypatch):
+    """send_request 本体：files 非空走 multipart（带 Bearer、不带 json 体），空则 JSON 体。"""
+    import types
+    import publish_note
+    calls = []
+    def _req(method, url, **kw):
+        calls.append((method, url, kw))
+        return _Resp(200, {})
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(request=_req))
+    publish_note.send_request("POST", "https://x/api/uploads/images", "K1",
+                              files=[("files", ("01.png", b"x", "image/png"))])
+    _, _, kw = calls[0]
+    assert kw["files"] and "json" not in kw
+    assert kw["headers"]["Authorization"] == "Bearer K1"
+    publish_note.send_request("GET", "https://x/api/whoami", "K1")
+    _, _, kw2 = calls[1]
+    assert "files" not in kw2 and kw2["json"] is None
+    assert kw2["headers"]["Authorization"] == "Bearer K1"
+
+
+def test_cli_reschedule_requires_schedule(tmp_path):
+    """--reschedule 缺 --schedule → argparse 依赖校验 exit 2（不发任何网络请求）。"""
+    import subprocess
+    script = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts" / "publish_note.py"
+    env = {"PATH": "/usr/bin:/bin", "NBDPSY_XHS_API_KEY": "k",
+           "NBDPSY_SECRETS": str(tmp_path / "none.env"), "NBDPSY_WORKSPACE": str(tmp_path)}
+    p = subprocess.run([sys.executable, str(script), "--reschedule", "42"],
+                       capture_output=True, text=True, env=env)
+    assert p.returncode == 2
+    assert "--schedule" in p.stderr

@@ -9,8 +9,14 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
         [--images-dir DIR] [--schedule "2026-07-14T09:00:00+08:00"]
         [--api-base URL] [--no-wait] [--wait-timeout 900] [--dry-run]
     python3 publish_note.py --job 42            # 只查已提交任务的状态
+    python3 publish_note.py --list-jobs [--account 号] [--status pending] [--limit N]  # 列发布任务
+    python3 publish_note.py --reschedule 42 --schedule "2026-07-16T09:00:00+08:00"    # 改定时
+    python3 publish_note.py --reschedule 42 --schedule now   # 清空定时→立即发（仅 pending）
+    python3 publish_note.py --cancel 42         # 撤稿（仅 pending 任务可取消）
+    python3 publish_note.py --upload-images DIR|文件...   # 上传图片得图床直链（1–18 张，7 天过期）
+    python3 publish_note.py --list-uploads      # 列自己未过期的图床批次
     python3 publish_note.py --list-accounts     # 列出我可操作的小红书账号
-    python3 publish_note.py --self-check        # 一键接入自检：连通性+身份+账号+就绪（可反复跑）
+    python3 publish_note.py --self-check        # 一键接入自检：whoami+身份+账号+就绪（可反复跑）
     python3 publish_note.py --notes 账号名或ID   # 拉该账号已发布笔记数据（供分析；已上线，(账号,标题,发布时间) 三元组主键）
     python3 publish_note.py --extension-info    # chrome 插件下载地址+安装步骤+server_time
     python3 publish_note.py --wait-login --since <server_time> [--account-id N]
@@ -30,6 +36,14 @@ unknown = 任务已入队但状态未确认（网络抖动等）——带真实 
 --no-wait 或轮询超时后仍在跑同理，稍后用 --job 复查。正文发布前会剥离 Markdown 强调符（**/*/`）。
 接入辅助命令 exit 码：--wait-login done=0/未等到=1；--check-cookie valid=0/其余=1
 （error 是基础设施失败≠cookie 失效，别据此让人重新扫码）。
+
+发布线增强命令（均先 --list-jobs 找到 pending 任务确认后再操作，仅 pending 可改可撤）：
+--list-jobs 输出 {"jobs":[{job_id,account_id,title,status,schedule_time,note_url,error,created_at}]}；
+--reschedule <id> --schedule <时刻|now>：改定时（PATCH 只带 schedule_time；now=清空转立即发），
+  成功打服务端 {ok:true,job}；{ok:false,status} → exit 1 + hint（已在发/已终态改不了，需另建新任务）；
+--cancel <id>：撤稿，{ok:true} exit 0；{ok:false,status} → exit 1 + hint（按 status 区分文案）；404 透传；
+--upload-images 输出 {batch_id,urls,expires_at,warnings}（urls 可直接作发布 images，7 天过期）；
+--list-uploads 透传 {batches:[...]}。PATCH 严格只发用户要改的字段（部分更新语义是服务端契约核心）。
 """
 import argparse
 import base64
@@ -37,14 +51,19 @@ import json
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 # 同目录 vendored 副本
 import nbdpsy_common
 
 TERMINAL_STATUSES = {"published", "failed", "canceled"}
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+# 图床上传张数硬上限（与服务端 _MAX_IMAGES 一致；下限 1，无图不成图文）。
+MAX_UPLOAD_IMAGES = 18
+# 上传 multipart 的扩展名 → MIME（服务端只认这几类图片）。
+_IMAGE_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
 
 def _fallback_meta(raw: str) -> dict:
     """笔记 frontmatter 惯用 `hashtags: [#a, #b]`——`#` 在 YAML 流序列里开注释，
@@ -157,10 +176,13 @@ def build_warnings(title: str, content: str, topics, image_paths):
     return w
 
 
-def send_request(method: str, url: str, key: str, payload=None, timeout=60):
-    """带 Bearer 鉴权调 nbdpsy-api。网络异常向上抛，由调用方统一转 failed。"""
+def send_request(method: str, url: str, key: str, payload=None, timeout=60, files=None):
+    """带 Bearer 鉴权调 nbdpsy-api。网络异常向上抛，由调用方统一转 failed。
+    files 非空时走 multipart/form-data（图床上传），否则 JSON 体（默认，兼容既有调用）。"""
     import requests
     headers = {"Authorization": f"Bearer {key}"}
+    if files is not None:
+        return requests.request(method, url, files=files, headers=headers, timeout=timeout)
     return requests.request(method, url, json=payload, headers=headers, timeout=timeout)
 
 
@@ -353,6 +375,99 @@ def poll_job(api_base: str, key: str, job_id: int, timeout: float,
         time.sleep(interval)
 
 
+# _job_view 精简视图字段（列任务用；与服务端 _job_view 同名，只挑运营关心的几个）。
+_LIST_FIELDS = ("job_id", "account_id", "title", "status", "schedule_time",
+                "note_url", "error", "created_at")
+
+
+def _list_job_brief(job: dict) -> dict:
+    return {k: job.get(k) for k in _LIST_FIELDS}
+
+
+def list_jobs(api_base: str, key: str, account_id=None, status=None, limit=50) -> dict:
+    """列发布任务（按 id 倒序）。status 原样透传——非法值由服务端 400 报合法清单，客户端不预判。"""
+    params = {}
+    if account_id is not None:
+        params["account_id"] = account_id
+    if status:
+        params["status"] = status
+    if limit:
+        params["limit"] = limit
+    qs = f"?{urlencode(params)}" if params else ""
+    resp = send_request("GET", f"{api_base}/api/publish-jobs{qs}", key)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return {"jobs": [_list_job_brief(j) for j in resp.json().get("jobs", [])]}
+
+
+def reschedule_job(api_base: str, key: str, job_id: int, schedule: str) -> dict:
+    """改待发任务定时（PATCH 只带 schedule_time，绝不多带字段）。
+    schedule=="now" → {"schedule_time": null} 清空转立即发；否则原样透传 ISO8601 时刻。
+    仅 pending 可改：非 pending 服务端返 {ok:false,status}。"""
+    payload = {"schedule_time": None if schedule == "now" else schedule}
+    resp = send_request("PATCH", f"{api_base}/api/publish-jobs/{job_id}", key, payload)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()
+
+
+def cancel_job(api_base: str, key: str, job_id: int) -> dict:
+    """撤稿（仅 pending 可取消）。{ok:true} 成功；{ok:false,status} 非 pending；404 抛。"""
+    resp = send_request("POST", f"{api_base}/api/publish-jobs/{job_id}/cancel", key)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()
+
+
+def schedule_offset_warning(schedule: str):
+    """定时时刻不带时区偏移时给 warning（服务端按 UTC 解释，会早/晚 8 小时发布）。
+    建任务路径无运行时校验（保持不动），本函数仅供 reschedule 路径非阻塞提示、不硬失败。
+    "now" 特殊值不校验。"""
+    try:
+        dt = datetime.fromisoformat(schedule)
+    except ValueError:
+        return f"schedule_time 无法解析为 ISO8601：{schedule}（应形如 2026-07-14T09:00:00+08:00）"
+    if dt.tzinfo is None:
+        return (f"schedule_time「{schedule}」不带时区偏移，服务端按 UTC 解释会早/晚 8 小时，"
+                "建议带 +08:00")
+    return None
+
+
+def collect_upload_paths(inputs) -> list:
+    """收集待上传图片：目录 → 取其中 png/jpg/jpeg/webp 按文件名排序；文件路径 → 原序保留。"""
+    paths = []
+    for item in inputs:
+        p = Path(item)
+        if p.is_dir():
+            paths.extend(sorted(q for q in p.iterdir() if q.suffix.lower() in IMAGE_EXTS))
+        elif p.is_file():
+            paths.append(p)
+        else:
+            raise ValueError(f"路径不存在: {p}")
+    return paths
+
+
+def upload_image_batch(api_base: str, key: str, paths) -> dict:
+    """上传一批图片得图床直链。客户端预检 1–18 张（服务端亦会 400），multipart 字段名统一 files。"""
+    if not 1 <= len(paths) <= MAX_UPLOAD_IMAGES:
+        raise ValueError(f"图片 {len(paths)} 张不在 1–{MAX_UPLOAD_IMAGES} 范围（服务端会拒绝 400）")
+    files = [("files", (p.name, p.read_bytes(),
+                        _IMAGE_MIME.get(p.suffix.lstrip(".").lower(), "application/octet-stream")))
+             for p in paths]
+    resp = send_request("POST", f"{api_base}/api/uploads/images", key, timeout=180, files=files)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()
+
+
+def list_uploads(api_base: str, key: str) -> dict:
+    """列自己未过期的上传批次，透传 {batches:[...]}。"""
+    resp = send_request("GET", f"{api_base}/api/uploads", key)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()
+
+
 def main():
     ap = argparse.ArgumentParser(description="经 nbdpsy-api 发布小红书图文笔记（异步）")
     ap.add_argument("--note", type=Path, help="笔记文件（post-NN.md，须含「## 发布文案」块）")
@@ -377,6 +492,16 @@ def main():
     ap.add_argument("--check-cookie", metavar="账号名或ID", help="触发该账号 cookie 验活并轮询到结果")
     ap.add_argument("--notes", metavar="账号名或ID",
                     help="拉该账号已发布笔记的清单与互动数据（供分析；已上线，(账号,标题,发布时间) 三元组主键）")
+    ap.add_argument("--list-jobs", action="store_true",
+                    help="列发布任务（可配 --account/--status/--limit 过滤）")
+    ap.add_argument("--status", help="--list-jobs 过滤状态（pending/publishing/published/failed/canceled）")
+    ap.add_argument("--limit", type=int, default=50, help="--list-jobs 取前 N 条（默认 50）")
+    ap.add_argument("--reschedule", type=int, metavar="JOB_ID",
+                    help="改待发任务定时（须配 --schedule <ISO8601带时区偏移|now>；now=转立即发）")
+    ap.add_argument("--cancel", type=int, metavar="JOB_ID", help="撤稿（仅 pending 任务可取消）")
+    ap.add_argument("--upload-images", nargs="+", metavar="路径",
+                    help="上传图片得图床直链：目录（按名排序）或多个文件路径（1–18 张）")
+    ap.add_argument("--list-uploads", action="store_true", help="列自己未过期的图床上传批次")
     args = ap.parse_args()
 
     key = nbdpsy_common.get_secret(nbdpsy_common.XHS_API_KEY)
@@ -425,6 +550,50 @@ def main():
             view["account"] = {"id": aid, "name": label}
             print(json.dumps(view, ensure_ascii=False))
             return  # available=false（未上线）不算失败，exit 0
+        if args.list_jobs:
+            account_id = None
+            if args.account:
+                account_id, _, _ = resolve_account(api_base, key, args.account)
+            print(json.dumps(list_jobs(api_base, key, account_id, args.status, args.limit),
+                             ensure_ascii=False))
+            return
+        if args.reschedule is not None:
+            if not args.schedule:
+                ap.error("--reschedule 必须配 --schedule <ISO8601带时区偏移|now>")
+            if args.schedule != "now":
+                w = schedule_offset_warning(args.schedule)
+                if w:
+                    print(f"⚠ {w}", file=sys.stderr)
+            view = reschedule_job(api_base, key, args.reschedule, args.schedule)
+            if not view.get("ok"):
+                view["hint"] = (f"任务当前状态 {view.get('status')}：已在发/已终态，改不了；"
+                                "需另建新任务")
+                print(json.dumps(view, ensure_ascii=False))
+                sys.exit(1)
+            print(json.dumps(view, ensure_ascii=False))
+            return
+        if args.cancel is not None:
+            view = cancel_job(api_base, key, args.cancel)
+            if not view.get("ok"):
+                st = view.get("status")
+                view["hint"] = (
+                    "任务已在发布中，撤稿拦不住；若已发出需到小红书端自行删除" if st == "publishing"
+                    else f"任务已是终态（{st}），无需取消" if st in ("published", "failed", "canceled")
+                    else f"当前状态 {st}，非 pending 取消不了"
+                )
+                print(json.dumps(view, ensure_ascii=False))
+                sys.exit(1)
+            print(json.dumps(view, ensure_ascii=False))
+            return
+        if args.upload_images:
+            paths = collect_upload_paths(args.upload_images)
+            result = upload_image_batch(api_base, key, paths)
+            result["warnings"] = ["urls 即可直接作为发布 images/复用素材；默认 7 天后过期"]
+            print(json.dumps(result, ensure_ascii=False))
+            return
+        if args.list_uploads:
+            print(json.dumps(list_uploads(api_base, key), ensure_ascii=False))
+            return
         if args.job is not None:
             submitted_job_id = args.job
             view = poll_job(api_base, key, args.job, timeout=0)

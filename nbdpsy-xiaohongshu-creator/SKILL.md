@@ -278,6 +278,8 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
      `--extension-info` + 无痕窗扫码 + `--wait-login` 重登（五态中 `error` 是基础设施失败
      ≠ cookie 失效，别急着让人重登）。
 4. 发布成功后把每篇的 `note_url` 汇总回报运营。
+5. **发错了 / 要改时间**：`--list-jobs` 查到 pending 任务后，用 `--reschedule <id> --schedule <新时间|now>`
+   改定时（`now`=转立即发）或 `--cancel <id>` 撤稿——**仅 pending 任务有效**，已在发/已终态改不动。
 
 **路线 B · 人工发布（无凭据，或运营点名要手发）**，交付时告诉用户：
 
@@ -356,7 +358,7 @@ python3 {SKILL_DIR}/scripts/publish_note.py --self-check
 | 高置信违禁词扫描 + 危机声明在位检查 | `scripts/check_compliance.py` |
 | 渲染预览页（发布文案 UI + 提示词一键复制） | `scripts/render_preview.py` |
 | 后端一致性出图（gpt-image 锚点法，异步 + 轮询；--cover-only 过闸门 / --anchor-url 批量 / --pages 重出失败页 / --job 复查 / --dry-run） | `scripts/gen_images.py` |
-| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie） | `scripts/publish_note.py` |
+| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads） | `scripts/publish_note.py` |
 | 工作区路径查询 / 凭据工具 / 沙盒放行（sandbox allow） | `scripts/nbdpsy_common.py` |
 | 源长文（输入，第 0 步拉取产物） | `{workspace}/drafts/{slug}.md` |
 

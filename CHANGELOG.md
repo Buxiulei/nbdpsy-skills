@@ -9,6 +9,33 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.23.0] — 2026-07-23
+
+### 发布线增强（改期 / 撤稿 / 列任务 / 图床 / whoami 自检）
+
+- **背景**：nbdpsy-server 已上线一批发布线 REST 端点（`publish_rest.py` 的 PATCH/cancel/list、
+  `uploads_rest.py` 图床、`system.py` whoami），`publish_note.py` 补齐对应子命令，让运营发出去之前
+  还能改、发错了能撤、图片可先传图床。契约以服务端 manifest（`publish_rest.py`/`uploads_rest.py`/
+  `system.py`）为唯一事实源逐条核对。
+- **publish_note.py 新增子命令**（风格与既有 `--list-accounts`/`--job`/`--check-cookie` 一致，stdout 纯 JSON）：
+  - `--list-jobs [--account 号] [--status 状态] [--limit N]`：列发布任务，输出精简字段
+    `{job_id, account_id, title, status, schedule_time, note_url, error, created_at}`（与服务端
+    `_job_view` 对齐取子集）；`status` 原样透传，非法值由服务端 400 回合法清单。
+  - `--reschedule <id> --schedule <时刻|now>`：改待发定时，**PATCH 只带 `schedule_time`，绝不多带字段**
+    （部分更新语义是服务端契约核心）；`now` → `{"schedule_time": null}` 清空转立即发；非 pending
+    返回 `{ok:false,status}` → exit 1 + hint（已在发/已终态需另建新任务）。
+  - `--cancel <id>`：撤稿；`{ok:true}` exit 0，`{ok:false,status}` exit 1 + 按 status 区分文案，404 透传。
+  - `--upload-images <目录|文件...>`：图床上传（multipart 字段名统一 `files`），客户端预检 1–18 张，
+    目录按文件名排序；输出 `{batch_id, urls, expires_at, warnings}`，urls 可直接作发布 images，7 天过期。
+  - `--list-uploads`：列自己未过期的上传批次，透传 `{batches:[...]}`。
+- **`--self-check` 说明对齐**：第一步先打 `GET /api/whoami`（最便宜的连通 + key 校验），身份
+  `{name, role}` 并入输出——此前版本已如此实现，本次补测试固化该顺序契约。
+- **测试**：`tests/test_publish_note.py` 追加 14 例（reschedule PATCH 方法/路径/payload 只含
+  schedule_time/`now`→null/非 pending 语义、cancel 两分支、list-jobs query 组装与精简字段、
+  upload-images multipart 字段名与顺序及 1–18 预检、目录收集排序、whoami 先行），全绿。
+
+---
+
 ## [1.22.0] — 2026-07-23
 
 ### 薯营家停机迁移（视频线切 /api/video + remake/revise 新能力 + 生图缺口协同记录 + 死链清理 + 基址统一）
