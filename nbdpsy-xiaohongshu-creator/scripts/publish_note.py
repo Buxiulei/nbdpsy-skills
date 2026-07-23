@@ -18,6 +18,10 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
     python3 publish_note.py --list-accounts     # 列出我可操作的小红书账号
     python3 publish_note.py --self-check        # 一键接入自检：whoami+身份+账号+就绪（可反复跑）
     python3 publish_note.py --notes 账号名或ID   # 拉该账号已发布笔记数据（供分析；已上线，(账号,标题,发布时间) 三元组主键）
+    python3 publish_note.py --notes 账号名或ID --refresh   # 先触发一次导出拉最新数据再读（约 1–2 分钟）
+    python3 publish_note.py --delete-note --account 号 --title "标题" [--count N]
+                                                # 按标题删除已发布笔记（不可逆！触发前须与运营确认账号+标题+删几篇）
+    python3 publish_note.py --delete-status <deletion_id>   # 重查删除终态（超时后的首选复查通道）
     python3 publish_note.py --extension-info    # chrome 插件下载地址+安装步骤+server_time
     python3 publish_note.py --wait-login --since <server_time> [--account-id N]
                                                 # 等运营扫码登录完成（新号不传 account-id）
@@ -36,6 +40,15 @@ unknown = 任务已入队但状态未确认（网络抖动等）——带真实 
 --no-wait 或轮询超时后仍在跑同理，稍后用 --job 复查。正文发布前会剥离 Markdown 强调符（**/*/`）。
 接入辅助命令 exit 码：--wait-login done=0/未等到=1；--check-cookie valid=0/其余=1
 （error 是基础设施失败≠cookie 失效，别据此让人重新扫码）。
+
+删除 = {"outcome":"done|failed|unknown|running", "deletion_id", deleted?, remaining?, reason?, hint?}
+（running 仅 --delete-status 复查时出现）：done/unknown/running exit 0，failed exit 1。**删除不可逆**——
+unknown 分两成因：轮询超时（台账仍在）→ 首选 `--delete-status <deletion_id>` 重查终态
+（deleted/remaining 是权威判据）；台账 404 失效（server 重启）→ `--notes <账号> --refresh` 核对剩余
+篇数（当天刚发的笔记看板次日才有数据，核不到时人工去创作中心确认）。两种情况都**绝不盲目重发**。
+failed 仅表示服务端明确报 error：note_not_found（标题须精确匹配）/need_manual_login（重扫码后再试）。
+--notes --refresh：先 POST 导出并轮询到终态再读快照；导出 no_data（当天刚发的笔记次日才入看板）→
+{"available":false,"no_data":true} exit 0（不是故障，明天再拉）。
 
 发布线增强命令（均先 --list-jobs 找到 pending 任务确认后再操作，仅 pending 可改可撤）：
 --list-jobs 输出 {"jobs":[{job_id,account_id,title,status,schedule_time,note_url,error,created_at}]}；
@@ -327,12 +340,122 @@ def account_notes(api_base: str, key: str, account_id: int) -> dict:
     resp = send_request("GET", f"{api_base}/api/accounts/{account_id}/notes", key)
     if resp.status_code == 404:
         return {"available": False,
-                "hint": "『笔记数据』接口返回 404：端点已上线，多半是该账号暂无导出快照"
-                        "（需先在后台触发导出）或路径调整，联系管理员核对（不是发布故障）"}
+                "hint": "『笔记数据』接口返回 404：多半是该账号暂无导出快照——"
+                        "先跑 --notes <账号> --refresh 触发一次导出再读（约 1–2 分钟，不是发布故障）"}
     if resp.status_code >= 400:
         raise ValueError(api_error(resp))
     data = resp.json() if resp.text.strip() else {}
     return {"available": True, **(data if isinstance(data, dict) else {"notes": data})}
+
+
+def poll_async_task(api_base: str, key: str, url: str, timeout: float,
+                    interval: float = 4.0, max_transient: int = 3) -> dict:
+    """轮询异步任务（笔记删除/导出）到终态。返回视图 dict：
+      - 正常终态：{"status":"done"/"error", ...}
+      - 台账 404 失效（server 重启即丢内存台账）：{"status":"gone"}
+      - 超时未达终态：最后一次 running 视图（status 仍为 running）
+    网络抖动 / 5xx 连续容忍 max_transient 次（一次抖动绝不误判）；401/403 永久错误立即抛。"""
+    deadline = time.monotonic() + timeout
+    transient = 0
+    last = {"status": "running"}
+    while True:
+        try:
+            resp = send_request("GET", url, key)
+        except Exception as e:  # 网络抖动 → 瞬时
+            transient += 1
+            if transient > max_transient:
+                raise
+            print(f"  轮询瞬时失败（{transient}/{max_transient}）: {e}", file=sys.stderr)
+            time.sleep(interval)
+            continue
+        if resp.status_code == 404:  # 进程内存台账失效
+            return {"status": "gone"}
+        if resp.status_code >= 500:  # 服务端瞬时故障
+            transient += 1
+            if transient > max_transient:
+                raise ValueError(api_error(resp))
+            print(f"  轮询瞬时失败（{transient}/{max_transient}）: {api_error(resp)}", file=sys.stderr)
+            time.sleep(interval)
+            continue
+        if resp.status_code >= 400:  # 401/403 永久错误
+            raise ValueError(api_error(resp))
+        transient = 0
+        last = resp.json()
+        status = last.get("status")
+        print(f"  任务: {status}", file=sys.stderr)
+        if status in ("done", "error") or time.monotonic() >= deadline:
+            return last
+        time.sleep(interval)
+
+
+def start_note_deletion(api_base: str, key: str, account_id: int, title: str, count: int) -> str:
+    """触发按标题删除该号笔记（不可逆），返回 deletion_id。客户端预检 count 1–10（服务端亦校验）。"""
+    if not 1 <= count <= 10:
+        raise ValueError(f"count={count} 不在 1–10 范围（同题多篇一次会话最多删 10 篇）")
+    resp = send_request("POST", f"{api_base}/api/accounts/{account_id}/note-deletions", key,
+                        {"title": title, "count": count})
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()["deletion_id"]
+
+
+def delete_note_result(view: dict, deletion_id: str):
+    """删除终态视图 → 运营输出信封 + hint。返回 (out, exit_code)。
+    删除不可逆：台账失效/超时一律 unknown（先复查再决定，绝不盲目重发），只有明确 done/error 才落定。"""
+    status = view.get("status")
+    if status == "done":
+        out = {"outcome": "done", "deletion_id": deletion_id,
+               "deleted": view.get("deleted"), "remaining": view.get("remaining")}
+        if view.get("remaining"):
+            out["hint"] = f"该标题还剩 {view['remaining']} 篇同题笔记"
+        return out, 0
+    if status == "error":
+        reason = view.get("reason") or ""
+        out = {"outcome": "failed", "deletion_id": deletion_id, "reason": reason}
+        if "note_not_found" in reason:
+            out["hint"] = "该号没有此标题的笔记——标题须精确匹配，可先 --notes 核对"
+        elif "need_manual_login" in reason:
+            out["hint"] = "creator 登录态失效，按 guide 手册②重新扫码后再试"
+        return out, 1
+    if status == "gone":  # 台账 404 失效（server 重启即丢），权威终态已不可查
+        return {"outcome": "unknown", "deletion_id": deletion_id,
+                "hint": "删除任务台账已失效（server 可能重启），删除不可逆、可能已执行也可能没执行："
+                        "先用 --notes <账号> --refresh 核对该标题剩余篇数再决定"
+                        "（注意：当天刚发的笔记看板次日才有数据，核不到时人工去创作中心确认），"
+                        "切勿盲目重发"}, 0
+    # running：轮询超时未达终态——台账仍在，重查终态才是权威判据
+    return {"outcome": "unknown", "deletion_id": deletion_id,
+            "hint": f"轮询超时仍未出终态（任务可能仍在跑）。删除不可逆：先用 "
+                    f"--delete-status {deletion_id} 重查终态（deleted/remaining 是权威判据），"
+                    f"查到 404 再用 --notes <账号> --refresh 核对剩余篇数，切勿盲目重发"}, 0
+
+
+def start_note_export(api_base: str, key: str, account_id: int) -> str:
+    """触发该号创作中心笔记数据导出，返回 export_id。"""
+    resp = send_request("POST", f"{api_base}/api/accounts/{account_id}/note-exports", key)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()["export_id"]
+
+
+def refresh_notes(api_base: str, key: str, account_id: int, timeout: float = 300):
+    """先触发导出并轮询到终态，成功后读快照。返回 (out, exit_code)。
+    no_data（当天刚发的笔记次日才入看板）→ available:false 不算失败；其它 error 抛（落 failed）。"""
+    export_id = start_note_export(api_base, key, account_id)
+    print(f"  已触发导出 export_id={export_id}，轮询中…", file=sys.stderr)
+    view = poll_async_task(api_base, key, f"{api_base}/api/note-exports/{export_id}", timeout)
+    status = view.get("status")
+    if status == "done":
+        return account_notes(api_base, key, account_id), 0
+    reason = view.get("reason") or ""
+    if status == "error" and "no_data" in reason:
+        return {"available": False, "no_data": True,
+                "hint": "数据看板暂无数据：今天刚发的笔记次日才入看板，明天再拉即可（不是故障）"}, 0
+    if status == "error":
+        raise ValueError(f"导出失败：{reason}")
+    if status == "gone":
+        raise ValueError("导出任务台账失效（server 可能重启），请重跑 --notes <账号> --refresh")
+    raise ValueError(f"导出轮询超时（export_id={export_id}），稍后重跑 --notes <账号> --refresh")
 
 
 def job_brief(view: dict) -> dict:
@@ -476,7 +599,8 @@ def main():
     ap.add_argument("--schedule", help="定时发布，ISO8601 带时区偏移，如 2026-07-14T09:00:00+08:00")
     ap.add_argument("--api-base", help="API base（默认凭据 NBDPSY_XHS_API_BASE 或 https://mcp.nbdpsy.com）")
     ap.add_argument("--no-wait", action="store_true", help="提交后不等结果（稍后 --job 查询）")
-    ap.add_argument("--wait-timeout", type=float, default=900, help="轮询等待上限秒数（默认 900）")
+    ap.add_argument("--wait-timeout", type=float, default=None,
+                    help="轮询等待上限秒数（发布默认 900，删除/导出默认 300）")
     ap.add_argument("--dry-run", action="store_true", help="只打 payload 摘要，不发请求")
     ap.add_argument("--job", type=int, help="只查询该发布任务状态")
     ap.add_argument("--list-accounts", action="store_true", help="列出可操作账号")
@@ -492,6 +616,15 @@ def main():
     ap.add_argument("--check-cookie", metavar="账号名或ID", help="触发该账号 cookie 验活并轮询到结果")
     ap.add_argument("--notes", metavar="账号名或ID",
                     help="拉该账号已发布笔记的清单与互动数据（供分析；已上线，(账号,标题,发布时间) 三元组主键）")
+    ap.add_argument("--refresh", action="store_true",
+                    help="--notes 前先触发一次导出拉最新数据再读（约 1–2 分钟）")
+    ap.add_argument("--delete-note", action="store_true",
+                    help="按标题删除已发布笔记（不可逆！须配 --account 与 --title；同题多篇用 --count）")
+    ap.add_argument("--title", help="--delete-note 的笔记标题（精确匹配，容忍卡片截断）")
+    ap.add_argument("--count", type=int, default=1,
+                    help="--delete-note 同题多篇时一次最多删几篇（1–10，默认 1，留 1 篇清重复）")
+    ap.add_argument("--delete-status", metavar="DELETION_ID",
+                    help="重查删除任务终态（deleted/remaining 为权威判据；轮询超时后的首选复查通道）")
     ap.add_argument("--list-jobs", action="store_true",
                     help="列发布任务（可配 --account/--status/--limit 过滤）")
     ap.add_argument("--status", help="--list-jobs 过滤状态（pending/publishing/published/failed/canceled）")
@@ -512,6 +645,7 @@ def main():
     api_base = (args.api_base or nbdpsy_common.xhs_api_base()).rstrip("/")
 
     submitted_job_id = None  # 已入队的任务号——之后的任何异常都不能丢它，否则会诱发重复发布
+    submitted_deletion_id = None  # 已入队的删除任务号——删除不可逆，异常时绝不能落 failed 诱导重发
     try:
         if args.list_accounts:
             print(json.dumps({"accounts": list_accounts(api_base, key)}, ensure_ascii=False))
@@ -544,12 +678,49 @@ def main():
             print(json.dumps(view, ensure_ascii=False))
             # valid=0；invalid/captcha 需人工处理=1；error 是基础设施失败≠失效，也回 1 但别让人重登
             sys.exit(0 if view.get("status") == "valid" else 1)
+        if args.delete_note:
+            if not args.account or not args.title:
+                ap.error("--delete-note 需要 --account 与 --title")
+            print(f"⚠ 删除不可逆（count={args.count}），应已与运营确认账号、完整标题与删几篇",
+                  file=sys.stderr)
+            aid, label, _ = resolve_account(api_base, key, args.account)
+            deletion_id = start_note_deletion(api_base, key, aid, args.title, args.count)
+            submitted_deletion_id = deletion_id  # 202 已入队：此后任何异常都走 unknown，绝不 failed
+            print(f"  已触发删除 deletion_id={deletion_id}，轮询中…", file=sys.stderr)
+            view = poll_async_task(api_base, key,
+                                   f"{api_base}/api/note-deletions/{deletion_id}",
+                                   timeout=300 if args.wait_timeout is None else args.wait_timeout)
+            out, code = delete_note_result(view, deletion_id)
+            out["account"] = {"id": aid, "name": label}
+            print(json.dumps(out, ensure_ascii=False))
+            sys.exit(code)
+        if args.delete_status:
+            # 权威复查通道：重查删除任务终态（deleted/remaining 是权威判据；台账 server 重启前一直有效）
+            resp = send_request("GET", f"{api_base}/api/note-deletions/{args.delete_status}", key)
+            if resp.status_code == 404:
+                view = {"status": "gone"}
+            elif resp.status_code >= 400:
+                raise ValueError(api_error(resp))
+            else:
+                view = resp.json()
+            if view.get("status") == "running":
+                print(json.dumps({"outcome": "running", "deletion_id": args.delete_status,
+                                  "hint": "删除仍在执行（约 1–2 分钟），稍后重跑 --delete-status 复查"},
+                                 ensure_ascii=False))
+                sys.exit(0)
+            out, code = delete_note_result(view, args.delete_status)
+            print(json.dumps(out, ensure_ascii=False))
+            sys.exit(code)
         if args.notes:
             aid, label, _ = resolve_account(api_base, key, args.notes)
-            view = account_notes(api_base, key, aid)
+            if args.refresh:
+                view, code = refresh_notes(api_base, key, aid,
+                                           timeout=300 if args.wait_timeout is None else args.wait_timeout)
+            else:
+                view, code = account_notes(api_base, key, aid), 0
             view["account"] = {"id": aid, "name": label}
             print(json.dumps(view, ensure_ascii=False))
-            return  # available=false（未上线）不算失败，exit 0
+            sys.exit(code)  # available=false（no_data/无快照）不算失败，exit 0
         if args.list_jobs:
             account_id = None
             if args.account:
@@ -646,7 +817,8 @@ def main():
                               "error": None, "warnings": warnings}, ensure_ascii=False))
             return
 
-        view = poll_job(api_base, key, job_id, timeout=args.wait_timeout)
+        view = poll_job(api_base, key, job_id,
+                        timeout=900 if args.wait_timeout is None else args.wait_timeout)
         out = job_brief(view)
         out["warnings"] = warnings
         if out["outcome"] not in TERMINAL_STATUSES:
@@ -656,6 +828,18 @@ def main():
 
     except Exception as e:
         msg = sandbox_hint(e)
+        if submitted_deletion_id is not None:
+            # 删除已在服务端入队且不依赖客户端连接——大概率已执行。绝不落 failed（文档把 failed
+            # 定义为「删除没发生、修因重试」，会诱导 agent 重发不可逆删除，清重场景可致全灭）。
+            print(f"  → 状态未知: {msg}", file=sys.stderr)
+            print(json.dumps({
+                "outcome": "unknown", "deletion_id": submitted_deletion_id, "error": msg,
+                "hint": f"删除可能已在服务端执行（任务不依赖本地连接）。删除不可逆，绝不盲目重发："
+                        f"先用 --delete-status {submitted_deletion_id} 重查终态"
+                        f"（deleted/remaining 是权威判据），查到 404 再用 --notes <账号> --refresh "
+                        f"核对剩余篇数后再决定",
+            }, ensure_ascii=False))
+            sys.exit(0)
         if submitted_job_id is not None:
             # 任务已在服务端入队（还会自动重试），绝不判 failed——那会让 agent 重发同一篇
             print(f"  → 状态未知: {msg}", file=sys.stderr)

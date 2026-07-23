@@ -9,6 +9,38 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.24.0] — 2026-07-23
+
+### 删除已发布笔记（全新能力）+ 导出 no_data 语义 + 拉数据 --refresh
+
+- **来源**：nbdpsy-server 交接《2026-07-23 server 更新——删除笔记与数据导出》。server 已上线两块
+  运营能力（均真账号 e2e 验证、生产生效）：**按标题删除已发布笔记**（异步，`note-deletions` 两条端点）
+  与**笔记数据导出的 no_data 明确语义**。契约以 `notes_rest.py` 的 `MANIFEST_ENTRIES` 为准逐参核对。
+- **`publish_note.py` 新增 `--delete-note`**（按标题删已发布笔记，**不可逆**）：
+  `--delete-note --account <号> --title "<标题>" [--count N]`。stderr 起手警示「删除不可逆，应已与运营
+  确认」；POST `/api/accounts/{id}/note-deletions {title,count}`（客户端预检 count 1–10）→ 每 4s 轮询
+  到终态（默认 300s）。`done` → `{outcome:done, deleted, remaining}`（remaining>0 带剩余篇数 hint）；
+  `error` → 按 reason 给 hint（`note_not_found`=标题须精确匹配可先 --notes 核对；`need_manual_login`=
+  登录态失效重扫码），exit 1。**poll 404（进程内存台账失效，server 重启即丢）或轮询超时 → `unknown`**：
+  删除不可逆、可能已执行也可能没有，hint 引导「先 --notes --refresh 核对剩余篇数、确认仍需删除再重发，
+  绝不盲目重发」，exit 0。
+- **`--notes` 新增 `--refresh` 旗标**：先 POST `/api/accounts/{id}/note-exports` → 每 4s 轮询导出到终态
+  （默认 300s）→ 成功后走现有 `account_notes` 读快照。导出 `error` 且 reason 含 `no_data`（当天刚发的
+  笔记次日才入看板）→ `{available:false, no_data:true}` + 话术 hint，**exit 0（不是故障）**；其它 error
+  原样落 failed。`--wait-timeout` 默认改为按用途取（发布 900 / 删除·导出 300）。
+- **`account_notes` 404 兜底文案更新**：由「联系管理员核对」改为「先跑 --notes <账号> --refresh 触发
+  一次导出再读」。
+- **`nbdpsy-guide/SKILL.md`**：手册 ⑦ 之后插入「⑧ 删除已发布的笔记（不可逆）」——触发前必须复述
+  「账号+完整标题+删几篇」得运营确认才执行；原「⑧ 图床」顺延为 ⑨，「八件事」→「九件事」，速查表/FAQ
+  同步（删错不能恢复 / 发重了用 ⑧ 清理 count=多余篇数 / 今天刚发次日才有数据）；⑥ 拉数据节补 `--refresh`
+  用法与 no_data 话术。
+- **测试**：`tests/test_publish_note.py` 追加 13 例（delete POST 路径与 {title,count} payload、count 0/11
+  预检、done 带 deleted/remaining、error 两 reason 的 hint 分支、poll 404→gone→unknown 安全 hint、超时
+  running→unknown；refresh POST note-exports→轮询→no_data available:false exit 0、done 末尾调
+  account_notes、其它 error 抛；404 新文案；`--delete-note` 缺 --title argparse 校验），全绿。
+
+---
+
 ## [1.23.0] — 2026-07-23
 
 ### 发布线增强（改期 / 撤稿 / 列任务 / 图床 / whoami 自检）

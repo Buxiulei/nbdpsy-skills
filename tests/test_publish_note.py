@@ -372,7 +372,7 @@ def test_cli_missing_key_exit1(tmp_path):
 # ---- v1.23.0 发布线增强：改期 / 撤稿 / 列任务 / 图床 / whoami ----
 
 class _Resp:
-    def __init__(self, code, v): self.status_code, self._v = code, v
+    def __init__(self, code, v): self.status_code, self._v, self.text = code, v, "x"
     def json(self): return self._v
 
 
@@ -555,6 +555,165 @@ def test_send_request_multipart_branch(monkeypatch):
     assert kw2["headers"]["Authorization"] == "Bearer K1"
 
 
+# ---- v1.24.0 删除笔记 + 导出 refresh ----
+
+def test_start_note_deletion_posts_title_and_count(monkeypatch):
+    """POST /api/accounts/{id}/note-deletions，payload 恰为 {title,count}。"""
+    import publish_note
+    seen = {}
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        seen.update(method=method, url=url, payload=payload)
+        return _Resp(202, {"deletion_id": "del-1", "status": "running"})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    did = publish_note.start_note_deletion("https://x", "k", 4, "重复的标题", 3)
+    assert did == "del-1"
+    assert seen["method"] == "POST"
+    assert seen["url"].endswith("/api/accounts/4/note-deletions")
+    assert seen["payload"] == {"title": "重复的标题", "count": 3}
+
+
+def test_start_note_deletion_precheck_count_bounds(monkeypatch):
+    """count 0 / 11 客户端预检拒绝（不发网络请求）。"""
+    import publish_note
+    def boom(*a, **k):
+        raise AssertionError("越界 count 不应发起请求")
+    monkeypatch.setattr(publish_note, "send_request", boom)
+    with pytest.raises(ValueError):
+        publish_note.start_note_deletion("https://x", "k", 4, "t", 0)
+    with pytest.raises(ValueError):
+        publish_note.start_note_deletion("https://x", "k", 4, "t", 11)
+
+
+def test_delete_note_result_done_with_remaining():
+    import publish_note
+    out, code = publish_note.delete_note_result(
+        {"status": "done", "deleted": 3, "remaining": 1}, "del-1")
+    assert code == 0 and out["outcome"] == "done"
+    assert out["deleted"] == 3 and out["remaining"] == 1
+    assert "1" in out["hint"] and "同题" in out["hint"]
+    # remaining=0 时不带 hint
+    out2, _ = publish_note.delete_note_result(
+        {"status": "done", "deleted": 1, "remaining": 0}, "del-1")
+    assert "hint" not in out2
+
+
+def test_delete_note_result_error_reasons():
+    import publish_note
+    out1, code1 = publish_note.delete_note_result(
+        {"status": "error", "reason": "note_not_found: 未找到"}, "del-1")
+    assert code1 == 1 and out1["outcome"] == "failed"
+    assert "精确匹配" in out1["hint"] and "--notes" in out1["hint"]
+    out2, code2 = publish_note.delete_note_result(
+        {"status": "error", "reason": "need_manual_login: 掉线"}, "del-1")
+    assert code2 == 1 and "重新扫码" in out2["hint"]
+
+
+def test_delete_note_result_gone_is_unknown_safe():
+    """台账 404 失效（server 重启）→ unknown，绝不盲目重发；hint 含『先』『核对』与不可逆语义。"""
+    import publish_note
+    out, code = publish_note.delete_note_result({"status": "gone"}, "del-1")
+    assert code == 0 and out["outcome"] == "unknown"
+    assert out["deletion_id"] == "del-1"
+    assert "先" in out["hint"] and "核对" in out["hint"]
+    assert "不可逆" in out["hint"] and "重发" in out["hint"]
+    assert "--refresh" in out["hint"]
+
+
+def test_delete_note_result_timeout_running_is_unknown():
+    """轮询超时仍 running → 同 unknown 语义，带 deletion_id 与复查提示。"""
+    import publish_note
+    out, code = publish_note.delete_note_result({"status": "running"}, "del-9")
+    assert code == 0 and out["outcome"] == "unknown"
+    assert "del-9" in out["hint"] and "核对" in out["hint"] and "不可逆" in out["hint"]
+
+
+def test_poll_async_task_404_returns_gone(monkeypatch):
+    """轮询遇 404（进程内存台账失效）→ {"status":"gone"}，不当永久错误抛。"""
+    import publish_note
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: _Resp(404, {"error": "不存在"}))
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    view = publish_note.poll_async_task("https://x", "k", "https://x/api/note-deletions/del-1", timeout=60)
+    assert view["status"] == "gone"
+
+
+def test_poll_async_task_stops_on_done(monkeypatch):
+    import publish_note
+    views = iter([{"status": "running"}, {"status": "done", "deleted": 1, "remaining": 0}])
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: _Resp(200, next(views)))
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    view = publish_note.poll_async_task("https://x", "k", "https://x/api/note-deletions/d", timeout=60)
+    assert view["status"] == "done" and view["deleted"] == 1
+
+
+def test_refresh_notes_no_data_available_false_exit0(monkeypatch):
+    """导出 error 且 reason 含 no_data → available:false + no_data:true，exit 0（不是故障）。"""
+    import publish_note
+    seen = {}
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        if url.endswith("/note-exports"):
+            seen["post"] = url
+            return _Resp(202, {"export_id": "exp-1", "status": "running"})
+        return _Resp(200, {"status": "error", "reason": "no_data: 数据看板暂无笔记数据"})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    out, code = publish_note.refresh_notes("https://x", "k", 4)
+    assert seen["post"].endswith("/api/accounts/4/note-exports")
+    assert code == 0 and out["available"] is False and out["no_data"] is True
+
+
+def test_refresh_notes_done_reads_snapshot(monkeypatch):
+    """导出 done → 成功链路末尾调 account_notes 读快照。"""
+    import publish_note
+    calls = []
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        calls.append((method, url))
+        if url.endswith("/note-exports"):
+            return _Resp(202, {"export_id": "exp-1", "status": "running"})
+        if "/note-exports/" in url:
+            return _Resp(200, {"status": "done", "note_count": 24})
+        # account_notes 的 GET /api/accounts/{id}/notes
+        return _Resp(200, {"notes": [{"title": "A", "views": 100}], "total": 1})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    out, code = publish_note.refresh_notes("https://x", "k", 4)
+    assert code == 0 and out["available"] is True and out["total"] == 1
+    assert any(u.endswith("/api/accounts/4/notes") for _, u in calls)  # 末尾读快照
+
+
+def test_refresh_notes_other_error_raises(monkeypatch):
+    """导出其它 error（非 no_data）→ 抛（main 落 failed）。"""
+    import publish_note
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        if url.endswith("/note-exports"):
+            return _Resp(202, {"export_id": "exp-1", "status": "running"})
+        return _Resp(200, {"status": "error", "reason": "need_manual_login: 掉线"})
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    with pytest.raises(ValueError):
+        publish_note.refresh_notes("https://x", "k", 4)
+
+
+def test_account_notes_404_hint_points_to_refresh(monkeypatch):
+    """404 兜底新文案：改为引导 --refresh 触发导出，不再『联系管理员』。"""
+    import publish_note
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: _Resp(404, {"error": "无快照"}))
+    rep = publish_note.account_notes("https://x", "k", 1)
+    assert rep["available"] is False
+    assert "--refresh" in rep["hint"] and "联系管理员" not in rep["hint"]
+
+
+def test_cli_delete_note_requires_account_and_title(tmp_path):
+    """--delete-note 缺 --title → argparse 依赖校验 exit 2（不发任何网络请求）。"""
+    import subprocess
+    script = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts" / "publish_note.py"
+    env = {"PATH": "/usr/bin:/bin", "NBDPSY_XHS_API_KEY": "k",
+           "NBDPSY_SECRETS": str(tmp_path / "none.env"), "NBDPSY_WORKSPACE": str(tmp_path)}
+    p = subprocess.run([sys.executable, str(script), "--delete-note", "--account", "1"],
+                       capture_output=True, text=True, env=env)
+    assert p.returncode == 2
+    assert "--title" in p.stderr
+
+
 def test_cli_reschedule_requires_schedule(tmp_path):
     """--reschedule 缺 --schedule → argparse 依赖校验 exit 2（不发任何网络请求）。"""
     import subprocess
@@ -565,3 +724,80 @@ def test_cli_reschedule_requires_schedule(tmp_path):
                        capture_output=True, text=True, env=env)
     assert p.returncode == 2
     assert "--schedule" in p.stderr
+
+
+# ---- v1.24.0 安全回归：删除线 202 后异常绝不落 failed（不可逆操作防重发） ----
+
+def test_cli_delete_note_poll_crash_falls_to_unknown(monkeypatch, capsys):
+    """高危回归：202 入队后轮询持续网络故障 → unknown + deletion_id + 勿重发 hint，
+    绝不落 failed（failed 语义=可修因重试，会诱导 agent 重发不可逆删除）。"""
+    import publish_note
+    monkeypatch.setattr(sys, "argv",
+                        ["publish_note.py", "--delete-note", "--account", "6", "--title", "T"])
+    monkeypatch.setattr(publish_note.nbdpsy_common, "get_secret", lambda k: "k")
+    monkeypatch.setattr(publish_note, "resolve_account", lambda *a: (6, "看世界", None))
+    monkeypatch.setattr(publish_note, "start_note_deletion", lambda *a, **k: "d-123")
+    def boom(*a, **k):
+        raise ConnectionError("network down")
+    monkeypatch.setattr(publish_note, "poll_async_task", boom)
+    with pytest.raises(SystemExit) as ei:
+        publish_note.main()
+    assert ei.value.code == 0
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["outcome"] == "unknown" and out["deletion_id"] == "d-123"
+    assert "重发" in out["hint"] and "--delete-status d-123" in out["hint"]
+
+
+def test_cli_delete_status_done_running_gone(monkeypatch, capsys):
+    """--delete-status 权威复查三态：done / running / 404→gone(unknown)。"""
+    import publish_note
+    monkeypatch.setattr(publish_note.nbdpsy_common, "get_secret", lambda k: "k")
+
+    def run(resp):
+        monkeypatch.setattr(sys, "argv", ["publish_note.py", "--delete-status", "d-9"])
+        monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: resp)
+        with pytest.raises(SystemExit) as ei:
+            publish_note.main()
+        return json.loads(capsys.readouterr().out.strip().splitlines()[-1]), ei.value.code
+
+    out, code = run(_Resp(200, {"status": "done", "deleted": 2, "remaining": 1}))
+    assert code == 0 and out["outcome"] == "done" and out["deleted"] == 2 and out["remaining"] == 1
+    out, code = run(_Resp(200, {"status": "running"}))
+    assert code == 0 and out["outcome"] == "running"
+    out, code = run(_Resp(404, {}))
+    assert code == 0 and out["outcome"] == "unknown" and "重发" in out["hint"]
+
+
+def test_cli_delete_note_requires_account(tmp_path):
+    """--delete-note 缺 --account（带 --title）→ argparse exit 2。"""
+    import subprocess
+    script = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts" / "publish_note.py"
+    env = {"PATH": "/usr/bin:/bin", "NBDPSY_XHS_API_KEY": "k",
+           "NBDPSY_SECRETS": str(tmp_path / "none.env"), "NBDPSY_WORKSPACE": str(tmp_path)}
+    p = subprocess.run([sys.executable, str(script), "--delete-note", "--title", "t"],
+                       capture_output=True, text=True, env=env)
+    assert p.returncode == 2 and "--account" in p.stderr
+
+
+def test_poll_async_task_tolerates_transient_then_done(monkeypatch):
+    """500×2 后 200 done → 正常返回（瞬时容忍）；401 → 立即抛不重试。"""
+    import publish_note
+    seq = iter([_Resp(500, {}), _Resp(500, {}), _Resp(200, {"status": "done", "deleted": 1})])
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: next(seq))
+    monkeypatch.setattr(publish_note.time, "sleep", lambda s: None)
+    view = publish_note.poll_async_task("https://x", "k", "https://x/u", timeout=60)
+    assert view["status"] == "done"
+    monkeypatch.setattr(publish_note, "send_request",
+                        lambda *a, **k: _Resp(401, {"detail": "bad key"}))
+    with pytest.raises(ValueError):
+        publish_note.poll_async_task("https://x", "k", "https://x/u", timeout=60)
+
+
+def test_refresh_notes_gone_raises_with_hint(monkeypatch):
+    """导出台账失效（poll 回 gone）→ ValueError 提示重跑 --refresh。"""
+    import publish_note
+    monkeypatch.setattr(publish_note, "start_note_export", lambda *a, **k: "e-1")
+    monkeypatch.setattr(publish_note, "poll_async_task", lambda *a, **k: {"status": "gone"})
+    with pytest.raises(ValueError) as ei:
+        publish_note.refresh_notes("https://x", "k", 6)
+    assert "--refresh" in str(ei.value)
