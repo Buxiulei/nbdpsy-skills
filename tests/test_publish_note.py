@@ -256,7 +256,7 @@ def test_account_notes_graceful_404_when_endpoint_not_live(monkeypatch):
         def json(self): return {"error": "路径不存在"}
     monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: R404())
     rep = publish_note.account_notes("https://x", "k", 1)
-    assert rep["available"] is False and "上线中" in rep["hint"]
+    assert rep["available"] is False and "404" in rep["hint"]
 
 
 def test_account_notes_returns_data_when_live(monkeypatch):

@@ -9,6 +9,38 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.22.0] — 2026-07-23
+
+### 薯营家停机迁移（视频线切 /api/video + remake/revise 新能力 + 生图缺口协同记录 + 死链清理 + 基址统一）
+
+- **背景**：薯营家（`xhs.nbdpsy.com`）2026-07-23 整套永久停机（调用=连接失败非 410），一切能力统一到
+  nbdpsy-server（`mcp.nbdpsy.com`），唯一凭据仍是同一把 `NBDPSY_XHS_API_KEY`（nbdpsy-server apikey）。
+- **基址统一（shared/nbdpsy_common.py，同步 6 副本）**：`DEFAULT_VIDEO_API_BASE` 由 `xhs.nbdpsy.com`
+  改为 `https://mcp.nbdpsy.com`（与 `xhs_api_base` 同服务同凭据）；`SANDBOX_ALLOW_DOMAINS` 移除
+  `xhs.nbdpsy.com`。
+- **视频线迁移+增强（nbdpsy-youtube-transport/scripts/transport_video.py）**：
+  - 端点 `/api/video-transport/jobs*` → `/api/video/jobs*`（建/查/列/retry/delete 全部）；列表读 `items`。
+  - 建任务新增 **`--mode transport|remake`**（默认 transport）；逐参核对 nbdpsy-server `video_rest.py`
+    请求模型，`voice/burn_subtitles/max_resolution` 服务端仍收，故保留。
+  - 产物键扩展 `storyboard_url`/`meta_url`（仅 remake，缺失容忍），相对 `/uploads/…` 拼 mcp 成免鉴权直链。
+  - **新增成片修订 `--revise <job_id> --instructions "…"`** → `POST /api/video/jobs/{id}/revise` →
+    派生子任务增量重制并默认轮询到终态（`--no-wait` 同语义）；400=解析失败带 LLM 说明、409(detail)=父片
+    未完成/非 remake。
+  - 轮询间隔对齐红线（30s）；`--mode remake` 与 `--revise` 默认 wait-timeout 提到 4500s，transport 维持 1800s。
+  - 错误契约注释写明 409 用 `detail` 键；unknown 态绝不重发语义原样保留。
+  - SKILL.md 补 remake/revise（含「仅平面图形类、真人勿用」「发布须附 meta attribution、重要成片人工终审」）、
+    基址/凭据表述改 nbdpsy-server、附两条 mcp 标杆样片直链；tests 同步（路径、mode、revise、409 detail、items）。
+- **生图缺口处置（不绕路）**：nbdpsy-server 36 端点无一致性生图（原薯营家 `POST /api/op/consistent-images`
+  随停机消失）。`nbdpsy-xiaohongshu-creator/SKILL.md` 路线 0 开头 + `gen_images.py` docstring 顶部加现状
+  说明（本路线暂不可用、走宿主/人工兜底、服务端补齐即恢复）；**代码逻辑与契约不动**，base 随 `video_api_base`
+  指向 mcp。缺口与旧契约完整记录在 NBDpsy 仓 `文档/2026-07-23-一致性生图未迁移-协同记录.md`，请 server 侧排期。
+- **死链清理**：README/setup.py/nbdpsy-guide/publish_note.py/gen_images.py 及 tests 中的 `xhs.nbdpsy.com`
+  /`video-transport`/「运营接入 JWT」措辞逐处清理为 nbdpsy-server apikey；publish_note `--notes` 注释由
+  「server 端上线中」改为已上线（笔记主键 (账号,标题,发布时间) 三元组、无 note_id）。
+- 版本 1.21.0 → 1.22.0（plugin.json + marketplace.json 共 3 处）。
+
+---
+
 ## [1.21.0] — 2026-07-21
 
 ### xiaohongshu-creator：篇数以用户为准（1–2 篇小批量模式）

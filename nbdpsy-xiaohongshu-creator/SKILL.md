@@ -206,6 +206,11 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 
 **路线 0 · 后端一致性出图（凭据在位时默认首选）**
 
+> ⚠️ **2026-07-23 起本路线暂不可用**：薯营家（xhs.nbdpsy.com）已整套停机，一致性生图端点
+> `/api/op/consistent-images` 尚待 nbdpsy-server（mcp.nbdpsy.com）补齐（协同已记录，见 NBDpsy 仓
+> `文档/2026-07-23-一致性生图未迁移-协同记录.md`）。**期间直接走下方「有/没有图像生成能力」宿主/人工
+> 兜底分支**（跳过本路线的三条命令）。服务端补齐后同一命令零改动自动恢复——下面的判据与流程原样保留。
+
 **判据**：跑 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py secret ensure NBDPSY_XHS_API_KEY`——**无输出 = 凭据在**，走本路线（后端 gpt-image 锚点法，一致性最稳、不占宿主/运营手工出图）；有输出（缺凭据）才落到下面「有/没有图像生成能力」两分支。
 
 **一致性原理**：**所有篇共用同一张已确认的 P1 做锚点**，各页独立锚定生成，才能整个号调性统一——这正是「后端一致性出图」比手工逐张出更稳的地方。把上面的风格确认闸门映射成三条命令（`gen_images.py` stdout 是纯 JSON；生图串行、单页 ≈50s，**agent 后台运行或把 Bash 超时设够**）：

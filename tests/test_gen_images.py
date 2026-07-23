@@ -188,9 +188,9 @@ def test_image_filename_two_digits():
 
 
 def test_abs_url_relative_to_absolute():
-    base = "https://xhs.nbdpsy.com"
-    assert gi.abs_url("/uploads/x/P01.png", base) == "https://xhs.nbdpsy.com/uploads/x/P01.png"
-    assert gi.abs_url("uploads/x/y.png", base) == "https://xhs.nbdpsy.com/uploads/x/y.png"
+    base = "https://mcp.nbdpsy.com"
+    assert gi.abs_url("/uploads/x/P01.png", base) == "https://mcp.nbdpsy.com/uploads/x/P01.png"
+    assert gi.abs_url("uploads/x/y.png", base) == "https://mcp.nbdpsy.com/uploads/x/y.png"
     assert gi.abs_url("https://cdn.x/y.png", base) == "https://cdn.x/y.png"  # 已绝对不动
     assert gi.abs_url("", base) is None
     assert gi.abs_url(None, base) is None
@@ -203,8 +203,8 @@ def test_finalize_maps_urls_and_names_files(monkeypatch, tmp_path):
     monkeypatch.setattr(gi, "download_image", lambda url, dst: downloaded.append((url, str(dst))))
     selected = [{"page": "P2"}, {"page": "P10"}]
     view = {"status": "done", "result": {"urls": ["/uploads/a/x1.png", "/uploads/a/x2.png"]}}
-    out = gi.finalize(view, selected, tmp_path, "https://xhs.nbdpsy.com")
-    assert out[0]["url"] == "https://xhs.nbdpsy.com/uploads/a/x1.png"
+    out = gi.finalize(view, selected, tmp_path, "https://mcp.nbdpsy.com")
+    assert out[0]["url"] == "https://mcp.nbdpsy.com/uploads/a/x1.png"
     assert out[0]["path"].endswith("P02.png") and out[0]["error"] is None
     assert out[1]["path"].endswith("P10.png")   # 已两位数保持
     assert len(downloaded) == 2
@@ -217,7 +217,7 @@ def test_finalize_failed_page_takes_error(monkeypatch, tmp_path):
     view = {"status": "done", "result": {
         "urls": ["/uploads/a/x1.png", ""],
         "errors": [None, "openai_image_call_failed: rate limit exceeded"]}}
-    out = gi.finalize(view, selected, tmp_path, "https://xhs.nbdpsy.com")
+    out = gi.finalize(view, selected, tmp_path, "https://mcp.nbdpsy.com")
     assert out[0]["url"] and out[0]["path"]
     assert out[1]["url"] is None and out[1]["path"] is None
     assert "rate limit" in out[1]["error"]

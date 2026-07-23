@@ -11,7 +11,7 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
     python3 publish_note.py --job 42            # 只查已提交任务的状态
     python3 publish_note.py --list-accounts     # 列出我可操作的小红书账号
     python3 publish_note.py --self-check        # 一键接入自检：连通性+身份+账号+就绪（可反复跑）
-    python3 publish_note.py --notes 账号名或ID   # 拉该账号已发布笔记数据（供分析；server 端上线中）
+    python3 publish_note.py --notes 账号名或ID   # 拉该账号已发布笔记数据（供分析；已上线，(账号,标题,发布时间) 三元组主键）
     python3 publish_note.py --extension-info    # chrome 插件下载地址+安装步骤+server_time
     python3 publish_note.py --wait-login --since <server_time> [--account-id N]
                                                 # 等运营扫码登录完成（新号不传 account-id）
@@ -300,12 +300,13 @@ def self_check(api_base: str, key: str) -> dict:
 
 def account_notes(api_base: str, key: str, account_id: int) -> dict:
     """拉某账号已发布笔记的清单与互动数据（供 Claude 分析）。
-    server 端该端点正在上线中——404 时优雅降级为『还没上线』而非报错。
-    假定路径 GET /api/accounts/{id}/notes；server 若最终用别的路径，改这一处即可。"""
+    该端点已上线（GET /api/accounts/{id}/notes，全功能文档 §4）——创作中心导出**无 note_id**，
+    笔记业务主键是 (账号, 标题, 发布时间) 三元组。保留 404 兜底以防该账号暂无导出快照或路径调整。"""
     resp = send_request("GET", f"{api_base}/api/accounts/{account_id}/notes", key)
     if resp.status_code == 404:
         return {"available": False,
-                "hint": "『笔记数据拉取』接口 server 端还在上线中，等管理员通知后即可用（不是故障）"}
+                "hint": "『笔记数据』接口返回 404：端点已上线，多半是该账号暂无导出快照"
+                        "（需先在后台触发导出）或路径调整，联系管理员核对（不是发布故障）"}
     if resp.status_code >= 400:
         raise ValueError(api_error(resp))
     data = resp.json() if resp.text.strip() else {}
@@ -375,7 +376,7 @@ def main():
     ap.add_argument("--login-timeout", type=float, default=600, help="等登录上限秒数（默认 600）")
     ap.add_argument("--check-cookie", metavar="账号名或ID", help="触发该账号 cookie 验活并轮询到结果")
     ap.add_argument("--notes", metavar="账号名或ID",
-                    help="拉该账号已发布笔记的清单与互动数据（供分析；server 端上线中，未上线优雅提示）")
+                    help="拉该账号已发布笔记的清单与互动数据（供分析；已上线，(账号,标题,发布时间) 三元组主键）")
     args = ap.parse_args()
 
     key = nbdpsy_common.get_secret(nbdpsy_common.XHS_API_KEY)

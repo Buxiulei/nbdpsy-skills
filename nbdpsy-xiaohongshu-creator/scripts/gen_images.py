@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """用后端 gpt-image 锚点法给一篇小红书笔记出「一致性」轮播配图（经运营工具 op API）。
 
+⚠️ 现状（2026-07-23）：一致性生图端点原属薯营家（xhs.nbdpsy.com），随其整套停机而**暂不可用**，
+nbdpsy-server（mcp.nbdpsy.com）尚未补齐 `/api/op/consistent-images`（协同记录见 NBDpsy 仓
+`文档/2026-07-23-一致性生图未迁移-协同记录.md`）。本脚本契约完整保留、base 已随 video_api_base 指向
+mcp.nbdpsy.com，**服务端按同契约补齐后同一命令零改动自动恢复**；在此之前调用会连接失败/404，请走
+SKILL.md 路线 0 下方的宿主自适应/人工出图兜底分支。
+
 一致性原理：先出 post-01 的 P1 封面过风格闸门（`--cover-only`），运营确认配色/人物/比例/图内
 中文无误后，把这张 P1 当**锚点参考图**（`--anchor-url`）喂给之后**所有篇所有页**——每页独立锚定
 生成，既不重画 P1 也不整批漂移，整个号调性统一。P1 未确认就批量出 = 风格跑偏后 30~70 张全废。
@@ -18,8 +24,8 @@ GET {base}/api/op/drafts/{session_id}/jobs/{job_id} 到终态 → done 后逐页
     python3 gen_images.py --note post-01.md --job <id> [--session <id>]     # 复查已入队任务并补下载
         [--images-dir DIR] [--api-base URL] [--no-wait] [--wait-timeout N] [--dry-run]
 
-凭据：复用 NBDPSY_XHS_API_KEY（与小红书发布 / 视频搬运同一把运营接入 JWT，无需另发）；
-base 用 NBDPSY_VIDEO_API_BASE（可选，默认 https://xhs.nbdpsy.com，与视频搬运同服务），
+凭据：复用 NBDPSY_XHS_API_KEY（nbdpsy-server apikey，与小红书发布 / 视频同一把，接入包同一把，无需另发）；
+base 用 NBDPSY_VIDEO_API_BASE（可选，默认 https://mcp.nbdpsy.com，与小红书发布/视频同服务同凭据），
 均由 nbdpsy_common 三层解析；`--api-base` 可覆盖。缺凭据找管理员要「运营接入配置包」secret import。
 
 输出契约：stdout 纯 JSON。
@@ -170,7 +176,7 @@ def send_request(method, url, key, payload=None, timeout=60):
 
 
 def api_error(resp):
-    """错误体两套形状：401/422 键是 detail，403/404/400/500 键是 error（与发布/搬运同契约）。"""
+    """错误契约（nbdpsy-server）：400/401/403/404 键是 error；409/422 键是 detail。双键兼容取值。"""
     try:
         data = resp.json()
         msg = data.get("error") or data.get("detail") or resp.text[:200]
@@ -411,7 +417,7 @@ def main():
     ap.add_argument("--anchor-url", help="锚点参考图 URL（P1 确认后的封面），各页据此锚定生成保持一致")
     ap.add_argument("--pages", help="只出指定页：'2-9' / '3,5' / '2-4,7' 混合（默认全部页）")
     ap.add_argument("--images-dir", type=Path, help="落盘目录（默认 <笔记同目录>/images/<笔记名>/）")
-    ap.add_argument("--api-base", help="API base（默认 NBDPSY_VIDEO_API_BASE 或 https://xhs.nbdpsy.com）")
+    ap.add_argument("--api-base", help="API base（默认 NBDPSY_VIDEO_API_BASE 或 https://mcp.nbdpsy.com）")
     ap.add_argument("--no-wait", action="store_true", help="提交后不等结果（稍后 --job 复查）")
     ap.add_argument("--wait-timeout", type=float,
                     help="轮询等待上限秒数（默认 max(180, 页数×90)）")
