@@ -9,6 +9,16 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.24.1] — 2026-07-23
+
+### guide 补视频 remake/revise 话术
+
+- guide 3.5 节此前只讲基础搬运——补「再制作（remake）」与「修订成片（revise，可反复迭代）」
+  两条运营话术与命令（含仅 remake 可修订、真人出镜勿用 remake、attribution 等边界），速查表加
+  「这条视频 XX 处改一下」一行。youtube-transport skill 本体 v1.22.0 已支持，此为客服台入口补齐。
+
+---
+
 ## [1.24.0] — 2026-07-23
 
 ### 删除已发布笔记（全新能力）+ 导出 no_data 语义 + 拉数据 --refresh
