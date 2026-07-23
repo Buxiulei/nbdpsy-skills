@@ -417,17 +417,21 @@ def delete_note_result(view: dict, deletion_id: str):
         elif "need_manual_login" in reason:
             out["hint"] = "creator 登录态失效，按 guide 手册②重新扫码后再试"
         return out, 1
-    if status == "gone":  # 台账 404 失效（server 重启即丢），权威终态已不可查
+    if status == "unknown":  # server 重启恰好打断删除执行（结果真实未知，服务端不冒充）
+        return {"outcome": "unknown", "deletion_id": deletion_id, "reason": view.get("reason"),
+                "hint": "server 重启打断了删除执行，结果真实未知：让运营人工到创作中心核对该标题"
+                        "剩余篇数后再决定；删除不可逆，切勿盲目重发"}, 0
+    if status == "gone":  # 台账已落库（2026-07-23 起 server 重启不丢终态），404 仅=该 deletion_id 不存在
         return {"outcome": "unknown", "deletion_id": deletion_id,
-                "hint": "删除任务台账已失效（server 可能重启），删除不可逆、可能已执行也可能没执行："
-                        "先用 --notes <账号> --refresh 核对该标题剩余篇数再决定"
-                        "（注意：当天刚发的笔记看板次日才有数据，核不到时人工去创作中心确认），"
+                "hint": "deletion_id 不存在（删除台账已落库、server 重启不丢终态）——多半是 ID 敲错"
+                        "或从未发起。删除不可逆：先核对 deletion_id 用 --delete-status 重查；确实查无"
+                        "此任务时用 --notes <账号> --refresh 核对剩余篇数（当天刚发的看板次日才有数据），"
                         "切勿盲目重发"}, 0
-    # running：轮询超时未达终态——台账仍在，重查终态才是权威判据
+    # running：轮询超时未达终态——台账已落库随时可查，重查终态才是权威判据
     return {"outcome": "unknown", "deletion_id": deletion_id,
             "hint": f"轮询超时仍未出终态（任务可能仍在跑）。删除不可逆：先用 "
-                    f"--delete-status {deletion_id} 重查终态（deleted/remaining 是权威判据），"
-                    f"查到 404 再用 --notes <账号> --refresh 核对剩余篇数，切勿盲目重发"}, 0
+                    f"--delete-status {deletion_id} 重查并核对终态（deleted/remaining 是权威判据，"
+                    f"台账已落库、server 重启也不丢），切勿盲目重发"}, 0
 
 
 def start_note_export(api_base: str, key: str, account_id: int) -> str:

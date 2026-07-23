@@ -801,3 +801,12 @@ def test_refresh_notes_gone_raises_with_hint(monkeypatch):
     with pytest.raises(ValueError) as ei:
         publish_note.refresh_notes("https://x", "k", 6)
     assert "--refresh" in str(ei.value)
+
+
+def test_delete_note_result_server_unknown_is_manual_check():
+    """server 四态新增 unknown（重启打断删除执行，结果真实未知）→ 人工创作中心核对，勿重发。"""
+    import publish_note
+    out, code = publish_note.delete_note_result(
+        {"status": "unknown", "reason": "restart_interrupted"}, "d-7")
+    assert code == 0 and out["outcome"] == "unknown" and out["reason"] == "restart_interrupted"
+    assert "人工" in out["hint"] and "重发" in out["hint"] and "不可逆" in out["hint"]

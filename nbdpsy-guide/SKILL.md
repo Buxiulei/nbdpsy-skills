@@ -168,12 +168,13 @@ python3 PUB --delete-note --account <账号名或id> --title "完整标题" --co
   - `outcome=done` → 删成功，`deleted` 是删掉几篇；`remaining>0` 会提示还剩几篇同题。
   - `outcome=failed`：`reason` 含 `note_not_found`=该号没有这个标题的笔记（标题没匹配上，先 `--notes` 核对）；
     含 `need_manual_login`=creator 登录态失效，回②重新扫码后再试。
-  - `outcome=unknown` 有两种成因，处置不同，但共同铁律是**绝不盲目重发**（删了没删不确定，重发可能多删）：
-    - **轮询超时**（任务可能仍在跑，台账还在）→ 先 `python3 PUB --delete-status <deletion_id>`
-      **重查终态**——返回的 `deleted`/`remaining` 是权威判据，比看板可靠。
-    - **台账失效**（`--delete-status` 也查到 404，server 可能重启过）→ 用 `--notes <账号> --refresh`
-      核对该标题还剩几篇再决定。⚠️ **当天刚发的笔记看板查不到（次日才有数据）**——清理当天发重的场景
-      核不到时，让运营人工去创作中心看一眼剩几篇，确认后再动。
+  - `outcome=unknown` 的处置（共同铁律：**绝不盲目重发**——删了没删不确定，重发可能多删）：
+    - **轮询超时** → `python3 PUB --delete-status <deletion_id>` **重查终态**——`deleted`/`remaining`
+      是权威判据；删除台账已落库（2026-07-23 起），server 重启也不丢、随时可查。
+    - **接口回 `unknown`**（server 重启恰好打断了删除执行的那约一分钟，结果真实未知）→ 让运营人工去
+      创作中心看一眼该标题剩几篇，确认后再决定。
+    - **404 = deletion_id 不存在**（台账落库后 404 不再意味着「重启丢了」）→ 多半是 ID 敲错或从未发起，
+      核对后重查；实在不确定就 `--notes <账号> --refresh` 核对剩几篇（⚠️ 当天刚发的看板次日才有数据）。
 - 同一账号的发布/验活/导出/删除**共享一把锁自动串行**——别对同一个号同时发起多件，会排队（不会坏，
   只是轮询显得久）。
 
@@ -242,6 +243,10 @@ curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/insta
 - 看到 7 个 skill 逐个打 ✓ 即更新成功。
 - 凭据**不会**被更新冲掉：博客/小红书/豆包 key 存在用户级 `secrets.env`（仓库目录外），即梦登录态在 `~/.dreamina_cli/`，全都原样保留。
 - 更新完提醒运营**重启一下 Claude Code** 再继续——新版 skill 重启后才生效。
+- **插件也会更新**：`python3 PUB --extension-info` 返回的 **`extension_version`**（当前 2.1.3）才是插件
+  版本（`version` 字段是服务端版本，别拿它比对）；运营 `chrome://extensions` 显示的版本低于它时，
+  让 TA 重新下载 `download_url` 的 zip、解压替换后在 `chrome://extensions` 点「重新加载」（或删旧加载新）。
+  凭据填在插件里的 serverUrl/apikey 不受影响。
 
 ---
 
@@ -264,4 +269,6 @@ curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/insta
 | 「这条视频 XX 处改一下 / 再改改」 | 第 3.5 步 revise（`TV --revise <任务号> --instructions "原话"`，仅 remake 成片可修订、可反复迭代） |
 | 「提示缺 key / 连不上」 | 第 1 步的两个兜底（要接入包 / sandbox allow） |
 | 「更新工具包 / 升级 / 装最新版」 | 上面「更新工具包」节：你替他跑安装命令，完了提醒重启 Claude Code |
+| 「插件怎么用 / 帮助在哪」 | 让 TA 点插件弹窗底部「**使用帮助**」（2.1.3 起内置离线指南：配置/扫码/账号状态/FAQ） |
+| 「插件是不是旧版」 | 比对 `--extension-info` 的 `extension_version` ↔ TA 的 chrome://extensions 显示版本；旧了按「更新工具包」节换新包 |
 | 「装不了 / 你说没有本机执行能力」 | 提醒他用 **Claude Desktop 的「Code」标签页**，别用 Chat/网页/手机版 |

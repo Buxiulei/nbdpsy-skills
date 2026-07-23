@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """用后端 gpt-image 锚点法给一篇小红书笔记出「一致性」轮播配图（经运营工具 op API）。
 
-⚠️ 现状（2026-07-23）：一致性生图端点原属薯营家（xhs.nbdpsy.com），随其整套停机而**暂不可用**，
-nbdpsy-server（mcp.nbdpsy.com）尚未补齐 `/api/op/consistent-images`（协同记录见 NBDpsy 仓
-`文档/2026-07-23-一致性生图未迁移-协同记录.md`）。本脚本契约完整保留、base 已随 video_api_base 指向
-mcp.nbdpsy.com，**服务端按同契约补齐后同一命令零改动自动恢复**；在此之前调用会连接失败/404，请走
-SKILL.md 路线 0 下方的宿主自适应/人工出图兜底分支。
+服务端：nbdpsy-server（mcp.nbdpsy.com）`/api/op/consistent-images`，gpt-image-2 锚点法 +
+自动去水印后处理（2026-07-23 起生效，端到端回归已通过）。已知行为：出图实际 1024×1536（2:3 竖版，
+非严格 3:4，小红书可直接用、feed 预览按 3:4 裁剪，重要构图勿贴上下边）；单次 prompts ≤99（超出 422）；
+任务台账为进程内存（server 重启后 --job 复查 404=台账丢，生图可安全重新发起、会重新扣额度；终态留存 2h）。
 
 一致性原理：先出 post-01 的 P1 封面过风格闸门（`--cover-only`），运营确认配色/人物/比例/图内
 中文无误后，把这张 P1 当**锚点参考图**（`--anchor-url`）喂给之后**所有篇所有页**——每页独立锚定
@@ -202,6 +201,8 @@ def create_job(api_base, key, prompts, anchor_url):
     payload = {"prompts": prompts}
     if anchor_url:
         payload["anchor_url"] = anchor_url
+    if len(prompts) > 99:
+        raise ValueError(f"单次最多 99 条提示词（服务端硬上限，超出 422），本次 {len(prompts)} 条——用 --pages 分两次提交")
     resp = send_request("POST", f"{api_base}/api/op/consistent-images", key, payload, timeout=60)
     if resp.status_code >= 400:
         raise ValueError(api_error(resp))
@@ -233,7 +234,9 @@ def poll_job(api_base, key, session_id, job_id, timeout, interval=10.0, max_tran
             print(f"  轮询瞬时失败（{transient}/{max_transient}）: {api_error(resp)}", file=sys.stderr)
             time.sleep(interval)
             continue
-        if resp.status_code >= 400:  # 401/403/404 永久错误
+        if resp.status_code == 404:  # 任务台账失效（进程内存台账，server 重启即丢；终态只留 2h）
+            return {"status": "gone"}
+        if resp.status_code >= 400:  # 401/403 永久错误
             raise ValueError(api_error(resp))
         transient = 0
         view = resp.json()
@@ -322,6 +325,16 @@ def retry_hint(failed_labels, anchor_url, cover_only):
     nums = ",".join(str(int(l[1:])) for l in failed_labels)
     tail = f" --anchor-url {anchor_url}" if anchor_url else ""
     return f"部分页未出成，用 --pages {nums}{tail} 只重出失败页（带同一锚点保持一致性）"
+
+
+def gone_envelope(sid, jid):
+    """任务台账失效（server 重启，终态只留 2h）。与删除不同，生图重发是安全的（只多扣一次额度），
+    故落 failed 语义引导重新发起，而非 unknown 的「勿重发」。"""
+    return {"outcome": "failed", "session_id": sid, "job_id": jid, "pages": [],
+            "anchor_url": None,
+            "error": "任务台账已失效（server 可能重启，终态只留 2 小时）",
+            "hint": "生图可安全重新发起（代价只是重新扣一次额度）；已生成的图仍在服务端但 URL 无从查",
+            "warnings": []}
 
 
 def pending_envelope(sid, jid, anchor, warnings):
@@ -459,6 +472,9 @@ def main():
             selected = [{"page": l} for l in page_labels]
             cover_only = page_labels == ["P1"] and not anchor
             view = poll_job(api_base, key, sid, jid, timeout=0)  # 单次探测
+            if view.get("status") == "gone":
+                print(json.dumps(gone_envelope(sid, jid), ensure_ascii=False))
+                sys.exit(1)
             if view.get("status") not in TERMINAL_STATUSES:
                 print(json.dumps(pending_envelope(sid, jid, anchor, []), ensure_ascii=False))
                 sys.exit(0)
@@ -493,6 +509,9 @@ def main():
 
         timeout = args.wait_timeout if args.wait_timeout is not None else max(180, len(selected) * 90)
         view = poll_job(api_base, key, sid, jid, timeout=timeout)
+        if view.get("status") == "gone":  # 极小概率：刚入队 server 就重启
+            print(json.dumps(gone_envelope(sid, jid), ensure_ascii=False))
+            sys.exit(1)
         if view.get("status") not in TERMINAL_STATUSES:  # 超时仍在跑
             print(json.dumps(pending_envelope(sid, jid, anchor, warnings), ensure_ascii=False))
             return

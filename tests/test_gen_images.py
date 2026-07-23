@@ -277,3 +277,29 @@ def test_cli_missing_key_exit1(tmp_path):
              "NBDPSY_WORKSPACE": str(tmp_path)})
     assert p.returncode == 1
     assert "MISSING:NBDPSY_XHS_API_KEY" in p.stderr
+
+
+# ---- v1.25.0 生图复活：台账 404=gone(可安全重发) + prompts 硬上限 ----
+
+class _Resp404:
+    status_code = 404
+    text = "x"
+    def json(self): return {}
+
+
+def test_poll_job_404_returns_gone_and_envelope(monkeypatch):
+    """台账失效（server 重启，终态只留 2h）→ gone；生图与删除相反，重发安全 → failed 语义引导重发。"""
+    import gen_images
+    monkeypatch.setattr(gen_images, "send_request", lambda *a, **k: _Resp404())
+    assert gen_images.poll_job("https://x", "k", "s1", 1, timeout=0) == {"status": "gone"}
+    env = gen_images.gone_envelope("s1", 1)
+    assert env["outcome"] == "failed" and "重新发起" in env["hint"] and "额度" in env["hint"]
+
+
+def test_create_job_prompts_hard_limit():
+    """单次 >99 条提示词客户端硬拦（服务端 422）。"""
+    import gen_images
+    import pytest
+    with pytest.raises(ValueError) as ei:
+        gen_images.create_job("https://x", "k", ["p"] * 100, None)
+    assert "99" in str(ei.value)

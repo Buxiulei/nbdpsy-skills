@@ -206,10 +206,11 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 
 **路线 0 · 后端一致性出图（凭据在位时默认首选）**
 
-> ⚠️ **2026-07-23 起本路线暂不可用**：薯营家（xhs.nbdpsy.com）已整套停机，一致性生图端点
-> `/api/op/consistent-images` 尚待 nbdpsy-server（mcp.nbdpsy.com）补齐（协同已记录，见 NBDpsy 仓
-> `文档/2026-07-23-一致性生图未迁移-协同记录.md`）。**期间直接走下方「有/没有图像生成能力」宿主/人工
-> 兜底分支**（跳过本路线的三条命令）。服务端补齐后同一命令零改动自动恢复——下面的判据与流程原样保留。
+> 服务端为 nbdpsy-server（mcp.nbdpsy.com）`/api/op/consistent-images`（gpt-image-2 锚点法 +
+> 自动去水印，2026-07-23 端到端回归通过）。**已知行为**：出图实际为 1024×1536（**2:3 竖版**，非严格
+> 3:4）——小红书可直接发布，feed 预览会按 3:4 裁剪，提示词里重要文字/构图**勿贴上下边缘**；
+> `--job` 复查 404 = 任务台账丢（server 重启，终态只留 2 小时）→ 生图**可安全重新发起**（与删除不同，
+> 代价只是重新扣额度）。
 
 **判据**：跑 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py secret ensure NBDPSY_XHS_API_KEY`——**无输出 = 凭据在**，走本路线（后端 gpt-image 锚点法，一致性最稳、不占宿主/运营手工出图）；有输出（缺凭据）才落到下面「有/没有图像生成能力」两分支。
 
@@ -219,7 +220,8 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
    ```bash
    python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --cover-only
    ```
-   把落盘的 `P01.png` 给运营看，确认三项（① 配色只用品牌调色板 ② 人物符合固定人物卡 ③ 比例 3:4 ＋图中中文逐字无错）。不过 → 改提示词重跑本命令，**不要往下走**。
+   把落盘的 `P01.png` 给运营看，确认三项（① 配色只用品牌调色板 ② 人物符合固定人物卡 ③ 竖版构图
+   （后端出 2:3，判据是没被出成方图/横版）＋图中中文逐字无错）。不过 → 改提示词重跑本命令，**不要往下走**。
 2. **确认通过 → 批量出全套**：记下第 1 步输出 JSON 里的 `anchor_url`（那张已确认的 P1 绝对 URL），**整套所有篇都用它**，逐篇串行出（一篇一 job，**勿并发轰后端**；每篇 ≈页数×50s，提前告知运营预期时长）：
    ```bash
    python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --anchor-url <那个URL>
