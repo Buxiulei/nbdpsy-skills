@@ -266,6 +266,7 @@ curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/insta
 | 「怎么发重了 2–3 篇同文」 | 2026-07-23 已根治（点击被接收绝不补点）；只可能是之前旧事，用⑧清理（`--count`=多余篇数、留 1 篇） |
 | 「今天刚发的怎么拉不到数据」 | 正常：当天刚发次日才入看板（第 3 步⑥ `--refresh` 遇 `no_data`），跟运营说「明天再拉，不用管」 |
 | 「把图片传成链接 / 上传图床 / 复用素材」 | 第 3 步⑨（`--upload-images` 得直链，7 天过期） |
+| 「把图发我看看 / 链接呢」 | 最终成图在出图收尾时已上传图床，直接把 mcp 直链列表发 TA（点开即看，7 天有效，过期让 AI 重传）；别甩本地目录/服务器路径 |
 | 「搬运这个 YouTube / 把这条油管翻译配音」 | 第 3.5 步（`TV --url <链接>`，只收 YouTube） |
 | 「这条视频 XX 处改一下 / 再改改」 | 第 3.5 步 revise（`TV --revise <任务号> --instructions "原话"`，仅 remake 成片可修订、可反复迭代） |
 | 「提示缺 key / 连不上」 | 第 1 步的两个兜底（要接入包 / sandbox allow） |

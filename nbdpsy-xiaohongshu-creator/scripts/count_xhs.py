@@ -75,19 +75,27 @@ def count_pages(text: str) -> int:
 
 
 def main():
-    # 页数区间可覆盖：长文拆分默认 6–9；咨询师推介笔记场景传 --page-min 4 --page-max 6
+    # 页数区间可覆盖：长文拆分默认 6–9；咨询师推介笔记场景传 --page-min 4 --page-max 6。
+    # 正文字数区间可覆盖：默认沿用 DEFAULT_TARGET 派生的 210–450（兼容科普笔记）；
+    # 咨询师推介笔记正文更长，传 --body-min 400 --body-max 800。
     args, files = sys.argv[1:], []
     page_min, page_max = PAGE_MIN, PAGE_MAX
+    body_min, body_max = None, None
     i = 0
     while i < len(args):
         if args[i] == "--page-min" and i + 1 < len(args):
             page_min = int(args[i + 1]); i += 2
         elif args[i] == "--page-max" and i + 1 < len(args):
             page_max = int(args[i + 1]); i += 2
+        elif args[i] == "--body-min" and i + 1 < len(args):
+            body_min = int(args[i + 1]); i += 2
+        elif args[i] == "--body-max" and i + 1 < len(args):
+            body_max = int(args[i + 1]); i += 2
         else:
             files.append(args[i]); i += 1
     if not files:
-        print(json.dumps({"error": "usage: count_xhs.py <file> [--page-min N] [--page-max N]"},
+        print(json.dumps({"error": "usage: count_xhs.py <file> [--page-min N] [--page-max N] "
+                                    "[--body-min N] [--body-max N]"},
                          ensure_ascii=False))
         sys.stderr.write("Error: missing required argument <file>\n")
         sys.exit(2)
@@ -105,9 +113,9 @@ def main():
     pages = count_pages(text)
     title, title_chars, title_found = count_title_chars(text)
 
-    # 阈值检查
-    lo = DEFAULT_TARGET * 70 // 100
-    hi = DEFAULT_TARGET * 150 // 100
+    # 阈值检查：正文字数区间默认由 DEFAULT_TARGET 派生（210–450），可被 --body-min/max 覆盖
+    lo = body_min if body_min is not None else DEFAULT_TARGET * 70 // 100
+    hi = body_max if body_max is not None else DEFAULT_TARGET * 150 // 100
 
     ok_body = lo <= body_chars <= hi
     ok_pages = page_min <= pages <= page_max

@@ -127,6 +127,38 @@ def test_carousel_prompt_fence_still_not_scanned(tmp_path):
     d = json.loads(r.stdout)
     assert r.returncode == 0 and d["ok"] is True
 
+def test_no_crisis_skips_crisis_but_still_flags_violations(tmp_path):
+    """--no-crisis（咨询师推介场景）：缺危机声明不判 FAIL，但违禁词仍一票否决。
+    构造无 12356 且含站外导流「加微信」的文档——不带 --no-crisis 应 fail（缺声明+违禁词），
+    带 --no-crisis 仍 fail（违禁词未被放过），证明豁免只跳过危机声明、不弄坏违禁词闸。"""
+    bad = "## 发布文案\n\n黄老师擅长原生家庭创伤，加微信预约。\n"
+    f = tmp_path / "no_crisis_scene.md"; f.write_text(bad, encoding="utf-8")
+    # 带 --no-crisis：crisis 不再要求，但站外导流仍命中 → ok=false
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f), "--no-crisis"],
+                       capture_output=True, text=True)
+    d = json.loads(r.stdout)
+    assert r.returncode == 1
+    assert d["crisis_required"] is False
+    assert d["ok"] is False
+    assert any(v["rule"] == "站外导流" for v in d["violations"])
+
+
+def test_no_crisis_passes_clean_note_without_declaration(tmp_path):
+    """--no-crisis：一篇无 12356、无违禁词的干净推介文，应判 ok=true（危机声明被豁免）；
+    同一文档不带 --no-crisis 应因缺声明 fail（证明科普场景的危机声明闸未被弄坏）。"""
+    clean = "## 发布文案\n\n黄安麟老师，北大临床心理硕士，擅长复杂性创伤 CPTSD 的疗愈工作。\n"
+    f = tmp_path / "clean_intro.md"; f.write_text(clean, encoding="utf-8")
+    # 带 --no-crisis → 豁免危机声明 → ok=true
+    r1 = subprocess.run([sys.executable, str(SCRIPT), str(f), "--no-crisis"],
+                        capture_output=True, text=True)
+    d1 = json.loads(r1.stdout)
+    assert r1.returncode == 0 and d1["ok"] is True and d1["crisis_required"] is False
+    # 不带 --no-crisis → 科普场景仍要求 12356 → 缺声明 fail
+    r2 = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    d2 = json.loads(r2.stdout)
+    assert r2.returncode == 1 and d2["crisis_ok"] is False and d2["ok"] is False
+
+
 def test_missing_file_errors_to_stdout(tmp_path):
     missing = tmp_path / "does_not_exist.md"
     r = subprocess.run([sys.executable, str(SCRIPT), str(missing)], capture_output=True, text=True)

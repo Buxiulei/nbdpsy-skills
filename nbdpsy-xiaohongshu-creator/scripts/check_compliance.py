@@ -147,12 +147,24 @@ def has_crisis_declaration(text: str) -> bool:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "usage: check_compliance.py <file>"}, ensure_ascii=False))
+    # 场景开关：--no-crisis 跳过「危机声明在位」检查（咨询师推介笔记场景专用——
+    # 推介是人物介绍非心理科普内容，强行要 12356 声明反而像在科普栏目里）；
+    # 极限词/医疗违禁/站外导流/硬广特征照常全扫，绝不放松。
+    args = sys.argv[1:]
+    no_crisis = False
+    files = []
+    for a in args:
+        if a == "--no-crisis":
+            no_crisis = True
+        else:
+            files.append(a)
+
+    if not files:
+        print(json.dumps({"error": "usage: check_compliance.py <file> [--no-crisis]"}, ensure_ascii=False))
         sys.stderr.write("Error: missing required argument <file>\n")
         sys.exit(2)
 
-    filepath = Path(sys.argv[1])
+    filepath = Path(files[0])
 
     try:
         text = filepath.read_text(encoding="utf-8")
@@ -169,6 +181,7 @@ def main():
     #   发布文案区块，会把写在末页的合法危机声明误判为缺失。故保留整文口径。
     text_no_fences = remove_fenced_blocks(text)
     crisis_ok = has_crisis_declaration(text_no_fences)
+    crisis_required = not no_crisis
 
     # 违禁词扫描：按原始文件绝对行号跳过围栏，再提取"发布文案"+"配图轮播"两个区块。
     # 扫描范围扩展依据：配图轮播里 "### PN 页面文字"（围栏外）会被逐字渲染进对外
@@ -192,11 +205,13 @@ def main():
 
     violations = scan_violations(scan_target)
 
-    ok = len(violations) == 0 and crisis_ok
+    # crisis_required=False（--no-crisis）时，危机声明缺失不再拉低 ok；违禁词照旧一票否决。
+    ok = len(violations) == 0 and (crisis_ok or not crisis_required)
 
     result = {
         "violations": violations,
         "crisis_ok": crisis_ok,
+        "crisis_required": crisis_required,
         "ok": ok,
     }
 
