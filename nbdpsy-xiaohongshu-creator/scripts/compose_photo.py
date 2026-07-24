@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""把运营提供的咨询师真实照片，本地合成进 P2 简历卡底图的预留留白区。
+"""把运营提供的咨询师真实照片，本地合成进 P1 封面底图的预留留白区（备选保真路线）。
 
 🔴 铁律：照片只做本地几何合成（等比裁剪 / 圆角 / 品牌色描边），
 **绝不喂给任何 AI 生图/重绘**（肖像失真 + 合规风险）。本脚本不联网、不调模型。
+照片只上 P1 封面，内页一律不放（2026-07-24 定案）。
 发布前须先向运营确认「已获咨询师本人同意用于小红书宣传」，见 references/counselor-note-spec.md。
 
 用法：
   python3 compose_photo.py --base 底图.png --photo 照片.jpg --out 输出.png [--region top|left]
 
-区域（默认 top，对齐 spec 里 P2 底图的留白提示词）：
+区域（默认 top，对齐 spec 里封面底图的留白提示词）：
   top  = 底图顶部约 1/3 高、左右各留 6% 边距
   left = 底图左侧约 40% 宽
 """
@@ -34,7 +35,7 @@ def compute_region(base_w: int, base_h: int, region: str = "top"):
     margin = round(base_w * MARGIN_RATIO)
     if region == "top":
         # 高度扣掉顶部内缩：照片底边 = margin + h = base_h/3，完整落在底图「顶部 1/3 留白区」内，
-        # 不压 P2 底图下部版式最顶端的姓名/职称条（此前 h=1/3 会整体下溢 margin 像素）
+        # 不压底图下部版式最顶端的姓名/职称条（此前 h=1/3 会整体下溢 margin 像素）
         return (margin, margin, base_w - 2 * margin, round(base_h * TOP_HEIGHT_RATIO) - margin)
     if region == "left":
         return (margin, margin, round(base_w * LEFT_WIDTH_RATIO), base_h - 2 * margin)
@@ -86,8 +87,8 @@ def compose(base_path, photo_path, out_path, region: str = "top"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="把咨询师照片本地合成进 P2 底图留白区（不经 AI 重绘）")
-    parser.add_argument("--base", required=True, help="P2 简历卡底图（带留白区的 PNG）")
+    parser = argparse.ArgumentParser(description="把咨询师照片本地合成进 P1 封面底图留白区（备选保真路线，不经 AI 重绘）")
+    parser.add_argument("--base", required=True, help="P1 封面底图（带留白区的 PNG）")
     parser.add_argument("--photo", required=True, help="运营提供的咨询师真实照片")
     parser.add_argument("--out", required=True, help="合成输出 PNG 路径")
     parser.add_argument("--region", choices=["top", "left"], default="top",
