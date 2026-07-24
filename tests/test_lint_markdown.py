@@ -103,18 +103,71 @@ def test_stats_min_fails_without_cited_stats(tmp_path):
 
 
 def test_stats_min_passes_with_three_cited_stats(tmp_path):
+    """混合百分比 + 相关系数 + 比值三种形态，均计入 stat-block。"""
     p = run("干预后 74.0% 不再符合诊断 [[1]](https://x.org/a)。\n"
-            "另有 87.7% 改善 [[1]](https://x.org/a)。\n"
-            "脱落率约 16%（对照 2 倍差异）[[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            "自我丧失感与依恋焦虑相关 r=.42 [[1]](https://x.org/a)。\n"
+            "复合风险 OR=2.1（对照差异）[[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
             tmp_path, "--citations", "1", "--stats-min", "3")
     assert p.returncode == 0
 
 
 def test_stats_without_marker_do_not_count(tmp_path):
-    """统计数字不带同行引用标注 → 不计入（R3 要求紧跟来源）。"""
-    p = run("有 80% 的人如此。另有 70% 类似。还有 3 倍差距。\n"
+    """统计数字（含学术形态 r=.31）不带同行引用标注 → 不计入（R3 要求紧跟来源）。"""
+    p = run("有 80% 的人如此。另有 70% 类似。还有 3 倍差距。另见 r=.31 的相关。\n"
             "结论句 [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
             tmp_path, "--citations", "1", "--stats-min", "3")
     out = json.loads(p.stdout)
     assert p.returncode == 1
-    assert any(v["rule"] == "stat-block" and "共 3 处" in v["text"] for v in out["violations"])
+    # 4 处统计样式（3 个 %/倍 + 1 个 r=.31）全无同行标注 → stats_cited=0
+    assert any(v["rule"] == "stat-block" and "共 4 处" in v["text"] for v in out["violations"])
+
+
+def test_academic_correlation_counts_as_stat(tmp_path):
+    """r=.42 / d=0.6 / 95% CI 等学术统计形态计入（恋爱脑一文的真实形态）。"""
+    p = run("依恋焦虑与关系满意度呈负相关 r=−.29 [[1]](https://x.org/a)。\n"
+            "效应量中等 d=0.62 [[1]](https://x.org/a)。\n"
+            "组间差异 95% CI 不含零 [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    assert p.returncode == 0
+
+
+def test_sample_size_alone_not_counted(tmp_path):
+    """纯样本量 N=224 不是统计结论，不计入。"""
+    p = run("本研究纳入 N=224 名被试 [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    out = json.loads(p.stdout)
+    assert p.returncode == 1
+    assert any(v["rule"] == "stat-block" and "共 0 处" in v["text"] for v in out["violations"])
+
+
+# ---- RE_STAT 词界：英文词内的 d/g/r 不得被误当效应量 ----
+
+def test_sd_not_counted_as_effect_size(tmp_path):
+    """'sd=1.2'（standard deviation）中的 d 前有字母 s → 不计入；仅 74%/r=.42 两处统计。"""
+    p = run("样本标准差 sd=1.2 [[1]](https://x.org/a)。\n"
+            "干预后 74.0% 好转 [[1]](https://x.org/a)。\n"
+            "相关 r=.42 [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    out = json.loads(p.stdout)
+    assert p.returncode == 1
+    assert any(v["rule"] == "stat-block" and "共 2 处" in v["text"] for v in out["violations"])
+
+
+def test_id_not_counted_as_effect_size(tmp_path):
+    """'id=7'（编号）中的 d 前有字母 i → 不计入；仅 80%/90% 两处统计。"""
+    p = run("编号 id=7 出现 [[1]](https://x.org/a)。\n"
+            "占比 80% [[1]](https://x.org/a)。\n"
+            "另一 90% [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    out = json.loads(p.stdout)
+    assert p.returncode == 1
+    assert any(v["rule"] == "stat-block" and "共 2 处" in v["text"] for v in out["violations"])
+
+
+def test_r_equals_still_counts_after_word_boundary(tmp_path):
+    """'r=.42' 前是空格 → 仍计入；配合 d=0.6 / 55% 满足三处。"""
+    p = run("相关 r=.42 [[1]](https://x.org/a)。\n"
+            "效应 d=0.6 [[1]](https://x.org/a)。\n"
+            "占比 55% [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    assert p.returncode == 0

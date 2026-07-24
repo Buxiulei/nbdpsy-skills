@@ -32,8 +32,19 @@ RE_RIGHT = re.compile(rf"[{CLOSE_PUNCT}]\*\*(?=[{WORDISH}])")
 RE_LEFT = re.compile(rf"(?<=[{WORDISH}])\*\*(?=[{OPEN_PUNCT}])")
 # 文内数字标注 [[n]](url)
 RE_MARKER = re.compile(r"\[\[(\d+)\]\]\(https?://[^)]+\)")
-# 统计数据样式：百分比/千分比/倍数（pillar-spec R3「带出处统计块」的可执行判据）
-RE_STAT = re.compile(r"\d+(?:\.\d+)?\s*[%％‰]|\d+(?:\.\d+)?\s*倍")
+# 统计数据样式（pillar-spec R3「带出处统计块」的可执行判据）：
+#   百分比/千分比、倍数、相关/效应量（r/d/β/η²）、比值（OR/HR/RR/d/g）、置信区间（95% CI）。
+#   样本量单独不算（N=224 不匹配任何分支）——它是规模不是统计结论。
+#   2026-07 扩展：恋爱脑一文正文含 r=.42 / r=−.29 等学术统计却零 %/倍，扩前会漏计致 R3 误判不合格。
+#   词界（2026-07 加固）：效应量/比值分支前加 (?<![A-Za-z]) 负向后顾——否则英文词内的 d/g/r 会被误当效应量，
+#   如 'sd=1.2'（standard deviation）、'id=7'（编号）都不是统计结论，不得计入；'r=.42' 前是空格/CJK 仍计入。
+RE_STAT = re.compile(
+    r"\d+(?:\.\d+)?\s*[%％‰]"                       # 百分比/千分比
+    r"|\d+(?:\.\d+)?\s*倍"                          # 倍数
+    r"|(?<![A-Za-z])[rdβη]²?\s*[=＝]\s*[-−]?\.?\d"  # 相关系数/效应量 r/d/β/η(²)
+    r"|(?<![A-Za-z])(?:OR|HR|RR|d|g)\s*[=＝]\s*\d"  # 比值/效应量 OR/HR/RR/d/g
+    r"|95%\s*CI"                                    # 置信区间
+)
 RE_REF_HEADING = re.compile(r"^##\s*参考文献\s*$")
 RE_FENCE = re.compile(r"^```")
 
