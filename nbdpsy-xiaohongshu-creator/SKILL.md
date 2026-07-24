@@ -180,7 +180,7 @@ post-0N.md
 images/post-NN/    出图产物，每篇一子目录（第 6 步生成，P01.png…PNN.png）
 ```
 
-一篇一文件，方便人工逐条复制去发。单篇文件格式见 `assets/example-xhs-note.md`（黄金范例，对照学习；范例暂未含「视频参考图提示词」节，该节规格以 `references/illustration-spec.md` 第 6 节为准）。
+一篇一文件，方便人工逐条复制去发。单篇文件格式见 `assets/example-xhs-note.md`（黄金范例，含视频参考图提示词节，对照学习）。
 
 **生成预览页**——把拆分产物渲染成一个自带一键复制按钮的网页，区分"给人读"与"复制给 AI"两类内容：
 
