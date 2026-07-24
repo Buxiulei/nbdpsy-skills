@@ -9,6 +9,19 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.27.0] — 2026-07-24
+
+### seo-artical-creator：博客分类体系六分类 + 选型指南
+
+- **动机**：官网 45 篇长文全挂「心理科普」单一分类，筛选条形同虚设——根因是 pillar-spec 的
+  frontmatter 示例写死 `category_slug: psych-101` 且无选型指南，所有文章照抄示例。
+- 生产库已建 5 个新分类并按主题回填 45 篇（创伤与疗愈 11 / 情绪与自我 18 / 亲密与家庭 7 /
+  职场心理 2 / 留学生心理 1 / 心理科普兜底 6）；发布链路（category_slug/tags 映射）本就齐全，零代码改动。
+- pillar-spec 新增「固定分类清单」六选一与判据（两类都沾选更具体的；绝不自造 slug——服务端 400；
+  扩分类须先生产库建好再用）；SKILL.md frontmatter 字段清单补 category_slug/tags 并强调选型。
+
+---
+
 ## [1.26.0] — 2026-07-24
 
 ### 黄金范例升级 v1.9 知识海报密度体系（xiaohongshu-creator）
