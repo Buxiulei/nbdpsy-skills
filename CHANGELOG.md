@@ -9,6 +9,47 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.30.0] — 2026-07-24
+
+### seo-artical-creator 新增发布前统一预检管道 `preflight.py`
+
+**动机**：pillar-spec 十条硬性要求此前分散在多个脚本与人工自觉之间，2026-07 真实事故=R3
+「带出处统计块」被静默跳过发布（有文章引 8 篇实证研究却零数据点）。系统性解法=把**全部可机检项
+进一条管道**，任一 fail 拦住发布；不可机检项明确标 manual 逐条自查，绝不做假阳性闸门。
+
+- **新脚本 `scripts/preflight.py`**：一条命令逐项机检 R1 字数 / R2 答案前置 / R3 带出处统计块 /
+  R5 FAQ / R6 参考文献 / R7 敏感词两级 / R8 危机声明 / R9 内链 / R10 结构 + frontmatter 完备
+  F1（title/slug/excerpt/meta_description/category/tags/target_keywords/author）/ F2 标签对齐 +
+  中文加粗与文内引用渲染合规。stdout 纯 JSON `{ok,summary,checks:[{id,rule,status,detail,fix?}]}`，
+  status ∈ pass|fail|warn|manual，任一 fail → exit 1。`--online` 抽测 R6 参考文献 URL 可达性与
+  R9 内链 /blog/ 目标 slug 存在性（网络失败宽容降级 warn）。内部复用 count_hanzi / lint_markdown /
+  publish_post.parse_frontmatter，不 subprocess 套娃；引文可达性/数字口径/专家引语真实性列为
+  manual，绝不假装能测。
+- **`lint_markdown.py` 统计判据扩展**：RE_STAT 增加学术统计形态——相关/效应量（r/d/β/η²）、
+  比值（OR/HR/RR/g）、置信区间（95% CI）；样本量（N=224）单独不算。修复「恋爱脑」一文正文含
+  r=.42/r=−.29 等学术统计却被 R3 漏计的盲点。同步更新既有测试并补充学术形态/样本量用例。
+- **SKILL.md 管道化改造**：第 4 步统一改跑 preflight，**全绿（无 fail）才允许发布**；第 5 步加硬性
+  前置「preflight 未全绿禁止调用 publish_post.py」；原单脚本保留为局部调试；关键文件表补 preflight.py。
+- **`references/pillar-spec.md`** R3 行补一句：统计形态含百分比/倍数/相关与效应量（r/d/OR 等）。
+- **测试 `tests/test_preflight.py`**：最小合格文档全绿 + 逐项违规（每条 R 规则、frontmatter 六分类/
+  meta 长度/tags 数量、敏感词两级分开测、F2 warn 不拦发布）。
+
+---
+
+## [1.29.2] — 2026-07-24
+
+### 咨询师简历卡：AI 直出转正 + 高密度硬要求（运营定案）
+
+- 实测 gpt-image-2 吃照片 anchor 的人物还原度与版式融合俱佳，**AI 直出改为默认路线**：照片
+  `--upload-images` 上图床取直链 → `gen_images --pages <简历页> --anchor-url <直链>` 直出；
+  **成图必须经咨询师本人过目认可后才可发布**（并入其自审环节，硬闸）；compose_photo 本地合成
+  降级为像素级保真备选。
+- **简历卡密度硬要求**：8–10 信息点、2–3 区块满版、图文双通道（教育/资质/受训/执业数据/擅长
+  方向药丸组/风格句，全部取材 profile_sections）——「名片式」几条内容视为不合格；提示词骨架
+  重写为金标准颗粒度，一张装不下拆两张同 anchor。
+
+---
+
 ## [1.29.1] — 2026-07-24
 
 ### 咨询师推介：价格默认不展示（运营口径定案）
