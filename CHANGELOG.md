@@ -9,6 +9,16 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.31.1] — 2026-07-24
+
+### pillar-spec R5 补注：正文 FAQ 节由前端展示层剥离
+
+- 官网详情页曾双重渲染 FAQ（正文节 + FaqBlock），已在 marketing-web 渲染层修复
+  （stripFaqSection，数据层不动）。R5 补注：正文仍必须写全 FAQ 节——下游拆小红书取材与
+  preflight 校验都依赖它，别因页面上不直接显示就省略。
+
+---
+
 ## [1.31.0] — 2026-07-24
 
 ### xiaohongshu-creator 落地「发布文案排版体系」（手机端实际渲染）
