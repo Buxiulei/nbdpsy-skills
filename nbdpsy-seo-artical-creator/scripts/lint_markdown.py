@@ -32,15 +32,18 @@ RE_RIGHT = re.compile(rf"[{CLOSE_PUNCT}]\*\*(?=[{WORDISH}])")
 RE_LEFT = re.compile(rf"(?<=[{WORDISH}])\*\*(?=[{OPEN_PUNCT}])")
 # 文内数字标注 [[n]](url)
 RE_MARKER = re.compile(r"\[\[(\d+)\]\]\(https?://[^)]+\)")
+# 统计数据样式：百分比/千分比/倍数（pillar-spec R3「带出处统计块」的可执行判据）
+RE_STAT = re.compile(r"\d+(?:\.\d+)?\s*[%％‰]|\d+(?:\.\d+)?\s*倍")
 RE_REF_HEADING = re.compile(r"^##\s*参考文献\s*$")
 RE_FENCE = re.compile(r"^```")
 
 
-def lint(text: str, citations: int | None):
+def lint(text: str, citations: int | None, stats_min: int = 0):
     violations = []
     cited = set()
     in_fence = False
     before_refs = True
+    stats_cited = stats_total = 0  # 带引用标注同句的统计数 / 全文统计样式总数
     for i, line in enumerate(text.splitlines(), 1):
         if RE_FENCE.match(line.strip()):
             in_fence = not in_fence
@@ -56,8 +59,19 @@ def lint(text: str, citations: int | None):
                 "fix": "把全角标点/引号移到 ** 之外（如 `**……**。`），否则渲染器会原样输出 **",
             })
         if before_refs:
+            line_stats = len(RE_STAT.findall(line))
+            stats_total += line_stats
+            if RE_MARKER.search(line):
+                stats_cited += line_stats  # R3：统计数据须与出处标注同句（行级近似）
             for m in RE_MARKER.finditer(line):
                 cited.add(int(m.group(1)))
+    if stats_min and stats_cited < stats_min:
+        violations.append({
+            "rule": "stat-block", "line": 0,
+            "text": f"正文带出处的统计数据仅 {stats_cited} 处（要求 ≥{stats_min}；全篇统计样式共 {stats_total} 处）",
+            "fix": "补足真实统计数据（数字+%/‰/倍）并在同一行紧跟 [[n]](来源链接)；数字必须联网核实存在，"
+                   "严禁编造（pillar-spec 硬性要求 R3）",
+        })
     if citations:
         missing = [n for n in range(1, citations + 1) if n not in cited]
         if missing:
@@ -74,13 +88,15 @@ def main():
     ap.add_argument("file")
     ap.add_argument("--citations", type=int, default=None,
                     help="文末参考文献条数；给出则校验文内 [[n]](url) 覆盖 1..N")
+    ap.add_argument("--stats-min", type=int, default=0,
+                    help="要求正文至少 N 处「统计数据+同行引用标注」（pillar 长文按 R3 传 3；默认 0 不校验）")
     a = ap.parse_args()
     path = Path(a.file)
     if not path.is_file():
         print(json.dumps({"error": f"文件不存在: {path}"}, ensure_ascii=False))
         print(f"文件不存在: {path}", file=sys.stderr)
         sys.exit(2)
-    violations, cited = lint(path.read_text(encoding="utf-8"), a.citations)
+    violations, cited = lint(path.read_text(encoding="utf-8"), a.citations, a.stats_min)
     ok = not violations
     for v in violations:
         print(f"  ✗ [{v['rule']}] 行{v['line']}: {v['text']}", file=sys.stderr)

@@ -89,3 +89,32 @@ def test_citations_missing_number_listed(tmp_path):
 def test_missing_file_error_json_exit2(tmp_path):
     r = subprocess.run([sys.executable, str(SCRIPT), str(tmp_path / "nope.md")], capture_output=True, text=True)
     assert r.returncode == 2 and "error" in json.loads(r.stdout)
+
+
+# ---- stat-block：pillar-spec R3「带出处统计块 >=3」的可执行判据 ----
+
+def test_stats_min_fails_without_cited_stats(tmp_path):
+    """有引用标注但零统计数字 → stat-block 违规（恋爱脑一文的真实事故形态）。"""
+    p = run("研究显示这类现象很普遍 [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    out = json.loads(p.stdout)
+    assert p.returncode == 1
+    assert any(v["rule"] == "stat-block" for v in out["violations"])
+
+
+def test_stats_min_passes_with_three_cited_stats(tmp_path):
+    p = run("干预后 74.0% 不再符合诊断 [[1]](https://x.org/a)。\n"
+            "另有 87.7% 改善 [[1]](https://x.org/a)。\n"
+            "脱落率约 16%（对照 2 倍差异）[[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    assert p.returncode == 0
+
+
+def test_stats_without_marker_do_not_count(tmp_path):
+    """统计数字不带同行引用标注 → 不计入（R3 要求紧跟来源）。"""
+    p = run("有 80% 的人如此。另有 70% 类似。还有 3 倍差距。\n"
+            "结论句 [[1]](https://x.org/a)。\n\n## 参考文献\n1. X\n",
+            tmp_path, "--citations", "1", "--stats-min", "3")
+    out = json.loads(p.stdout)
+    assert p.returncode == 1
+    assert any(v["rule"] == "stat-block" and "共 3 处" in v["text"] for v in out["violations"])

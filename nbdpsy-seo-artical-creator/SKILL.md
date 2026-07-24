@@ -96,8 +96,8 @@ python3 {SKILL_DIR}/scripts/count_hanzi.py "$WS/drafts/{slug}.md"
 # 参考文献/内链 URL 可达性初筛（HTTP 层，便宜地揪死链，有死链 exit 1；语义正确性仍须第2步逐条打开网页核实保证）
 python3 {SKILL_DIR}/scripts/check_links.py "$WS/drafts/{slug}.md"
 
-# 中文加粗渲染兼容性 + 文内引用标注覆盖率（bold-flanking + citation-marker；--citations 取 frontmatter citations 数组条数；有违规 exit 1，按行号提示修正后重跑到 ok=true 才能进入下一步）
-python3 {SKILL_DIR}/scripts/lint_markdown.py "$WS/drafts/{slug}.md" --citations <citations 条数>
+# 中文加粗渲染兼容性 + 文内引用标注覆盖率 + 带出处统计块（bold-flanking + citation-marker + stat-block；--citations 取 frontmatter citations 数组条数，--stats-min 3 执行硬性要求 R3「≥3 处统计数据且同行紧跟 [[n]](url) 出处」；有违规 exit 1，修正后重跑到 ok=true 才能进入下一步）
+python3 {SKILL_DIR}/scripts/lint_markdown.py "$WS/drafts/{slug}.md" --citations <citations 条数> --stats-min 3
 ```
 
 人工/语义自检清单：
