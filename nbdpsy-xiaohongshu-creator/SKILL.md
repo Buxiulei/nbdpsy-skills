@@ -1,6 +1,6 @@
 ---
 name: nbdpsy-xiaohongshu-creator
-description: 把 nbdpsy-seo-artical-creator 产出的心理科普 pillar 长文（或任意一篇官网博客长文）拆分成多篇可直接发小红书的图文笔记——每篇约 300 字正文 + 一套 6–9 页「PPT 式」轮播插图，每页给出页面文字与可直接喂给 Gemini/GPT 的中文绘图提示词（图中要显示的中文文字直接写进提示词里）。只要用户提到「拆成小红书 / 发小红书 / 小红书笔记 / 小红书图文 / 把这篇博客或长文改成小红书 / 出几条小红书 / 小红书配图提示词 / RED 笔记 / 长文拆短文配图」，即使没说「拆分」或「配图」字样，也应使用本 skill。本 skill 是 NBDpsy 专用（绑定其品牌话术、心理科普合规红线与固定视觉品牌基底），承接 nbdpsy-seo-artical-creator 的长文产物；不适用于其它站点的泛化小红书写作。
+description: 把 nbdpsy-seo-artical-creator 产出的心理科普 pillar 长文（或任意一篇官网博客长文）拆分成多篇可直接发小红书的图文笔记——每篇约 300 字正文 + 一套 6–9 页「PPT 式」轮播插图，每页给出页面文字与可直接喂给 Gemini/GPT 的中文绘图提示词（图中要显示的中文文字直接写进提示词里）。只要用户提到「拆成小红书 / 发小红书 / 小红书笔记 / 小红书图文 / 把这篇博客或长文改成小红书 / 出几条小红书 / 小红书配图提示词 / RED 笔记 / 长文拆短文配图」，即使没说「拆分」或「配图」字样，也应使用本 skill。本 skill 还能做**咨询师推介笔记**（独立场景，不从长文拆分）：从官网公开资料取材，给某位咨询师做一条图文介绍；当用户说「给咨询师写小红书介绍 / 咨询师推介笔记 / 推介咨询师 / 给 XX 老师做条小红书 / 介绍某个咨询师」时也用本 skill。本 skill 是 NBDpsy 专用（绑定其品牌话术、心理科普合规红线与固定视觉品牌基底），承接 nbdpsy-seo-artical-creator 的长文产物；不适用于其它站点的泛化小红书写作。
 ---
 
 # 小红书图文笔记创作（从 pillar 长文拆分）
@@ -348,14 +348,33 @@ python3 {SKILL_DIR}/scripts/publish_note.py --self-check
 
 ---
 
+## 咨询师推介笔记（独立场景，不从长文拆分）
+
+除了「拆长文」，本 skill 还能给**某一位咨询师**做一条推介图文笔记（卖点是「这个人可信、可托付」，不是疗效）。取材源不同（官网咨询师公开资料，不拆 pillar），品牌基底 / 合规红线 / 出图 / 发布链路全部复用本 skill 既有能力。**完整规格见 `references/counselor-note-spec.md`**（数据字段口径、照片三铁律、文案骨架、4–6 页轮播结构、P2 底图留白模板），下面只给速记。
+
+**🔴 两条红线先记牢**：① `contracted_price`（签约价）是隐私字段，`fetch_counselor.py` 已在返回前删除，任何产物里绝不出现——对外价格只有 `price_per_session`（¥N / 次）和 `communication_price`（预沟通 ¥N / 免费）。② 真人照片三铁律——**出图前必须拿到"咨询师本人同意用于小红书宣传"的确认**（未确认停等不出图）；照片**只做本地合成、绝不喂 AI 生图/重绘**；照片不入 git、用完提醒运营自行保管。
+
+**流程速记**：`fetch_counselor.py` 取材（确认 `is_accepting=true` + 输出无 `contracted_price`）→ **停等：问运营要不要放真人照片、要则索取照片 + 授权确认**（拿不到就 P2 走纯插画简历卡）→ 按 spec §3 写文案（亮点逐条对齐后台资料、不编造）→ `check_compliance.py` 全绿 → 路线 0 出底图（P2 用留白模板）→ `compose_photo.py` 把授权照片合进 P2 留白区 → 图审（错字 / 风格一致 / 照片无变形）→ 沿用路线 A/B 发布（发布前确认账号）。轮播 4–6 页：P1 封面（插画+姓名 title 钩子，不含真人）、P2 简历卡（顶部留白放照片）、P3 专长/风格卡（纯信息图）、PN 预约页 + 危机声明。
+
+两条命令示例：
+
+```bash
+python3 {SKILL_DIR}/scripts/fetch_counselor.py --list            # 全部咨询师概览，选人
+python3 {SKILL_DIR}/scripts/fetch_counselor.py --emp <emp_no>    # 单人详情（含 profile_sections，已删 contracted_price）
+python3 {SKILL_DIR}/scripts/compose_photo.py --base <P2底图.png> --photo <授权照片> --out <P2成图.png> --region top
+```
+
 ## 关键文件
 
 | 用途 | 路径 |
 |------|------|
 | 笔记结构规格 + 合规红线 + 禁用词替换表 | `references/xiaohongshu-spec.md` |
+| 咨询师推介笔记规格（字段口径 + 照片三铁律 + 文案骨架 + 4–6 页轮播 + P2 留白模板） | `references/counselor-note-spec.md` |
 | 插图提示词体系（固定品牌基底 + 文字入图 + 单页模板 + 多页一致性 + 视频参考图去文字版） | `references/illustration-spec.md` |
 | 单篇笔记黄金范例（从 CPTSD pillar 拆出，对照学习） | `assets/example-xhs-note.md` |
 | 拉取源长文（--slug 单篇 / --list 列表） | `scripts/fetch_post.py` |
+| 拉取咨询师公开资料（--list 概览 / --emp 单人详情，已删 contracted_price） | `scripts/fetch_counselor.py` |
+| 咨询师照片本地合成进 P2 留白区（等比裁剪+圆角+品牌色描边，绝不喂 AI；--region top/left） | `scripts/compose_photo.py` |
 | 正文汉字计数 + 页数区间判定 | `scripts/count_xhs.py` |
 | 高置信违禁词扫描 + 危机声明在位检查 | `scripts/check_compliance.py` |
 | 渲染预览页（发布文案 UI + 提示词一键复制） | `scripts/render_preview.py` |

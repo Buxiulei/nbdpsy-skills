@@ -75,12 +75,24 @@ def count_pages(text: str) -> int:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "usage: count_xhs.py <file>"}, ensure_ascii=False))
+    # 页数区间可覆盖：长文拆分默认 6–9；咨询师推介笔记场景传 --page-min 4 --page-max 6
+    args, files = sys.argv[1:], []
+    page_min, page_max = PAGE_MIN, PAGE_MAX
+    i = 0
+    while i < len(args):
+        if args[i] == "--page-min" and i + 1 < len(args):
+            page_min = int(args[i + 1]); i += 2
+        elif args[i] == "--page-max" and i + 1 < len(args):
+            page_max = int(args[i + 1]); i += 2
+        else:
+            files.append(args[i]); i += 1
+    if not files:
+        print(json.dumps({"error": "usage: count_xhs.py <file> [--page-min N] [--page-max N]"},
+                         ensure_ascii=False))
         sys.stderr.write("Error: missing required argument <file>\n")
         sys.exit(2)
 
-    filepath = Path(sys.argv[1])
+    filepath = Path(files[0])
 
     try:
         text = filepath.read_text(encoding="utf-8")
@@ -98,7 +110,7 @@ def main():
     hi = DEFAULT_TARGET * 150 // 100
 
     ok_body = lo <= body_chars <= hi
-    ok_pages = PAGE_MIN <= pages <= PAGE_MAX
+    ok_pages = page_min <= pages <= page_max
     # 标题缺失不判 FAIL（范例/片段文件可能无 frontmatter）；有则必须 ≤20 字
     ok_title = (not title_found) or (title_chars <= TITLE_MAX)
     ok = ok_body and ok_pages and ok_title

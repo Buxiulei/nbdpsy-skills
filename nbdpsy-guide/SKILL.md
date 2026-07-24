@@ -45,6 +45,7 @@ python3 PUB --self-check              # 小红书 API：连通性 + 身份 + 被
 |---|---|---|
 | 写一篇官网博客长文并发布 | 「写一篇 XX 主题的科普长文」 | nbdpsy-seo-artical-creator |
 | 把长文拆成小红书图文笔记 + 配图提示词 | 「把这篇拆成小红书」 | nbdpsy-xiaohongshu-creator |
+| **给某位咨询师写小红书介绍**（推介笔记，从官网资料取材） | 「给 XX 咨询师写小红书介绍」 | nbdpsy-xiaohongshu-creator（咨询师场景）｜要放真人照片先问运营拿本人授权 |
 | 把笔记做成带字幕的竖屏短视频 | 「把这篇做成视频」 | nbdpsy-text-to-video |
 | **搬运一条 YouTube 视频**（翻译+配音+烧中文字幕，自动带品牌 logo） | 「搬运这个 YouTube 视频」+ 链接 | nbdpsy-youtube-transport |
 | 质检（找茬、查合规） | 自动在每步之间跑，不用单独喊 | nbdpsy-content-reviewer |
