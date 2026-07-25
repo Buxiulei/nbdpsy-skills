@@ -256,7 +256,10 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 
 > 服务端为 nbdpsy-server（mcp.nbdpsy.com）`/api/op/consistent-images`（gpt-image-2 锚点法 +
 > 自动去水印，2026-07-23 端到端回归通过）。**已知行为**：出图实际为 1024×1536（**2:3 竖版**，非严格
-> 3:4）——小红书可直接发布，feed 预览会按 3:4 裁剪，提示词里重要文字/构图**勿贴上下边缘**；
+> 3:4）——feed 预览按 3:4 从**上下**裁剪，会切掉页脚的危机声明（12356）与 G2 就医分流句。
+> ⚠️ **不要试图用提示词控制边距（实测无效）**：运营 2026-07-25 在提示词里写死「底部至少留 100px
+> 安全边距」后重新出图，底部留白最小值 8px→5px、中位 21px→17px，**毫无改善**——图像模型不遵守
+> 像素级版面约束。**出图完成后统一跑补边脚本转成严格 3:4**（见第 6 步收尾）；
 > `--job` 复查 404 = 任务台账丢（server 重启，终态只留 2 小时）→ 生图**可安全重新发起**（与删除不同，
 > 代价只是重新扣额度）。
 
@@ -310,7 +313,20 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
    ```bash
    python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 3,5 --anchor-url <那个URL>
    ```
-   `outcome=pending/unknown`（任务已入队未确认）→ 按 hint 用 `--job <id> --session <id>` 复查补下，**绝不重发**（会重复生成烧额度）。全部 `outcome=done` 后进入图片对抗审查（下同，原文不动）。
+   `outcome=pending/unknown`（任务已入队未确认）→ 按 hint 用 `--job <id> --session <id>` 复查补下，**绝不重发**（会重复生成烧额度）。
+
+4. **补边成严格 3:4（收尾必做，⚠️ 必须在所有重出完成之后）**：后端只能出 1024×1536（2:3），
+   小红书 feed 按 3:4 从上下裁切，会切掉页脚的危机声明与就医分流句。跑一次补边转成 1152×1536：
+   ```bash
+   python3 {SKILL_DIR}/scripts/pad_to_3x4.py {note_dir}/images        # 递归整个 images 目录
+   python3 {SKILL_DIR}/scripts/pad_to_3x4.py {note_dir}/images --dry-run   # 先看会改哪些
+   ```
+   左右各补 64px、用最外一列像素横向外延填充——**不裁不缩、文字与图形一个像素都不动**，平背景下接缝不可见。
+   脚本**幂等**（已是 3:4 的跳过），重复跑安全。
+   ⚠️ **顺序不能反**：`gen_images.py` 重出会写回未补边的 1024 宽图，**任何一次重出之后都要重跑本步**。
+   （已向服务端提需求把补边并进出图后处理；落地后本步降级为兜底，用于处理历史图。）
+
+   全部 `outcome=done` 且补边完成后，进入图片对抗审查（下同，原文不动）。
 
 **凭据缺失或后端出图不可用时**，回到下面两条宿主/人工兜底路线：
 
@@ -515,6 +531,7 @@ python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9
 | 拉取咨询师公开资料（--list 概览 / --emp 单人详情，已删 contracted_price；`--avatar-out <路径>` 把系统头像下载到本地供末页推介页出图） | `scripts/fetch_counselor.py` |
 | 咨询师照片本地合成进 P1 封面留白区（备选保真路线；等比裁剪+圆角+品牌色描边，绝不喂 AI；--region top/left） | `scripts/compose_photo.py` |
 | 正文汉字计数 + 页数区间判定 | `scripts/count_xhs.py` |
+| 配图补边成严格 3:4（1024×1536→1152×1536，边缘外延、不裁不缩、幂等；出图收尾必跑，重出后要重跑） | `scripts/pad_to_3x4.py` |
 | 高置信违禁词扫描 + 危机声明在位检查（`--no-crisis` 跳过危机声明检查，咨询师推介场景用；违禁词照扫） | `scripts/check_compliance.py` |
 | 渲染预览页（发布文案 UI + 提示词一键复制） | `scripts/render_preview.py` |
 | 后端一致性出图（gpt-image 锚点法，异步 + 轮询；--cover-only 过闸门 / --anchor-url 批量 / --pages 重出失败页 / --job 复查 / --dry-run） | `scripts/gen_images.py` |
