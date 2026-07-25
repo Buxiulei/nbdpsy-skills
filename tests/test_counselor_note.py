@@ -1,5 +1,5 @@
 """咨询师推介笔记两脚本的单测（不打网）：
-  fetch_counselor —— data 信封解构 / contracted_price 被删 / --list 字段映射
+  fetch_counselor —— data 信封解构 / contracted_price 被删 / --list 字段映射 / 头像下载
   compose_photo   —— 区域计算纯函数 / 本地合成尺寸与像素断言（无 Pillow 则 skip）
 """
 import sys
@@ -88,6 +88,94 @@ def test_list_counselors_field_mapping(monkeypatch):
     assert rows[1]["is_accepting"] is False
     # 概览里绝不透出签约价
     assert all("contracted_price" not in r for r in rows)
+
+
+# ========== fetch_counselor · 系统头像下载（末页推介页素材） ==========
+
+AVATAR_DETAIL = {
+    "data": {
+        "emp_no": "EMP001",
+        "display_name": "徐瑞恒",
+        "avatar_url": "/static/avatars/counselor_abc.jpg",
+    }
+}
+
+
+def _patch_avatar(monkeypatch, detail=None, blob=b"\xff\xd8fake-jpeg"):
+    """请求层双 patch：详情走 fetch_json，头像走 download_bytes，全程不打网。
+    返回被请求过的头像 URL 列表，供断言相对路径已拼成绝对 URL。"""
+    import copy
+    import fetch_counselor
+    seen = []
+    monkeypatch.setattr(fetch_counselor, "fetch_json",
+                        lambda url: copy.deepcopy(detail or AVATAR_DETAIL))
+
+    def fake_download(url):
+        seen.append(url)
+        return blob
+
+    monkeypatch.setattr(fetch_counselor, "download_bytes", fake_download)
+    return seen
+
+
+def test_download_avatar_to_dir(monkeypatch, tmp_path):
+    """目录入参 → 自动命名 avatar-<emp_no>.<原扩展名>；相对路径拼成绝对 URL 下载。"""
+    import fetch_counselor
+    seen = _patch_avatar(monkeypatch)
+    detail = fetch_counselor.fetch_counselor("EMP001", api_base="https://x")
+    path = fetch_counselor.download_avatar(detail, str(tmp_path), api_base="https://x")
+
+    assert seen == ["https://x/static/avatars/counselor_abc.jpg"]
+    assert path == str(tmp_path / "avatar-EMP001.jpg")
+    assert (tmp_path / "avatar-EMP001.jpg").read_bytes().endswith(b"fake-jpeg")
+
+
+def test_download_avatar_to_file_path(monkeypatch, tmp_path):
+    """显式文件路径 → 原样用；父目录不存在时自动建。"""
+    import fetch_counselor
+    _patch_avatar(monkeypatch)
+    detail = fetch_counselor.fetch_counselor("EMP001", api_base="https://x")
+    dest = tmp_path / "photo" / "头像.jpg"
+    path = fetch_counselor.download_avatar(detail, str(dest), api_base="https://x")
+    assert path == str(dest)
+    assert dest.is_file()
+
+
+def test_download_avatar_absolute_url_kept(monkeypatch, tmp_path):
+    """avatar_url 已是绝对 URL 时不再拼 api_base（防拼成 https://x/https://…）。"""
+    import copy
+    import fetch_counselor
+    detail_src = copy.deepcopy(AVATAR_DETAIL)
+    detail_src["data"]["avatar_url"] = "https://cdn.example.com/a.png"
+    seen = _patch_avatar(monkeypatch, detail=detail_src)
+    detail = fetch_counselor.fetch_counselor("EMP001", api_base="https://x")
+    path = fetch_counselor.download_avatar(detail, str(tmp_path), api_base="https://x")
+    assert seen == ["https://cdn.example.com/a.png"]
+    assert path.endswith("avatar-EMP001.png")
+
+
+def test_download_avatar_missing_raises(monkeypatch, tmp_path):
+    """后台没头像 → 抛错而非静默返回 None（静默会让出图拿空 anchor、白烧额度）。"""
+    import copy
+    import fetch_counselor
+    detail_src = copy.deepcopy(AVATAR_DETAIL)
+    detail_src["data"]["avatar_url"] = None
+    _patch_avatar(monkeypatch, detail=detail_src)
+    detail = fetch_counselor.fetch_counselor("EMP001", api_base="https://x")
+    with pytest.raises(ValueError, match="未上传头像"):
+        fetch_counselor.download_avatar(detail, str(tmp_path), api_base="https://x")
+
+
+def test_avatar_out_requires_emp():
+    """--avatar-out 单独用（配 --list）应报错退出，不静默忽略。"""
+    import subprocess
+    import sys as _sys
+    script = (Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator"
+              / "scripts" / "fetch_counselor.py")
+    r = subprocess.run([_sys.executable, str(script), "--list", "--avatar-out", "/tmp/x"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "--avatar-out" in r.stderr
 
 
 # ========== compose_photo ==========
