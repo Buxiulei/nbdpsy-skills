@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,60 @@ def test_body_min_max_override(tmp_path):
                          "--body-min", "400", "--body-max", "800"], capture_output=True, text=True)
     d2 = json.loads(r2.stdout)
     assert d2["body_chars"] == 500 and d2["ok_body"] is True
+
+
+def _retitle(tmp_path, new_title, name="retitled.md"):
+    """复用 fixture 正文，只换 frontmatter 的 title。"""
+    src = FIXTURE.read_text(encoding="utf-8")
+    out = re.sub(r"^title:.*$", f"title: {new_title}", src, count=1, flags=re.MULTILINE)
+    f = tmp_path / name
+    f.write_text(out, encoding="utf-8")
+    return f
+
+
+def _run(*argv):
+    r = subprocess.run([sys.executable, str(SCRIPT), *map(str, argv)],
+                       capture_output=True, text=True)
+    return r, json.loads(r.stdout)
+
+
+def test_title_keyword_not_passed_is_backward_compatible():
+    """不传 --title-keyword 时行为与历史版本一致：fixture 标题里关键词在末尾也照样 ok。"""
+    r, d = _run(FIXTURE)
+    assert r.returncode == 0 and d["ok"] is True and d["ok_title"] is True
+    assert d["title_keyword"] == "" and d["title_keyword_pos"] is None and d["title_reason"] == ""
+
+
+def test_title_keyword_in_head_passes(tmp_path):
+    """关键词完整落在前 10 字内 → ok_title True；大小写不敏感（cptsd 命中 CPTSD）。"""
+    f = _retitle(tmp_path, "CPTSD 和创伤后应激有什么不同")
+    r, d = _run(f, "--title-keyword", "cptsd")
+    assert r.returncode == 0 and d["ok_title"] is True
+    assert d["title_keyword_pos"] == 0 and d["title_reason"] == ""
+
+
+def test_title_keyword_after_head_fails():
+    """关键词被钩子挤到 10 字之后 → ok_title False + title_reason 说明原因（fixture 原标题即此形态）。"""
+    r, d = _run(FIXTURE, "--title-keyword", "复杂性创伤")
+    assert r.returncode == 2 and d["ok_title"] is False and d["ok"] is False
+    assert d["title_keyword_pos"] == 13 and "前 10 字" in d["title_reason"]
+
+
+def test_title_keyword_absent_fails():
+    """关键词根本不在标题里 → pos = -1 + 对应原因。"""
+    r, d = _run(FIXTURE, "--title-keyword", "童年情感忽视")
+    assert r.returncode == 2 and d["ok_title"] is False
+    assert d["title_keyword_pos"] == -1 and "未出现在标题里" in d["title_reason"]
+
+
+def test_title_keyword_without_frontmatter_fails(tmp_path):
+    """显式要求校验关键词、却没有 title 可校 → 不静默放行（无参数时仍按历史放行）。"""
+    f = tmp_path / "no_fm.md"
+    f.write_text("## 发布文案\n\n" + "创" * 300 + "\n", encoding="utf-8")
+    _, d_with = _run(f, "--title-keyword", "童年情感忽视")
+    assert d_with["ok_title"] is False and "无法校验" in d_with["title_reason"]
+    _, d_without = _run(f)
+    assert d_without["ok_title"] is True and d_without["title_reason"] == ""
 
 
 def test_missing_file_errors_to_stdout(tmp_path):

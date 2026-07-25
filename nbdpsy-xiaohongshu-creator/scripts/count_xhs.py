@@ -11,6 +11,16 @@ DEFAULT_TARGET = 300
 PAGE_MIN = 6
 PAGE_MAX = 9
 TITLE_MAX = 20  # 小红书标题硬限 20 字（xiaohongshu-spec §1）——此前 spec 写了红线但脚本零守卫
+TITLE_KEYWORD_HEAD = 10  # 目标长尾词必须完整落在标题前 10 字内（xiaohongshu-spec §1「标题」2026-07-26 改版）
+
+# emoji / 变体选择符 / 零宽连接符 —— 计数与定位前统一剔除，两处口径必须一致
+_EMOJI_RE = re.compile(
+    r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\uFE0F\u200D\u2190-\u21FF\u2B00-\u2BFF]")
+
+
+def strip_emoji(text: str) -> str:
+    """剔除 emoji 与变体选择符，返回用于计数/定位的标题正文。"""
+    return _EMOJI_RE.sub("", text).strip()
 
 
 def count_body_chars(text: str) -> int:
@@ -62,10 +72,26 @@ def count_title_chars(text: str) -> tuple:
         return ("", 0, False)
     title = mt.group(1).strip().strip('"').strip("'")
     # 剔除 emoji（含变体选择符/零宽连接符）后计数
-    cleaned = re.sub(
-        r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\uFE0F\u200D\u2190-\u21FF\u2B00-\u2BFF]",
-        "", title)
-    return (title, len(cleaned.strip()), True)
+    return (title, len(strip_emoji(title)), True)
+
+
+def check_title_keyword(title: str, keyword: str) -> tuple:
+    r"""校验目标长尾词是否**完整**落在标题前 TITLE_KEYWORD_HEAD 字内。
+
+    口径与 title_chars 一致（先剔 emoji 再定位），大小写不敏感（CPTSD / cptsd 同词）。
+    "完整落在前 10 字内" = 词的结束位置 <= 10——排在 10 字之后的关键词等于没写
+    （手机一屏标题约露 12 字，搜索匹配与算法权重都偏重前段）。
+    返回 (ok, pos, reason)；pos 为 0 基下标，未命中为 -1；ok 时 reason 为空串。
+    """
+    cleaned = strip_emoji(title)
+    pos = cleaned.lower().find(keyword.lower())
+    if pos < 0:
+        return (False, -1, f"目标长尾词「{keyword}」未出现在标题里")
+    if pos + len(keyword) > TITLE_KEYWORD_HEAD:
+        return (False, pos,
+                f"目标长尾词「{keyword}」未完整落在标题前 {TITLE_KEYWORD_HEAD} 字内"
+                f"（起始于第 {pos + 1} 字）——字数不够时砍钩子、不砍关键词")
+    return (True, pos, "")
 
 
 def count_pages(text: str) -> int:
@@ -78,9 +104,11 @@ def main():
     # 页数区间可覆盖：长文拆分默认 6–9；咨询师推介笔记场景传 --page-min 4 --page-max 6。
     # 正文字数区间可覆盖：默认沿用 DEFAULT_TARGET 派生的 210–450（兼容科普笔记）；
     # 咨询师推介笔记正文更长，传 --body-min 400 --body-max 800。
+    # 标题长尾词校验为**可选**：不传 --title-keyword 时行为与历史版本完全一致（只校 20 字硬限）。
     args, files = sys.argv[1:], []
     page_min, page_max = PAGE_MIN, PAGE_MAX
     body_min, body_max = None, None
+    title_keyword = ""
     i = 0
     while i < len(args):
         if args[i] == "--page-min" and i + 1 < len(args):
@@ -91,11 +119,13 @@ def main():
             body_min = int(args[i + 1]); i += 2
         elif args[i] == "--body-max" and i + 1 < len(args):
             body_max = int(args[i + 1]); i += 2
+        elif args[i] == "--title-keyword" and i + 1 < len(args):
+            title_keyword = args[i + 1].strip(); i += 2
         else:
             files.append(args[i]); i += 1
     if not files:
         print(json.dumps({"error": "usage: count_xhs.py <file> [--page-min N] [--page-max N] "
-                                    "[--body-min N] [--body-max N]"},
+                                    "[--body-min N] [--body-max N] [--title-keyword 词]"},
                          ensure_ascii=False))
         sys.stderr.write("Error: missing required argument <file>\n")
         sys.exit(2)
@@ -119,8 +149,25 @@ def main():
 
     ok_body = lo <= body_chars <= hi
     ok_pages = page_min <= pages <= page_max
-    # 标题缺失不判 FAIL（范例/片段文件可能无 frontmatter）；有则必须 ≤20 字
+    # 标题缺失不判 FAIL（范例/片段文件可能无 frontmatter）；有则必须 <=20 字
     ok_title = (not title_found) or (title_chars <= TITLE_MAX)
+    reasons = []
+    if title_found and title_chars > TITLE_MAX:
+        reasons.append(f"标题 {title_chars} 字，超硬限 {TITLE_MAX} 字")
+
+    # 目标长尾词校验（仅在传了 --title-keyword 时生效）
+    title_keyword_pos = None
+    if title_keyword:
+        if not title_found:
+            # 显式要求校验关键词，却没有 title 可校 —— 不能静默放行
+            ok_title = False
+            reasons.append(f"未找到 frontmatter title，无法校验目标长尾词「{title_keyword}」")
+        else:
+            kw_ok, title_keyword_pos, kw_reason = check_title_keyword(title, title_keyword)
+            if not kw_ok:
+                ok_title = False
+                reasons.append(kw_reason)
+
     ok = ok_body and ok_pages and ok_title
 
     result = {
@@ -129,6 +176,9 @@ def main():
         "title": title,
         "title_chars": title_chars,
         "title_found": title_found,
+        "title_keyword": title_keyword,
+        "title_keyword_pos": title_keyword_pos,
+        "title_reason": "；".join(reasons),
         "ok_body": ok_body,
         "ok_pages": ok_pages,
         "ok_title": ok_title,
