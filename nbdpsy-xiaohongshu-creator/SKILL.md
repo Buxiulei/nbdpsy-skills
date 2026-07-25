@@ -225,12 +225,20 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
    ```
    把落盘的 `P01.png` 给运营看，确认三项（① 配色只用品牌调色板 ② 人物符合固定人物卡 ③ 竖版构图
    （后端出 2:3，判据是没被出成方图/横版）＋图中中文逐字无错）。不过 → 改提示词重跑本命令，**不要往下走**。
-2. **确认通过 → 批量出全套**：记下第 1 步输出 JSON 里的 `anchor_url`（那张已确认的 P1 绝对 URL），**整套所有篇都用它**，逐篇串行出（一篇一 job，**勿并发轰后端**；每篇 ≈页数×50s，提前告知运营预期时长）：
+2. **确认通过 → 批量出全套**：记下第 1 步输出 JSON 里的 `anchor_url`（那张已确认的 P1 绝对 URL），**整套所有篇都用它**。**按篇并行、单篇内串行**（并发度 ≤6；每篇 ≈页数×50s，墙钟≈最慢那一篇，提前告知运营预期时长）：
    ```bash
-   python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --anchor-url <那个URL>
-   python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-02.md --anchor-url <那个URL>
-   # …逐篇 post-NN.md，都带同一个 anchor_url
+   # 后台并行起，每篇一个 job；日志各自落盘便于事后核对
+   for f in {note_dir}/post-*.md; do
+     python3 {SKILL_DIR}/scripts/gen_images.py --note "$f" --anchor-url <那个URL> \
+       > "${f%.md}-genimg.json" 2>&1 &
+   done
+   wait   # 全部结束后逐篇读 *-genimg.json 核对
    ```
+   > **为什么可以并行**（2026-07-25 实测）：`POST /api/op/consistent-images` 的请求体只有
+   > `prompts`(1–99) + 可选 `anchor_url`，**不接收 draft_id/session_id**——`session_id` 由服务端
+   > 每次调用现开临时容器，天然隔离。两个 job 并发实测各 57s、墙钟 57s（串行应为 ~114s），
+   > 分别拿到不同 `session_id`。6 篇 ~42 页由此从约 35 分钟压到约 6 分钟。
+   > **并发度上限只压测到 2 路**，故建议 ≤6；**遇 429/限流立即降到 2 或退回串行**。
 3. **逐篇核对失败页**：每篇输出 JSON 的 `pages` 里若有 `error`（额度/限流等会表现为该页无图），用 `--pages` 带**同一 anchor_url** 只重出失败页：
    ```bash
    python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 3,5 --anchor-url <那个URL>
