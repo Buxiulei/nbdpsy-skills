@@ -12,6 +12,7 @@
     python3 style_profile.py --put profile.json --base-version 3
         [--source manual|reference_sample|inherited_admin] [--note "按参考样本 8 张实测更新"]
     python3 style_profile.py --rollback 3 --base-version 7  # 回到 v3 的内容（会落成新版本 v8）
+    python3 style_profile.py --get-default                  # 只读默认配置（改它之前先用这个留底）
     python3 style_profile.py --admin-default profile.json [--note "..."]
         # **仅运营老大**（role=admin）：整份覆盖「默认配置」（没有个人档案的运营实时跟随它）
 
@@ -322,6 +323,8 @@ def main():
                     help="整份覆盖存新版本（**不是打补丁**；须配 --base-version）")
     ap.add_argument("--rollback", type=int, metavar="N",
                     help="回退到第 N 版（造新版本而非拨指针；须配 --base-version）")
+    ap.add_argument("--get-default", action="store_true",
+                    help="只读当前默认配置（谁都能读，不需要运营老大；改默认配置前先用它留底）")
     ap.add_argument("--admin-default", type=Path, metavar="PROFILE.JSON",
                     help="**仅运营老大**：整份覆盖默认配置（任何运营老大都能改；没有个人档案的运营"
                          "实时跟随它，不只是之后新建的；不进版本历史、不可回退，改前自行留底）")
@@ -339,11 +342,12 @@ def main():
     ap.add_argument("--timeout", type=float, default=30, help="单次请求超时秒数（默认 30）")
     args = ap.parse_args()
 
-    actions = [bool(args.get), bool(args.versions), args.version is not None,
-               args.put is not None, args.rollback is not None, args.admin_default is not None]
+    actions = [bool(args.get), bool(args.get_default), bool(args.versions),
+               args.version is not None, args.put is not None, args.rollback is not None,
+               args.admin_default is not None]
     if sum(actions) != 1:
-        ap.error("恰好指定一个动作：--get / --versions / --version N / --put FILE / "
-                 "--rollback N / --admin-default FILE")
+        ap.error("恰好指定一个动作：--get / --get-default / --versions / --version N / "
+                 "--put FILE / --rollback N / --admin-default FILE")
     # 硬约束 2：整份覆盖不猜版本号——不传 --base-version 直接报错，绝不用「最新版」代替
     if (args.put is not None or args.rollback is not None) and args.base_version is None:
         ap.error("--put / --rollback 必须带 --base-version：先跑 --get 拿到 version"
@@ -428,6 +432,20 @@ def main():
             print(f"✓ 已把 v{args.rollback} 的内容落成新版本 v{new_v}（还能再退回来）",
                   file=sys.stderr)
             warn_dropped_keys(view)
+            print(json.dumps(view, ensure_ascii=False))
+            return
+
+        if args.get_default:
+            # 只读默认配置（服务端 2026-07-27 上线，不设 require_admin：一般用户也能读，
+            # 因为没建个人档案的人本来就能从 --get 读到同样内容）。
+            # 这是「改默认配置前留底」的**唯一正确姿势**——绝不能拿 --get 代替：
+            # --get 读的是调用者自己的档案，建过个人档案的人拿到的根本不是默认配置，且照样 exit 0。
+            view = call("GET", "/api/style-profile/admin-default", key, api_base, None,
+                        timeout=args.timeout)
+            print(f"✓ 当前默认配置 v{view.get('admin_default_version')}"
+                  f"（没有个人风格档案的人实时跟随这一份）", file=sys.stderr)
+            print("  → 要改它之前：把这份输出整个存成文件收好。默认配置**不进版本历史、"
+                  "rollback 对它无效**，这份留底是唯一的后悔药。", file=sys.stderr)
             print(json.dumps(view, ensure_ascii=False))
             return
 
