@@ -198,6 +198,14 @@ python3 PUB --notes <账号名或id> --refresh   # 先触发一次导出拉最�
 （同一份口径块 `meta.{field_meta, field_notes}`，`notes` 的 `trend=daily` 路径同样带上），此前只有 note-trends 有。
 `urls` 等既有字段语义不变。
 
+> ⚠️ **`field_meta` 声明的字段比 `/notes` 实际下发的多**（2026-07-26 真机实测）：
+> `field_meta` 有 19 个字段，其中 `like_rate` / `collect_rate` / `comment_rate` / `engage_rate` /
+> `follow_rate` / `follow_rate_t1` 这几个**派生率只在 `/note-trends` 的 `notes[].rates` 里下发**；
+> **`/notes` 的 `notes[]` 只有 15 个原始指标**（likes / collects / comments / danmu / shares / reposts /
+> follows / exposure / views / cover_ctr / avg_view_duration 等），**没有 `rates` 这一层**。
+> 所以：**要算率值、要 `follow_rate_t1`，就调 `/note-trends`**（`python3 PUB --notes <账号>` 走的是
+> `/notes`，只有原始指标）。在 `/notes` 里找不到 `follow_rate_t1` **不是数据缺失、也不是你取值路径写错了**。
+
 `window` 三个取值，**含义各不相同**：
 
 | 取值 | 含义 |
