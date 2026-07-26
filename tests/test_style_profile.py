@@ -4,7 +4,11 @@
 409 不重试同一份 body 且 exit 3。外加降级链第 ③ 层（读不到服务 → exit 2）。
 
 server v0.11.0 起另盯四处：base_version 透传优先于本地派生；dropped_keys 非空必须警告；
---versions 分页参数透传；--admin-default 的 403 是「你不是管理员」不是「服务挂了」（exit 1 不是 2）。
+--versions 分页参数透传；--admin-default 的 403 是「你不是运营老大」不是「服务挂了」（exit 1 不是 2）。
+
+术语（2026-07-26）：role=admin 的运营叫**运营老大**、role=operator 叫**一般用户**、没有个人档案时
+跟随的那份叫**默认配置**；「管理员」只指登录管理后台的系统管理员。`admin_default` / `--admin-default`
+是接口标识不是称呼，照旧。
 """
 import json, sys
 from pathlib import Path
@@ -101,16 +105,21 @@ def test_get_exists_true_is_his_own_profile(monkeypatch, capsys):
 
 
 def test_get_exists_false_is_admin_default(monkeypatch, capsys):
-    """exists:false → 「你还没有自己的风格档案，先沿用管理员的那套，可以吗？」+ 第 ② 层 + base_version=0。"""
+    """exists:false → 「你还没有自己的风格档案，先用默认配置，可以吗？」+ 第 ② 层 + base_version=0。
+
+    layer 值 `admin_default` 是接口标识、照旧；面向运营的话术改说「默认配置」（「管理员」这个词
+    留给登录管理后台的系统管理员，写进话术会跟它混淆）。"""
     body = {"exists": False, "source": "admin_default", "profile": PROFILE}
     out, err, _ = _main_ok(monkeypatch, capsys, ["--get"], [_Resp(200, body)])
     assert out["exists"] is False and out["layer"] == "admin_default"
-    assert out["say"] == "你还没有自己的风格档案，先沿用管理员的那套，可以吗？"
-    assert "这是你的风格档案" not in out["say"]  # 说成"他的"会让运营误以为管理员那套归他了
+    assert out["say"] == "你还没有自己的风格档案，先用默认配置，可以吗？"
+    assert "这是你的风格档案" not in out["say"]  # 说成"他的"会让运营误以为默认配置归他了
+    assert "管理员" not in out["say"]            # 术语已统一，别让旧说法回潮
     # server 在 exists:false 时不返 version：首次 PUT 必须传 0，不能留空让上层猜
     assert "version" not in body and out["base_version"] == 0
-    assert out["trace_line"].startswith("风格档案：v0（管理员默认，读取于 ")
-    assert "管理员默认档案" in err and "别说成是他的" in err
+    # 留痕行是创作端 → 审查端的接口，逐字定死（旧写法「管理员默认」由审查端向后兼容识别）
+    assert out["trace_line"].startswith("风格档案：v0（默认配置，读取于 ")
+    assert "默认配置" in err and "别说成是他的" in err
 
 
 def test_get_two_sentences_are_mutually_exclusive(monkeypatch, capsys):
@@ -447,7 +456,7 @@ def test_versions_without_pagination_sends_no_query(monkeypatch, capsys):
     assert "--offset" not in err  # has_more=False 时不提示翻页
 
 
-# ---- server v0.11.0：--admin-default（仅管理员） ----
+# ---- server v0.11.0：--admin-default（改默认配置，仅运营老大） ----
 
 def test_admin_default_puts_profile_without_base_version(monkeypatch, capsys, tmp_path):
     """body = {profile, note}；**没有 base_version**（这个端点无乐观锁），也不该要求它。"""
@@ -461,14 +470,16 @@ def test_admin_default_puts_profile_without_base_version(monkeypatch, capsys, tm
     assert calls[0]["payload"] == {"profile": PROFILE, "note": "统一莫兰迪三色"}
     assert "base_version" not in calls[0]["payload"]
     assert out["version"] == 6
-    # 传播语义与「不可回退」必须当场说清（运营会问「我沿用的那套会不会变」）
-    assert "立刻跟着变" in err and "不受影响" in err
-    assert "不可回退" in err or "rollback 对它无效" in err
-    assert "留底" in err
+    # 三条语义必须当场说清（运营老大按下去之前得知道波及面）
+    assert "任何运营老大都能改" in err                       # ① 谁能改
+    assert "没有自己风格档案的人实时跟随" in err              # ② 影响谁
+    assert "不只是之后新建的" in err and "立刻跟着变" in err  # ②' 不只影响新建的人
+    assert "不受影响" in err                                 # ②'' 有个人档案的不受波及
+    assert "rollback 对它无效" in err and "留底" in err       # ③ 不进历史、不可回退
 
 
 def test_admin_default_403_says_admin_only_and_exits_1(monkeypatch, capsys, tmp_path):
-    """403 = 你不是管理员，**不是**服务挂了：exit 1 且绝不能说「没连上风格档案服务」。
+    """403 = 你不是运营老大（是一般用户），**不是**服务挂了：exit 1 且绝不能说「没连上风格档案服务」。
 
     若混进通用的 401/403 → Unreachable 分支，上层会误判服务不可用而走第 ③ 层内置降级。"""
     import style_profile
@@ -478,9 +489,9 @@ def test_admin_default_403_says_admin_only_and_exits_1(monkeypatch, capsys, tmp_
                              sender=lambda *a, **k: _Resp(403, {"detail": "需要管理员权限"}))
     assert code == style_profile.EXIT_ERROR == 1
     assert code != style_profile.EXIT_UNREACHABLE
-    assert "只有管理员能用" in err and "没连上风格档案服务" not in err
+    assert "只有运营老大能改默认配置" in err and "没连上风格档案服务" not in err
     assert out["outcome"] == "forbidden" and out["ok"] is False
-    assert "只有管理员能用" in out["hint"] and "403" in out["error"]
+    assert "只有运营老大能改默认配置" in out["hint"] and "403" in out["error"]
 
 
 def test_other_endpoints_403_still_exits_2(monkeypatch, capsys):
@@ -510,7 +521,7 @@ def test_stdout_is_pure_json_on_every_path(monkeypatch, capsys, tmp_path):
         (["--admin-default", str(f)], [_Resp(200, {"version": 6})], None),
         (["--put", str(f), "--base-version", "1"], None, 3),   # 409
         (["--get"], None, 2),                                  # 网络挂
-        (["--admin-default", str(f)], None, 1),                # 403：不是管理员
+        (["--admin-default", str(f)], None, 1),                # 403：不是运营老大
     ]
     for argv, resps, fail_code in cases:
         monkeypatch.setattr(sys, "argv",

@@ -2,7 +2,7 @@
 """读写「当前运营的风格档案」（经 nbdpsy-api，纯 REST，共 6 个端点）。
 
 风格档案 = 每个运营**自己**的一份视觉 / 语气 / 结构 / 密度设定：创作端按它写绘图提示词，
-审查端按它判。现在写死在 skill 里的莫兰迪三色 + 固定人物卡那一套，只是**管理员的档案**，
+审查端按它判。现在写死在 skill 里的莫兰迪三色 + 固定人物卡那一套，只是**默认配置**，
 不是全局常量——别的运营可以与它完全不同（多号矩阵各有调性）。
 
 用法：
@@ -13,7 +13,7 @@
         [--source manual|reference_sample|inherited_admin] [--note "按参考样本 8 张实测更新"]
     python3 style_profile.py --rollback 3 --base-version 7  # 回到 v3 的内容（会落成新版本 v8）
     python3 style_profile.py --admin-default profile.json [--note "..."]
-        # **仅管理员**：整份覆盖「管理员默认档案」（没建个人档案的运营实时沿用它）
+        # **仅运营老大**（role=admin）：整份覆盖「默认配置」（没有个人档案的运营实时跟随它）
 
 凭据：NBDPSY_XHS_API_KEY（与发布线同一把）、NBDPSY_XHS_API_BASE（可选，默认 https://mcp.nbdpsy.com），
 由 nbdpsy_common 三层解析（环境变量 > workspace/.env > 用户级 secrets.env）。
@@ -22,9 +22,9 @@
 三条硬约束（说错 / 做错就会把运营的档案搞坏，逐条对照）：
 
 1. **`--get` 先看 `exists` 再说话**：`true` = 这是他自己的档案（回读请他确认）；
-   `false` = 他还没有，`profile` 是**管理员默认那套**（要问「先沿用管理员的风格，可以吗？」）。
+   `false` = 他还没有，`profile` 是**默认配置**（要问「先用默认配置，可以吗？」）。
    两句话已按契约逐字写进输出的 `say` 字段与 stderr，**直接照念，别自行改写**——
-   说错会让运营以为管理员那套已经是他的了。
+   说错会让运营以为默认配置已经是他自己的档案了。
 2. **`--put` 是整份覆盖不是打补丁**：先 `--get` 拿全量 → 改完整体回传；只发被改的字段会把
    其余字段清空。所以 `--put` / `--rollback` **强制要求 `--base-version`**，不传直接报错，
    绝不替你猜版本号（`exists:false` 时传 0）。
@@ -46,12 +46,12 @@
 
 输出契约：stdout 纯 JSON、stderr 人话。exit 码：
     0 = 成功
-    1 = 服务端明确报错（400 profile 超 64KB / 404 该版本不存在 / `--admin-default` 非管理员 403 /
+    1 = 服务端明确报错（400 profile 超 64KB / 404 该版本不存在 / `--admin-default` 非运营老大 403 /
         其它 4xx·5xx）或本地入参不合法
     2 = **读不到风格档案服务**（没配 key / 网络不可达 / 超时 / 401·403 鉴权失败；
-        `--admin-default` 的 403 例外——那是「你不是管理员」不是服务挂了，走 exit 1）——
+        `--admin-default` 的 403 例外——那是「你不是运营老大」不是服务挂了，走 exit 1）——
         stderr 明说「没连上风格档案服务」，上层据此走三层降级的第 ③ 层：
-        用 skill 内置默认风格（管理员那套）继续，并**显式告知运营**，不许静默降级
+        用 skill 内置默认风格（默认配置）继续，并**显式告知运营**，不许静默降级
     3 = 409 版本冲突（不重试；stdout 带 current_version）
     4 = 用法错误（如 --put 缺 --base-version）。刻意不用 argparse 默认的 2——
         2 已被征用作「没连上」信号，用法错误若也回 2，上层会误判服务挂了而降级
@@ -60,8 +60,14 @@
 **优先透传 server 下发的值**，老 server 没给才本地派生）、`base_version_source`（`server` / `derived`，
 标明上一项从哪来）、`layer`（落在降级链哪一层）、`say`（照念的那句话）、`trace_line`（写进
 00-overview.md 的留痕行——审查端按这一行指定的版本判，不按当前最新版；档案会变还能回退，
-拿新版判老批次必错）。`exists:false` 时还会透出 `admin_default_version`（正沿用管理员哪一版；
+拿新版判老批次必错）。`exists:false` 时还会透出 `admin_default_version`（正在用默认配置的哪一版；
 老 server 没给则为 null）。
+
+⚠️ 术语（2026-07-26 起）：`role=admin` 的运营叫**运营老大**、`role=operator` 叫**一般用户**、
+没有个人档案时跟随的那一份叫**默认配置**（它是一份独立配置，不等于任何一个运营老大的个人档案）。
+「管理员」一词留给登录 NBDpsy 管理后台的**系统管理员**，别用来指代运营老大。
+`--admin-default` / `admin_default_version` / `layer: "admin_default"` 是**接口标识不是称呼**，
+保持原样（改了即断链）。
 """
 import argparse
 import json
@@ -79,8 +85,8 @@ EXIT_USAGE = 4        # 用法错误（不占用 2）
 
 # 这四句是契约逐字定死的说辞，改字即违约（会让运营误判档案归属 / 静默降级）
 SAY_EXISTS = "这是你的风格档案（v{version}），我回读一遍，你确认下"
-SAY_MISSING = "你还没有自己的风格档案，先沿用管理员的那套，可以吗？"
-SAY_OFFLINE = ("没连上风格档案服务，本次用 skill 内置的默认风格（管理员那套）继续；"
+SAY_MISSING = "你还没有自己的风格档案，先用默认配置，可以吗？"
+SAY_OFFLINE = ("没连上风格档案服务，本次用 skill 内置的默认风格（默认配置）继续；"
                "等下次连上再核对")
 SAY_CONFLICT = "你的风格档案在别处被改过（v{base} → v{current}），我重新读一遍再改"
 
@@ -114,7 +120,7 @@ class Unreachable(Exception):
 class Forbidden(Exception):
     """403 且调用方声明「这个端点本就分权限」（目前只有 --admin-default）→ exit 1 的专门提示。
     **不能混进 Unreachable**：那会说成「没连上风格档案服务」并触发第 ③ 层降级，
-    而真相是服务好好的、只是这个人不是管理员。"""
+    而真相是服务好好的、只是这个人不是运营老大（是一般用户）。"""
 
     def __init__(self, error: str):
         super().__init__(error)
@@ -181,7 +187,7 @@ def call(method: str, path: str, key: str, api_base: str, payload=None, timeout=
     其它 4xx·5xx → ValueError。成功返回解析后的 dict。
 
     `forbidden_is_permission=True` 只给本就分权限的端点用（--admin-default）：那里的 403
-    是「你不是管理员」，要 Forbidden → exit 1；其余端点的 403 仍按「这把 key 读不到档案服务」
+    是「你不是运营老大」，要 Forbidden → exit 1；其余端点的 403 仍按「这把 key 读不到档案服务」
     走 Unreachable → exit 2 + 第 ③ 层降级，口径不动。"""
     url = f"{api_base}{path}"
     try:
@@ -196,7 +202,7 @@ def call(method: str, path: str, key: str, api_base: str, payload=None, timeout=
         raise Forbidden(api_error(resp))
     if resp.status_code in (401, 403):
         raise Unreachable("unauthorized", api_error(resp),
-                          "apikey 无效/已轮换或无此权限：找管理员重发「运营接入配置包」，"
+                          "apikey 无效/已轮换或无此权限：找系统管理员重发「运营接入配置包」，"
                           "secret import 导入后重试")
     if resp.status_code == 409:
         d = conflict_detail(resp)
@@ -228,10 +234,13 @@ def decorate_get(view: dict) -> dict:
     else:
         # 没有个人档案时服务端把「当前版本」记作 0，首次 PUT 就传 base_version=0
         derived_base = 0
-        out["layer"] = "admin_default"         # 第 ② 层：管理员默认档案，**别说成是他的**
+        # 第 ② 层：默认配置，**别说成是他的**（"admin_default" 是接口值不是称呼，别改）
+        out["layer"] = "admin_default"
         out["say"] = SAY_MISSING
-        out["trace_line"] = f"风格档案：v0（管理员默认，读取于 {_today()}）"
-        # 沿用的是管理员哪一版；老 server 没给就是 null（键恒定存在，上层可无条件读）
+        # 留痕行是创作端 → 审查端的接口，逐字定死（2026-07-26 前的旧批次写的是「管理员默认」，
+        # 审查端仍按默认配置识别）
+        out["trace_line"] = f"风格档案：v0（默认配置，读取于 {_today()}）"
+        # 用的是默认配置的哪一版；老 server 没给就是 null（键恒定存在，上层可无条件读）
         out["admin_default_version"] = view.get("admin_default_version")
     if isinstance(server_base, int) and not isinstance(server_base, bool):
         out["base_version"] = server_base
@@ -306,7 +315,7 @@ def _exit_unreachable(exc: Unreachable):
 def main():
     ap = _Parser(description="读写当前运营的风格档案（经 nbdpsy-api，6 端点）")
     ap.add_argument("--get", action="store_true",
-                    help="读当前档案（先看 exists：true=他自己的；false=管理员默认那套）")
+                    help="读当前档案（先看 exists：true=他自己的；false=默认配置那套）")
     ap.add_argument("--versions", action="store_true", help="列历史版本（倒序，不含 profile 全文）")
     ap.add_argument("--version", type=int, metavar="N", help="取第 N 版完整内容（回退前预览）")
     ap.add_argument("--put", type=Path, metavar="PROFILE.JSON",
@@ -314,8 +323,8 @@ def main():
     ap.add_argument("--rollback", type=int, metavar="N",
                     help="回退到第 N 版（造新版本而非拨指针；须配 --base-version）")
     ap.add_argument("--admin-default", type=Path, metavar="PROFILE.JSON",
-                    help="**仅管理员**：整份覆盖管理员默认档案（没个人档案的运营实时沿用它；"
-                         "不进版本历史、不可回退，改前自行留底）")
+                    help="**仅运营老大**：整份覆盖默认配置（任何运营老大都能改；没有个人档案的运营"
+                         "实时跟随它，不只是之后新建的；不进版本历史、不可回退，改前自行留底）")
     ap.add_argument("--limit", type=int, default=None,
                     help="仅 --versions：每页条数（服务端默认 50、上限 200，超出钳到 200）")
     ap.add_argument("--offset", type=int, default=None,
@@ -345,7 +354,7 @@ def main():
         # 可选凭据：没配的运营照样要能做内容 → 走第 ③ 层，不是致命错
         _exit_unreachable(Unreachable(
             "no_key", f"MISSING:{nbdpsy_common.XHS_API_KEY}",
-            "找管理员要「运营接入配置包」，secret import 导入后重试；"
+            "找系统管理员要「运营接入配置包」，secret import 导入后重试；"
             "这把 key 是可选凭据，没有也能用 skill 内置默认风格继续做内容"))
     api_base = (args.api_base or nbdpsy_common.xhs_api_base()).rstrip("/")
 
@@ -356,10 +365,10 @@ def main():
             if view.get("exists"):
                 print(f"✓ 第 ① 层·他自己的档案：{view['say']}", file=sys.stderr)
             else:
-                print(f"· 第 ② 层·管理员默认档案（**别说成是他的**）：{view['say']}", file=sys.stderr)
+                print(f"· 第 ② 层·默认配置（**别说成是他的**）：{view['say']}", file=sys.stderr)
                 if view.get("admin_default_version") is not None:
-                    print(f"  正沿用管理员默认档案的 v{view['admin_default_version']}"
-                          f"（管理员一改，你这边下次 --get 立刻跟着变）", file=sys.stderr)
+                    print(f"  正在用默认配置 v{view['admin_default_version']}"
+                          f"（运营老大一改，你这边下次 --get 立刻跟着变）", file=sys.stderr)
             src = ("server 下发（唯一真源）" if view.get("base_version_source") == "server"
                    else "本地派生（这台 server 没下发，属老版本）")
             print(f"  --put / --rollback 请用 base_version={view['base_version']}（{src}）",
@@ -423,7 +432,7 @@ def main():
             return
 
         if args.admin_default is not None:
-            # 管理员默认档案没有乐观锁（服务端整份覆盖、version 自增），所以不要 --base-version
+            # 默认配置没有乐观锁（服务端整份覆盖、version 自增），所以不要 --base-version
             profile = load_profile(args.admin_default)
             warnings = profile_warnings(profile)
             for w in warnings:
@@ -434,24 +443,28 @@ def main():
             view = call("PUT", "/api/style-profile/admin-default", key, api_base, payload,
                         timeout=args.timeout, forbidden_is_permission=True)
             view["warnings"] = warnings
-            print(f"✓ 已整份覆盖管理员默认档案，存为 v{view.get('version')}", file=sys.stderr)
-            print("  → 没建个人档案的运营**每次 --get 都实时读到这一版**，他们立刻跟着变；"
+            print(f"✓ 已整份覆盖默认配置，存为 v{view.get('version')}"
+                  f"（默认配置是独立的一份，任何运营老大都能改，不属于谁的个人档案）",
+                  file=sys.stderr)
+            print("  → 波及面：**所有没有自己风格档案的人实时跟随这一版**——不只是之后新建的，"
+                  "现有的那些人下次 --get、下次出图就用新的，他们立刻跟着变；"
                   "已建个人档案的各自独立、不受影响", file=sys.stderr)
-            print("  → 这份**不进版本历史、rollback 对它无效**：改前请自行留底", file=sys.stderr)
+            print("  → 这份**不进版本历史、rollback 对它无效**（改坏了没法回退）：改前请自行留底",
+                  file=sys.stderr)
             print(json.dumps(view, ensure_ascii=False))
             return
 
     except Unreachable as e:
         _exit_unreachable(e)
     except Forbidden as e:
-        # 服务好好的，只是这个人不是管理员 → 绝不能说成「没连上」，也别让上层降级
-        print(f"✗ 这个端点只有管理员能用：更新管理员默认档案需要管理员权限（{e.error}）",
+        # 服务好好的，只是这个人不是运营老大 → 绝不能说成「没连上」，也别让上层降级
+        print(f"✗ 只有运营老大能改默认配置：你这把 key 是一般用户（{e.error}）",
               file=sys.stderr)
         print("  → 改你自己的风格档案请用 --put（先 --get 拿 base_version）；"
-              "确需改默认档案找管理员", file=sys.stderr)
+              "确需改默认配置找运营老大", file=sys.stderr)
         print(json.dumps({
             "ok": False, "outcome": "forbidden", "error": e.error,
-            "hint": "这个端点只有管理员能用：改自己的档案用 --put，改默认档案找管理员",
+            "hint": "只有运营老大能改默认配置：改自己的档案用 --put，要改默认配置找运营老大",
         }, ensure_ascii=False))
         sys.exit(EXIT_ERROR)
     except Conflict as e:
