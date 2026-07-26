@@ -187,12 +187,12 @@ else{fallback(text,btn);}}
 function copyEl(id,btn){copyText(document.getElementById(id).textContent,btn);}
 function copyVal(id,btn){copyText(document.getElementById(id).value,btn);}
 
-/* ---- 出图比例一键切换（小红书 3:4 ↔ Instagram 1:1）----
+/* ---- 出图比例一键切换（小红书 2:3 ↔ Instagram 1:1）----
    只改提示词里的「比例参数」句：背景层/文字层/元素层三层组件原样复用，
    一套素材跨平台产出。复制按钮复制的永远是当前所选比例的版本。 */
 var RATIO_RULES = {
   '1:1': [
-    /竖版\\s*3:4\\s*构图（1080×1440）[^\\n]*/g,
+    /竖版\\s*(?:3:4\\s*构图（1080×1440）|2:3\\s*构图（1024×1536）)[^\\n]*/g,
     '正方形 1:1 构图（1080×1080），主体居中，四周留匀称空白；标题压在上 1/4 区、副标题紧随其下，整体比竖版更紧凑。负面提示：不要竖版长图、不要横版/宽幅、不要裁切文字、不要额外边框或水印。'
   ]
 };
@@ -215,7 +215,7 @@ function applyRatio(r){
   var hint = document.getElementById('ratio-hint');
   if(hint) hint.textContent = (r === '1:1')
     ? 'Instagram 1:1（1080×1080）· 方形更矮，副标题请压到 ≤14 字、内容页信息点收到 4–7 个'
-    : '小红书 3:4（1080×1440）· 默认，显示面积最大、点击率最高';
+    : '小红书 2:3（1024×1536）· 默认，显示面积最大、点击率最高';
   try{ localStorage.setItem('nbdpsy_ratio', r); }catch(e){}
 }
 window.addEventListener('DOMContentLoaded', function(){
@@ -306,10 +306,10 @@ def main():
   <div class="ratio-bar">
     <span class="lbl">出图比例</span>
     <span class="ratio-btns">
-      <button class="ratio-btn on" data-ratio="3:4" onclick="applyRatio('3:4')">小红书 3:4</button>
+      <button class="ratio-btn on" data-ratio="3:4" onclick="applyRatio('3:4')">小红书 2:3</button>
       <button class="ratio-btn" data-ratio="1:1" onclick="applyRatio('1:1')">Instagram 1:1</button>
     </span>
-    <span id="ratio-hint">小红书 3:4（1080×1440）· 默认，显示面积最大、点击率最高</span>
+    <span id="ratio-hint">小红书 2:3（1024×1536）· 默认，显示面积最大、点击率最高</span>
   </div>
   <div class="legend">
     <span><i class="dot read"></i> 给人看 · 发布文案 / 页面文字</span>
