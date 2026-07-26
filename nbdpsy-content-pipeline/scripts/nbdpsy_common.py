@@ -61,6 +61,10 @@ REQUIRED_KEYS = ["NBDPSY_BLOG_API_KEY"]
 DOUBAO_API_KEY = "VOLC_TTS_API_KEY"  # 新版控制台单一凭据，优先
 DOUBAO_KEYS = ["VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN"]  # 旧版双凭据，向后兼容
 XHS_API_KEY = "NBDPSY_XHS_API_KEY"  # 小红书运营 API（nbdpsy-api）运营专属 apikey，可选
+# 战略规划报告发布（管理后台 /strategy）专用 apikey，可选。不复用 NBDPSY_BLOG_API_KEY：
+# 写入目标是内部管理后台里被渲染的内容，与写公开站内容不是同一信任级别；单开一把才能
+# 独立吊销而不牵连发文流水线。只有出数据报告的人需要它，故不进 REQUIRED_KEYS。
+STRATEGY_API_KEY = "NBDPSY_STRATEGY_API_KEY"
 XHS_API_BASE_KEY = "NBDPSY_XHS_API_BASE"
 DEFAULT_XHS_API_BASE = "https://mcp.nbdpsy.com"
 # 视频管线 REST（搬运 / 分镜级再制作 / 成片修订）：2026-07-23 薯营家（xhs.nbdpsy.com）整套停机，
@@ -90,6 +94,7 @@ def doctor():
     required_missing = [k for k in REQUIRED_KEYS if not get_secret(k)]
     doubao_ready = bool(get_secret(DOUBAO_API_KEY)) or all(get_secret(k) for k in DOUBAO_KEYS)
     xhs_ready = bool(get_secret(XHS_API_KEY))
+    strategy_ready = bool(get_secret(STRATEGY_API_KEY))
     ok = not required_missing
     notes = []
     if required_missing:
@@ -102,10 +107,14 @@ def doctor():
     if not xhs_ready:
         notes.append("小红书自动发布未配置（可选）：缺 NBDPSY_XHS_API_KEY——管理员在后台"
                      "「小红书运营接入」生成的接入包里带此凭据；不配则小红书笔记只能人工发布。")
+    if not strategy_ready:
+        notes.append("战略规划报告发布不可用（可选）：缺 NBDPSY_STRATEGY_API_KEY——需管理员生成含 "
+                     "strategy:write 的密钥；只有出运营数据报告的人需要它，不配不影响其它功能。")
     notes.append("视频画面用的即梦需登录一次：让 AI 帮你登录（会自动弹浏览器，用抖音 App 扫码/点确认即可）；"
                  "登录态由 nbdpsy-text-to-video/scripts/check_env.py 检测。")
     return {"ok": ok, "required_missing": required_missing,
-            "doubao_ready": doubao_ready, "xhs_ready": xhs_ready, "notes": notes}, (0 if ok else 1)
+            "doubao_ready": doubao_ready, "xhs_ready": xhs_ready,
+            "strategy_ready": strategy_ready, "notes": notes}, (0 if ok else 1)
 
 # ── Claude Code 沙盒网络放行 ──
 # Claude Code 的 Bash 沙盒（macOS/Linux/WSL2；原生 Windows 无沙盒）默认拦外网，
