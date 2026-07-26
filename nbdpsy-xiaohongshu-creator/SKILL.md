@@ -163,16 +163,16 @@ emoji 6 个左右；标题走纯场景钩子（**代价：放弃搜索入口**�
 
 选「更新」时**三步，顺序不能变**：
 
-1. **先拿全量**（连 `version` 一起，落进批次目录留个底）：
+1. **先拿全量**（连 `base_version` 一起，落进批次目录留个底）：
    ```bash
    python3 {SKILL_DIR}/scripts/style_profile.py --get > {note_dir}/_shared/style-profile-before.json
    ```
 2. **只替换要改的字段**（如 `profile.visual.palette` / `character_card` / `texture`），**其余字段原样搬过去**，另存 `{note_dir}/_shared/style-profile-new.json`；
-3. **整份发上去**，`--base-version` 带第 1 步读到的 `version`（**第 1 步是 `exists: false`（层 ②）时传 `0`**——
-   等于"我在管理员那套的基础上第一次建自己的档案"）：
+3. **整份发上去**，`--base-version` **直接填第 1 步响应里的 `base_version`**——server 与脚本**无条件下发**这个字段
+   （有档案给当前版本号、`exists: false` 时给 `0`），**它就是"这次该传什么"的唯一真源，照抄即可，不要自己推、也别拿 `version` 换算**：
    ```bash
    python3 {SKILL_DIR}/scripts/style_profile.py --put {note_dir}/_shared/style-profile-new.json \
-       --base-version {读到的version} --source reference_sample --note "按参考样本更新配色与人物"
+       --base-version {响应里的base_version} --source reference_sample --note "按参考样本更新配色与人物"
    ```
    （`--source` 只收三个值：`manual` / `reference_sample` / `inherited_admin`；本步是从参考样本来的，填 `reference_sample`。
    入参形状不必纠结：脚本对 `--put` 做了防呆——直接喂 `--get` 的整份输出也认，会自动剥出里面的 `profile`。）
@@ -184,7 +184,24 @@ emoji 6 个左右；标题走纯场景钩子（**代价：放弃搜索入口**�
 **重新 `--get` 之后从第 1 步整个来过**：拿旧 `base_version` 原样重发只会再吃一个 409；
 ⛔ **更不许把 `base_version` 直接改成 `current_version` 再把老 body 发出去**——那会把别处刚存的改动整份盖掉。
 
-PUT 成功后两件事：① **把 `00-overview.md` 的风格档案留痕行版本号同步改成新版本**（本批就是按新档案
+⚠️ **PUT 返回 200 后，先读响应里的 `dropped_keys`，读完才准往下走**（`--rollback` 同理）：
+它是 server 拿上一版逐字段比出来的「这次覆盖把哪些字段冲掉了」，只比两层（顶层 + 二级，
+顶层整段消失只报顶层名、不展开）。**没丢弃时给 `[]` 而不是省略这个键**，首次建档也是 `[]`，
+所以可以无条件读，不用先判它在不在。
+
+| `dropped_keys` | 怎么做 |
+|---|---|
+| `[]` | 正常，直接走下面那两件收尾的事 |
+| **非空**（如 `["tone", "visual.character_card", "visual.text_color"]`） | **停下来，当场回读给运营确认**：「这次固化会丢掉这几项——**语气整段、人物卡、文字色**，确定吗？」**拿到明确答复再往下走** |
+
+⛔ **固化这一步正是丢字段的高发点**：最常见的错法就是只把改过的 `visual` 那块发上去，
+把 `tone` / `structure` / `density` 整段冲掉——而 **server 只告知、不拦截也不报错**，PUT 照样 200。
+运营说"不是有意的" → **被丢字段的值要从 `--version <上一版号>` 取回**（或第 1 步存的 `style-profile-before.json`）——
+    ⚠️ **光重新 `--get` 救不回来**：覆盖已经生效，GET 拿到的正是刚存进去那份缺字段的新版。
+    取回值 → 补进完整 profile → 整份再发一次（`--base-version` 用新 `--get` 的 `base_version`）
+（`--base-version` 用这次新 `--get` 响应里的 `base_version`）。
+
+PUT 成功、`dropped_keys` 也确认过之后两件事：① **把 `00-overview.md` 的风格档案留痕行版本号同步改成新版本**（本批就是按新档案
 出的图，留痕行写旧版本会让审查端拿旧配色判新图）；② 第 3 步写提示词时用新的配色/人物。
 
 ⚠️ **合规不在档案管辖内**：法律/执业级（F1、G5）与平台封号级（站外导流）红线
@@ -307,7 +324,7 @@ PUT 成功后两件事：① **把 `00-overview.md` 的风格档案留痕行版�
 - [ ] 每张图都用 Read 工具看过；密度**按页角色分开统计**（没有把封面与内容页平均），只有内容页卡的密度进五字段
 - [ ] `{note_dir}/_shared/style-card.md` 已落盘，①–⑤ 五段齐全，每条有证据与置信度，**无原句摘录**
 - [ ] 归一化结果已回读运营并得到确认
-- [ ] 样本卡 ① 段「⚠️ 待定：是否更新进风格档案」的条目**已逐条问过运营并拿到明确答复**（不更新 / 更新）；选「更新」的已按「第五件事」走完 `--get` 拿全量 → 整份 `PUT`（**带 `base_version`**），且 `00-overview.md` 的风格档案留痕行版本号已同步换成新版本；**没拍板就一律按不更新处理，绝不擅自把参考图的配色/人物写进提示词**
+- [ ] 样本卡 ① 段「⚠️ 待定：是否更新进风格档案」的条目**已逐条问过运营并拿到明确答复**（不更新 / 更新）；选「更新」的已按「第五件事」走完 `--get` 拿全量 → 整份 `PUT`（`--base-version` **直接用 `--get` 响应里的 `base_version`**）→ **读过返回的 `dropped_keys`**（非空的已回读运营并拿到确认，不是闷头往下走），且 `00-overview.md` 的风格档案留痕行版本号已同步换成新版本；**没拍板就一律按不更新处理，绝不擅自把参考图的配色/人物写进提示词**
 - [ ] 样本卡 ④ 的密度五字段已按上面的接口写进 `00-overview.md` 与各篇 frontmatter，且 `运营原话` 取的是上表**三种合法写法**里对得上本次场景的那一种（只给图 = 「按参考样本（N 张，形态 X）实测」／既给图又开口 = 合成格式且 ④ 段带注明行／形态 B = `—` 且五字段照默认档）
 - [ ] 有覆盖时 `00-overview.md` 开头已写**参考样本覆盖留痕行**；**没有任何一条覆盖动到法律/执业级或平台封号级**
 - [ ] **运营没给参考样本 → 本步整步跳过**：不产 `style-card.md`、不写**参考样本覆盖留痕行**，第 1 步照常走默认口径，审查端按默认判。⚠️ **「开跑前 · 读风格档案」那条风格档案留痕行照写不误**——它与有没有参考样本无关，每批都要有
@@ -964,7 +981,7 @@ python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9
 | 渲染预览页（发布文案 UI + 提示词一键复制） | `scripts/render_preview.py` |
 | 后端一致性出图（gpt-image 锚点法，异步 + 轮询；--cover-only 过闸门 / --anchor-url 批量 / --pages 重出失败页 / --job 复查 / --dry-run） | `scripts/gen_images.py` |
 | 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads） | `scripts/publish_note.py` |
-| 每用户风格档案读写（开跑前 `--get` 三层降级 / `--versions` 历史 / `--version N` 某版 / `--put <json> --base-version N` **整份覆盖** / `--rollback N --base-version M`；`--put`/`--rollback` 必带 `--base-version`（`exists:false` 时传 0）；exit 2 = 没连上服务走内置兜底、exit 3 = 409 别重试） | `scripts/style_profile.py` |
+| 每用户风格档案读写（开跑前 `--get` 三层降级 / `--versions` 历史 / `--version N` 某版 / `--put <json> --base-version N` **整份覆盖** / `--rollback N --base-version M`；`--put`/`--rollback` 必带 `--base-version`，值**直接取 `--get` 响应里的 `base_version`**（无条件下发，不用自己推）；**`--put`/`--rollback` 返回的 `dropped_keys` 必读**，非空 = 这次覆盖冲掉了别的字段，回读运营确认后再往下；exit 2 = 没连上服务走内置兜底、exit 3 = 409 别重试） | `scripts/style_profile.py` |
 | 工作区路径查询 / 凭据工具 / 沙盒放行（sandbox allow） | `scripts/nbdpsy_common.py` |
 | 源长文（输入，第 0 步拉取产物） | `{workspace}/drafts/{slug}.md` |
 

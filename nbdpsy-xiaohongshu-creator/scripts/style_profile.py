@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""读写「当前运营的风格档案」（经 nbdpsy-api，纯 REST，共 5 个端点）。
+"""读写「当前运营的风格档案」（经 nbdpsy-api，纯 REST，共 6 个端点）。
 
 风格档案 = 每个运营**自己**的一份视觉 / 语气 / 结构 / 密度设定：创作端按它写绘图提示词，
 审查端按它判。现在写死在 skill 里的莫兰迪三色 + 固定人物卡那一套，只是**管理员的档案**，
@@ -7,11 +7,13 @@
 
 用法：
     python3 style_profile.py --get                          # 读当前档案（**先看 exists**）
-    python3 style_profile.py --versions                     # 列历史版本（不含 profile 全文）
+    python3 style_profile.py --versions [--limit 50] [--offset 0]   # 列历史版本（不含 profile 全文）
     python3 style_profile.py --version 3                    # 取某一版完整内容（回退前预览）
     python3 style_profile.py --put profile.json --base-version 3
         [--source manual|reference_sample|inherited_admin] [--note "按参考样本 8 张实测更新"]
     python3 style_profile.py --rollback 3 --base-version 7  # 回到 v3 的内容（会落成新版本 v8）
+    python3 style_profile.py --admin-default profile.json [--note "..."]
+        # **仅管理员**：整份覆盖「管理员默认档案」（没建个人档案的运营实时沿用它）
 
 凭据：NBDPSY_XHS_API_KEY（与发布线同一把）、NBDPSY_XHS_API_BASE（可选，默认 https://mcp.nbdpsy.com），
 由 nbdpsy_common 三层解析（环境变量 > workspace/.env > 用户级 secrets.env）。
@@ -29,24 +31,37 @@
 3. **收到 409 别重试同一份 body**：说明档案在别处被改过了。本脚本收到 409 只报不重发，
    并把服务端 `detail.current_version` 原样透出，请按它提示运营重新 `--get` 后再改。
 
+另有两条（server v0.11.0 起）：
+
+- **`base_version` 以 server 下发的为准**：`GET` 无论有没有档案都带 `base_version`（无档案给 0），
+  这是「下一次 PUT 该传什么」的唯一真源，本脚本**直接透传**；只有 server 没给（老版本）才回落到
+  本地派生，并在 stderr 注明来源（输出里的 `base_version_source` 是 `server` 还是 `derived`）。
+- **`--put` / `--rollback` 之后必须看 `dropped_keys`**：server 会算出这次整份覆盖比上一版少掉的键
+  （只比顶层 + 二级，`[]` = 没丢）。非空多半是「只带了 visual 就发上去」，把别的段冲掉了——
+  stderr 会人话警告，请**当场回读给运营确认**再往下走。服务端不拦截，东西已经存了。
+
 ⚠️ `profile` 服务端**原样存取、不校验语义**；其中 density 的五个 key 是**中文**
 （信息密度档位 / 每页文字量 / 每页信息点 / 版式档 / 运营原话），v1.37.0 起创作端与审查端
 都按这五个中文 key 读写，**改写成英文即断链**。`--put` 前会做一次提醒式检查（只警告不拦截）。
 
 输出契约：stdout 纯 JSON、stderr 人话。exit 码：
     0 = 成功
-    1 = 服务端明确报错（400 profile 超 64KB / 404 该版本不存在 / 其它 4xx·5xx）或本地入参不合法
-    2 = **读不到风格档案服务**（没配 key / 网络不可达 / 超时 / 401·403 鉴权失败）——
+    1 = 服务端明确报错（400 profile 超 64KB / 404 该版本不存在 / `--admin-default` 非管理员 403 /
+        其它 4xx·5xx）或本地入参不合法
+    2 = **读不到风格档案服务**（没配 key / 网络不可达 / 超时 / 401·403 鉴权失败；
+        `--admin-default` 的 403 例外——那是「你不是管理员」不是服务挂了，走 exit 1）——
         stderr 明说「没连上风格档案服务」，上层据此走三层降级的第 ③ 层：
         用 skill 内置默认风格（管理员那套）继续，并**显式告知运营**，不许静默降级
     3 = 409 版本冲突（不重试；stdout 带 current_version）
     4 = 用法错误（如 --put 缺 --base-version）。刻意不用 argparse 默认的 2——
         2 已被征用作「没连上」信号，用法错误若也回 2，上层会误判服务挂了而降级
 
-`--get` 会在服务端字段之外补四个派生字段（server 不返回，纯本地推导）：
-`base_version`（直接拿去 --put/--rollback 的版本号）、`layer`（落在降级链哪一层）、
-`say`（照念的那句话）、`trace_line`（写进 00-overview.md 的留痕行——审查端按这一行
-指定的版本判，不按当前最新版；档案会变还能回退，拿新版判老批次必错）。
+`--get` 会在服务端字段之外补几个字段：`base_version`（直接拿去 --put/--rollback 的版本号，
+**优先透传 server 下发的值**，老 server 没给才本地派生）、`base_version_source`（`server` / `derived`，
+标明上一项从哪来）、`layer`（落在降级链哪一层）、`say`（照念的那句话）、`trace_line`（写进
+00-overview.md 的留痕行——审查端按这一行指定的版本判，不按当前最新版；档案会变还能回退，
+拿新版判老批次必错）。`exists:false` 时还会透出 `admin_default_version`（正沿用管理员哪一版；
+老 server 没给则为 null）。
 """
 import argparse
 import json
@@ -94,6 +109,16 @@ class Unreachable(Exception):
         self.reason = reason
         self.error = error
         self.hint = hint
+
+
+class Forbidden(Exception):
+    """403 且调用方声明「这个端点本就分权限」（目前只有 --admin-default）→ exit 1 的专门提示。
+    **不能混进 Unreachable**：那会说成「没连上风格档案服务」并触发第 ③ 层降级，
+    而真相是服务好好的、只是这个人不是管理员。"""
+
+    def __init__(self, error: str):
+        super().__init__(error)
+        self.error = error
 
 
 class Conflict(Exception):
@@ -150,9 +175,14 @@ def sandbox_hint(exc) -> str:
     return s[:300]
 
 
-def call(method: str, path: str, key: str, api_base: str, payload=None, timeout=30) -> dict:
+def call(method: str, path: str, key: str, api_base: str, payload=None, timeout=30,
+         forbidden_is_permission=False) -> dict:
     """调一次端点（**不含任何重试**）。网络/鉴权失败 → Unreachable；409 → Conflict；
-    其它 4xx·5xx → ValueError。成功返回解析后的 dict。"""
+    其它 4xx·5xx → ValueError。成功返回解析后的 dict。
+
+    `forbidden_is_permission=True` 只给本就分权限的端点用（--admin-default）：那里的 403
+    是「你不是管理员」，要 Forbidden → exit 1；其余端点的 403 仍按「这把 key 读不到档案服务」
+    走 Unreachable → exit 2 + 第 ③ 层降级，口径不动。"""
     url = f"{api_base}{path}"
     try:
         resp = send_request(method, url, key, payload, timeout)
@@ -162,6 +192,8 @@ def call(method: str, path: str, key: str, api_base: str, payload=None, timeout=
     except Exception as e:
         raise Unreachable("network", sandbox_hint(e),
                           "网络或沙盒拦截：跑 nbdpsy_common.py sandbox allow 后重启 Claude 再试") from e
+    if resp.status_code == 403 and forbidden_is_permission:
+        raise Forbidden(api_error(resp))
     if resp.status_code in (401, 403):
         raise Unreachable("unauthorized", api_error(resp),
                           "apikey 无效/已轮换或无此权限：找管理员重发「运营接入配置包」，"
@@ -180,21 +212,33 @@ def _today() -> str:
 
 
 def decorate_get(view: dict) -> dict:
-    """给 GET 结果补四个派生字段（server 不返回，纯本地推导）：
-    base_version / layer / say / trace_line，见模块 docstring 末段。"""
+    """给 GET 结果补 base_version / base_version_source / layer / say / trace_line，
+    见模块 docstring 末段。
+
+    base_version 自 server v0.11.0 起**由 server 无条件下发**（无档案给 0），那是唯一真源，
+    这里直接透传；只有老 server 没给时才回落到本地派生（exists→version、不 exists→0）。"""
     out = dict(view)
+    server_base = view.get("base_version")
     if view.get("exists"):
         v = view.get("version")
-        out["base_version"] = v
+        derived_base = v
         out["layer"] = "user_profile"          # 三层降级链第 ① 层：他自己的档案
         out["say"] = SAY_EXISTS.format(version=v)
         out["trace_line"] = f"风格档案：v{v}（本人档案，读取于 {_today()}）"
     else:
         # 没有个人档案时服务端把「当前版本」记作 0，首次 PUT 就传 base_version=0
-        out["base_version"] = 0
+        derived_base = 0
         out["layer"] = "admin_default"         # 第 ② 层：管理员默认档案，**别说成是他的**
         out["say"] = SAY_MISSING
         out["trace_line"] = f"风格档案：v0（管理员默认，读取于 {_today()}）"
+        # 沿用的是管理员哪一版；老 server 没给就是 null（键恒定存在，上层可无条件读）
+        out["admin_default_version"] = view.get("admin_default_version")
+    if isinstance(server_base, int) and not isinstance(server_base, bool):
+        out["base_version"] = server_base
+        out["base_version_source"] = "server"
+    else:
+        out["base_version"] = derived_base
+        out["base_version_source"] = "derived"
     return out
 
 
@@ -239,6 +283,17 @@ def profile_warnings(profile: dict):
     return w
 
 
+def warn_dropped_keys(view: dict):
+    """PUT / rollback 之后必须看的那一项：server 算出的「这次整份覆盖比上一版少掉的键」
+    （只比顶层 + 二级，`[]` = 没丢，键恒定存在）。值原样在 stdout 里透出，这里只补人话警告——
+    东西已经存进去了，服务端不拦截，所以非空时要**当场回读给运营确认**。"""
+    dropped = view.get("dropped_keys")
+    if not isinstance(dropped, list) or not dropped:
+        return
+    print("⚠ 本次覆盖丢掉了：" + "、".join(str(k) for k in dropped)
+          + "——如果不是有意的，先 `--get` 拿全量再重发", file=sys.stderr)
+
+
 def _exit_unreachable(exc: Unreachable):
     """exit 2 的唯一出口：stderr 必须明说「没连上风格档案服务」，供上层走第 ③ 层。"""
     print(f"✗ 没连上风格档案服务（{exc.reason}）：{exc.error}", file=sys.stderr)
@@ -249,7 +304,7 @@ def _exit_unreachable(exc: Unreachable):
 
 
 def main():
-    ap = _Parser(description="读写当前运营的风格档案（经 nbdpsy-api，5 端点）")
+    ap = _Parser(description="读写当前运营的风格档案（经 nbdpsy-api，6 端点）")
     ap.add_argument("--get", action="store_true",
                     help="读当前档案（先看 exists：true=他自己的；false=管理员默认那套）")
     ap.add_argument("--versions", action="store_true", help="列历史版本（倒序，不含 profile 全文）")
@@ -258,6 +313,13 @@ def main():
                     help="整份覆盖存新版本（**不是打补丁**；须配 --base-version）")
     ap.add_argument("--rollback", type=int, metavar="N",
                     help="回退到第 N 版（造新版本而非拨指针；须配 --base-version）")
+    ap.add_argument("--admin-default", type=Path, metavar="PROFILE.JSON",
+                    help="**仅管理员**：整份覆盖管理员默认档案（没个人档案的运营实时沿用它；"
+                         "不进版本历史、不可回退，改前自行留底）")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="仅 --versions：每页条数（服务端默认 50、上限 200，超出钳到 200）")
+    ap.add_argument("--offset", type=int, default=None,
+                    help="仅 --versions：从第几条起（配合响应里的 has_more 翻页取更早的）")
     ap.add_argument("--base-version", type=int, default=None,
                     help="你 --get 读到的当前 version（exists:false 时传 0）；--put/--rollback 必填")
     ap.add_argument("--source", default="manual",
@@ -269,9 +331,10 @@ def main():
     args = ap.parse_args()
 
     actions = [bool(args.get), bool(args.versions), args.version is not None,
-               args.put is not None, args.rollback is not None]
+               args.put is not None, args.rollback is not None, args.admin_default is not None]
     if sum(actions) != 1:
-        ap.error("恰好指定一个动作：--get / --versions / --version N / --put FILE / --rollback N")
+        ap.error("恰好指定一个动作：--get / --versions / --version N / --put FILE / "
+                 "--rollback N / --admin-default FILE")
     # 硬约束 2：整份覆盖不猜版本号——不传 --base-version 直接报错，绝不用「最新版」代替
     if (args.put is not None or args.rollback is not None) and args.base_version is None:
         ap.error("--put / --rollback 必须带 --base-version：先跑 --get 拿到 version"
@@ -294,15 +357,30 @@ def main():
                 print(f"✓ 第 ① 层·他自己的档案：{view['say']}", file=sys.stderr)
             else:
                 print(f"· 第 ② 层·管理员默认档案（**别说成是他的**）：{view['say']}", file=sys.stderr)
+                if view.get("admin_default_version") is not None:
+                    print(f"  正沿用管理员默认档案的 v{view['admin_default_version']}"
+                          f"（管理员一改，你这边下次 --get 立刻跟着变）", file=sys.stderr)
+            src = ("server 下发（唯一真源）" if view.get("base_version_source") == "server"
+                   else "本地派生（这台 server 没下发，属老版本）")
+            print(f"  --put / --rollback 请用 base_version={view['base_version']}（{src}）",
+                  file=sys.stderr)
             print(f"  留痕行（写进 00-overview.md 开头）：{view['trace_line']}", file=sys.stderr)
             print(json.dumps(view, ensure_ascii=False))
             return
 
         if args.versions:
-            view = call("GET", "/api/style-profile/versions", key, api_base, timeout=args.timeout)
+            query = [f"{k}={v}" for k, v in (("limit", args.limit), ("offset", args.offset))
+                     if v is not None]
+            path = "/api/style-profile/versions" + ("?" + "&".join(query) if query else "")
+            view = call("GET", path, key, api_base, timeout=args.timeout)
             n = len(view.get("versions") or [])
-            print(f"✓ 历史版本 {n} 个（倒序）；先 --version N 预览内容，确认了再 --rollback N",
+            total = view.get("total")
+            tail = f"、共 {total} 个" if isinstance(total, int) else ""
+            print(f"✓ 历史版本 {n} 个（本页，倒序{tail}）；先 --version N 预览内容，确认了再 --rollback N",
                   file=sys.stderr)
+            if view.get("has_more"):
+                print(f"  → 还有更早的版本：加 --offset {(args.offset or 0) + n} 继续翻",
+                      file=sys.stderr)
             print(json.dumps(view, ensure_ascii=False))
             return
 
@@ -326,6 +404,7 @@ def main():
             view["warnings"] = warnings
             print(f"✓ 已整份覆盖，存为 v{view.get('version')}（此后你的笔记都按这一版走）",
                   file=sys.stderr)
+            warn_dropped_keys(view)
             print(json.dumps(view, ensure_ascii=False))
             return
 
@@ -339,11 +418,42 @@ def main():
                             f"所以「回退后又后悔」还能再退回去")
             print(f"✓ 已把 v{args.rollback} 的内容落成新版本 v{new_v}（还能再退回来）",
                   file=sys.stderr)
+            warn_dropped_keys(view)
+            print(json.dumps(view, ensure_ascii=False))
+            return
+
+        if args.admin_default is not None:
+            # 管理员默认档案没有乐观锁（服务端整份覆盖、version 自增），所以不要 --base-version
+            profile = load_profile(args.admin_default)
+            warnings = profile_warnings(profile)
+            for w in warnings:
+                print(f"⚠ {w}", file=sys.stderr)
+            payload = {"profile": profile}
+            if args.note:
+                payload["note"] = args.note
+            view = call("PUT", "/api/style-profile/admin-default", key, api_base, payload,
+                        timeout=args.timeout, forbidden_is_permission=True)
+            view["warnings"] = warnings
+            print(f"✓ 已整份覆盖管理员默认档案，存为 v{view.get('version')}", file=sys.stderr)
+            print("  → 没建个人档案的运营**每次 --get 都实时读到这一版**，他们立刻跟着变；"
+                  "已建个人档案的各自独立、不受影响", file=sys.stderr)
+            print("  → 这份**不进版本历史、rollback 对它无效**：改前请自行留底", file=sys.stderr)
             print(json.dumps(view, ensure_ascii=False))
             return
 
     except Unreachable as e:
         _exit_unreachable(e)
+    except Forbidden as e:
+        # 服务好好的，只是这个人不是管理员 → 绝不能说成「没连上」，也别让上层降级
+        print(f"✗ 这个端点只有管理员能用：更新管理员默认档案需要管理员权限（{e.error}）",
+              file=sys.stderr)
+        print("  → 改你自己的风格档案请用 --put（先 --get 拿 base_version）；"
+              "确需改默认档案找管理员", file=sys.stderr)
+        print(json.dumps({
+            "ok": False, "outcome": "forbidden", "error": e.error,
+            "hint": "这个端点只有管理员能用：改自己的档案用 --put，改默认档案找管理员",
+        }, ensure_ascii=False))
+        sys.exit(EXIT_ERROR)
     except Conflict as e:
         # 硬约束 3：**不重试同一份 body**——这里只报不重发，让上层重新 GET 后再来
         base = args.base_version

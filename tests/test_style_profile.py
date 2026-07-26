@@ -2,6 +2,9 @@
 
 盯死三条硬约束：exists 两句话不能串；--put 缺 --base-version 直接报错（不猜版本号）；
 409 不重试同一份 body 且 exit 3。外加降级链第 ③ 层（读不到服务 → exit 2）。
+
+server v0.11.0 起另盯四处：base_version 透传优先于本地派生；dropped_keys 非空必须警告；
+--versions 分页参数透传；--admin-default 的 403 是「你不是管理员」不是「服务挂了」（exit 1 不是 2）。
 """
 import json, sys
 from pathlib import Path
@@ -342,6 +345,152 @@ def test_only_one_action_allowed(monkeypatch, capsys):
     assert code == 4 and seen == [] and "恰好指定一个动作" in err
 
 
+# ---- server v0.11.0：base_version 以 server 下发的为准（唯一真源），别再自己派生 ----
+
+def test_get_base_version_prefers_server_value_over_derived(monkeypatch, capsys):
+    """server 下发的 base_version 必须压过本地派生。
+
+    这里故意让 base_version(5) ≠ version(3)：只要输出是 5，就证明走的是透传而不是
+    「out['base_version'] = view['version']」那条老派生路。派生值一旦与 server 不符，
+    下一次 PUT 就会拿错版本号撞 409（甚至覆盖别人的改动）。"""
+    body = {"exists": True, "version": 3, "base_version": 5, "profile": PROFILE}
+    out, err, _ = _main_ok(monkeypatch, capsys, ["--get"], [_Resp(200, body)])
+    assert out["base_version"] == 5 and out["base_version_source"] == "server"
+    assert "base_version=5" in err and "server 下发" in err
+    assert out["version"] == 3  # 原字段原样透出，没被改写
+
+
+def test_get_falls_back_to_derived_when_server_omits_base_version(monkeypatch, capsys):
+    """老 server 不下发 base_version → 回落派生（exists→version，不 exists→0），并在 stderr 注明来源。"""
+    a, err_a, _ = _main_ok(monkeypatch, capsys, ["--get"],
+                           [_Resp(200, {"exists": True, "version": 7, "profile": PROFILE})])
+    assert a["base_version"] == 7 and a["base_version_source"] == "derived"
+    assert "base_version=7" in err_a and "本地派生" in err_a
+
+    b, err_b, _ = _main_ok(monkeypatch, capsys, ["--get"],
+                           [_Resp(200, {"exists": False, "profile": PROFILE})])
+    assert b["base_version"] == 0 and b["base_version_source"] == "derived"
+    assert "本地派生" in err_b
+
+
+def test_get_exists_false_exposes_admin_default_version(monkeypatch, capsys):
+    """exists:false 时把 admin_default_version 一并透出；server 没给则键仍在、值为 None。"""
+    body = {"exists": False, "base_version": 0, "admin_default_version": 4,
+            "updated_at": "2026-07-26T09:00:00", "profile": PROFILE}
+    out, err, _ = _main_ok(monkeypatch, capsys, ["--get"], [_Resp(200, body)])
+    assert out["admin_default_version"] == 4 and out["base_version"] == 0
+    assert out["base_version_source"] == "server"
+    assert "v4" in err
+    # 老 server 没给 → 键恒定存在（上层可无条件读），值为 None
+    old, _, _ = _main_ok(monkeypatch, capsys, ["--get"],
+                         [_Resp(200, {"exists": False, "profile": PROFILE})])
+    assert "admin_default_version" in old and old["admin_default_version"] is None
+
+
+# ---- server v0.11.0：dropped_keys —— 这次覆盖把哪些键冲掉了 ----
+
+def test_put_warns_when_dropped_keys_non_empty(monkeypatch, capsys, tmp_path):
+    """非空 = 这次整份覆盖把别的字段冲掉了 → stdout 原样带出 + stderr 人话警告（当场回读给运营）。"""
+    f = tmp_path / "p.json"
+    f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
+    resp = _Resp(200, {"exists": True, "version": 5,
+                       "dropped_keys": ["tone", "visual.character_card"]})
+    out, err, _ = _main_ok(monkeypatch, capsys,
+                           ["--put", str(f), "--base-version", "4"], [resp])
+    assert out["dropped_keys"] == ["tone", "visual.character_card"]
+    assert "本次覆盖丢掉了" in err and "tone" in err and "visual.character_card" in err
+    assert "--get" in err  # 指路：先 --get 拿全量再重发
+
+
+def test_put_empty_dropped_keys_is_silent(monkeypatch, capsys, tmp_path):
+    """[] = 没丢，属正常：键照样透出，但绝不能报警（狼来了会让运营以后都不看）。"""
+    f = tmp_path / "p.json"
+    f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
+    out, err, _ = _main_ok(monkeypatch, capsys, ["--put", str(f), "--base-version", "4"],
+                           [_Resp(200, {"exists": True, "version": 5, "dropped_keys": []})])
+    assert out["dropped_keys"] == [] and "丢掉了" not in err
+
+
+def test_rollback_warns_when_dropped_keys_non_empty(monkeypatch, capsys):
+    """rollback 同样会丢字段（回到老版本 = 后来新增的段没了），一样要警告。"""
+    resp = _Resp(200, {"exists": True, "version": 9, "source": "rollback",
+                       "dropped_keys": ["visual.text_color"]})
+    out, err, _ = _main_ok(monkeypatch, capsys,
+                           ["--rollback", "3", "--base-version", "8"], [resp])
+    assert out["dropped_keys"] == ["visual.text_color"]
+    assert "本次覆盖丢掉了" in err and "visual.text_color" in err
+
+
+# ---- server v0.11.0：--versions 分页 ----
+
+def test_versions_pagination_params_and_passthrough(monkeypatch, capsys):
+    """--limit/--offset 进 query；total/has_more 原样透出，并给出下一页的 offset。"""
+    body = {"versions": [{"version": 3, "source": "rollback", "note": "回退到 v1",
+                          "created_at": "2026-07-26T11:15:55.101723", "created_by": 1},
+                         {"version": 2, "source": "manual", "note": None,
+                          "created_at": "2026-07-25T09:00:00", "created_by": 1}],
+            "total": 7, "limit": 2, "offset": 4, "has_more": True}
+    out, err, calls = _main_ok(monkeypatch, capsys,
+                               ["--versions", "--limit", "2", "--offset", "4"],
+                               [_Resp(200, body)])
+    url = calls[0]["url"]
+    assert "limit=2" in url and "offset=4" in url
+    assert out == body and out["total"] == 7 and out["has_more"] is True
+    assert "共 7 个" in err and "--offset 6" in err  # 4 + 本页 2 条
+
+
+def test_versions_without_pagination_sends_no_query(monkeypatch, capsys):
+    """不传分页参数就别自作主张塞默认值——服务端默认 50，塞了反而写死了口径。"""
+    out, err, calls = _main_ok(monkeypatch, capsys, ["--versions"],
+                               [_Resp(200, {"versions": [], "total": 0, "has_more": False})])
+    assert calls[0]["url"].endswith("/api/style-profile/versions") and "?" not in calls[0]["url"]
+    assert "--offset" not in err  # has_more=False 时不提示翻页
+
+
+# ---- server v0.11.0：--admin-default（仅管理员） ----
+
+def test_admin_default_puts_profile_without_base_version(monkeypatch, capsys, tmp_path):
+    """body = {profile, note}；**没有 base_version**（这个端点无乐观锁），也不该要求它。"""
+    f = tmp_path / "p.json"
+    f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
+    out, err, calls = _main_ok(monkeypatch, capsys,
+                               ["--admin-default", str(f), "--note", "统一莫兰迪三色"],
+                               [_Resp(200, {"version": 6, "updated_at": "2026-07-26T14:00:00"})])
+    assert calls[0]["method"] == "PUT"
+    assert calls[0]["url"].endswith("/api/style-profile/admin-default")
+    assert calls[0]["payload"] == {"profile": PROFILE, "note": "统一莫兰迪三色"}
+    assert "base_version" not in calls[0]["payload"]
+    assert out["version"] == 6
+    # 传播语义与「不可回退」必须当场说清（运营会问「我沿用的那套会不会变」）
+    assert "立刻跟着变" in err and "不受影响" in err
+    assert "不可回退" in err or "rollback 对它无效" in err
+    assert "留底" in err
+
+
+def test_admin_default_403_says_admin_only_and_exits_1(monkeypatch, capsys, tmp_path):
+    """403 = 你不是管理员，**不是**服务挂了：exit 1 且绝不能说「没连上风格档案服务」。
+
+    若混进通用的 401/403 → Unreachable 分支，上层会误判服务不可用而走第 ③ 层内置降级。"""
+    import style_profile
+    f = tmp_path / "p.json"
+    f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
+    out, code, err, _ = _run(monkeypatch, capsys, ["--admin-default", str(f)],
+                             sender=lambda *a, **k: _Resp(403, {"detail": "需要管理员权限"}))
+    assert code == style_profile.EXIT_ERROR == 1
+    assert code != style_profile.EXIT_UNREACHABLE
+    assert "只有管理员能用" in err and "没连上风格档案服务" not in err
+    assert out["outcome"] == "forbidden" and out["ok"] is False
+    assert "只有管理员能用" in out["hint"] and "403" in out["error"]
+
+
+def test_other_endpoints_403_still_exits_2(monkeypatch, capsys):
+    """回归：除 --admin-default 外，403 仍按「这把 key 读不到档案服务」走 exit 2 + 第 ③ 层。"""
+    out, code, err, _ = _run(monkeypatch, capsys, ["--get"],
+                             sender=lambda *a, **k: _Resp(403, {"detail": "无权限"}))
+    assert code == 2 and out["reason"] == "unauthorized"
+    assert "没连上风格档案服务" in err and out["layer"] == "builtin_fallback"
+
+
 def test_stdout_is_pure_json_on_every_path(monkeypatch, capsys, tmp_path):
     """输出契约：stdout **只有一行** JSON，人话一律走 stderr（上层直接 json.loads 全量）。"""
     import style_profile
@@ -352,10 +501,16 @@ def test_stdout_is_pure_json_on_every_path(monkeypatch, capsys, tmp_path):
         (["--get"], [_Resp(200, {"exists": False, "source": "admin_default", "profile": PROFILE})], None),
         (["--versions"], [_Resp(200, {"versions": []})], None),
         (["--version", "1"], [_Resp(200, {"version": 1, "profile": PROFILE})], None),
-        (["--put", str(f), "--base-version", "1"], [_Resp(200, {"exists": True, "version": 2})], None),
-        (["--rollback", "1", "--base-version", "2"], [_Resp(200, {"exists": True, "version": 3})], None),
+        (["--put", str(f), "--base-version", "1"],
+         [_Resp(200, {"exists": True, "version": 2, "dropped_keys": ["tone"]})], None),
+        (["--rollback", "1", "--base-version", "2"],
+         [_Resp(200, {"exists": True, "version": 3, "dropped_keys": []})], None),
+        (["--versions", "--limit", "1", "--offset", "2"],
+         [_Resp(200, {"versions": [], "total": 3, "limit": 1, "offset": 2, "has_more": True})], None),
+        (["--admin-default", str(f)], [_Resp(200, {"version": 6})], None),
         (["--put", str(f), "--base-version", "1"], None, 3),   # 409
         (["--get"], None, 2),                                  # 网络挂
+        (["--admin-default", str(f)], None, 1),                # 403：不是管理员
     ]
     for argv, resps, fail_code in cases:
         monkeypatch.setattr(sys, "argv",
@@ -367,6 +522,9 @@ def test_stdout_is_pure_json_on_every_path(monkeypatch, capsys, tmp_path):
             def boom(*a, **k):
                 raise ConnectionError("Max retries exceeded")
             monkeypatch.setattr(style_profile, "send_request", boom)
+        elif fail_code == 1:
+            monkeypatch.setattr(style_profile, "send_request",
+                                lambda *a, **k: _Resp(403, {"detail": "需要管理员权限"}))
         else:
             seq = iter(resps)
             monkeypatch.setattr(style_profile, "send_request", lambda *a, **k: next(seq))
