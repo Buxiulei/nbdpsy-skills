@@ -222,14 +222,19 @@ def main():
     api_base = args.api_base or os.environ.get("NBDPSY_API_BASE", "https://database.nbdpsy.com")
 
     # 确定要发布的文件
+    # 批量模式排除 {slug}.sources.md——那是第 2 步查证轮的素材清单（引用落地步的输入），
+    # 是工作文件不是待发布稿；不排除会因"缺 frontmatter"让批量发布恒定 exit 1（2026-07-26）。
+    def _drafts(d):
+        return sorted(p for p in d.glob("*.md") if not p.name.endswith(".sources.md"))
+
     if args.file:
         files = [args.file]
     elif args.drafts_dir:
-        files = sorted(args.drafts_dir.glob("*.md"))
+        files = _drafts(args.drafts_dir)
     else:
         workspace = nbdpsy_common.resolve_workspace()
         drafts_dir = workspace / "drafts"
-        files = sorted(drafts_dir.glob("*.md")) if drafts_dir.is_dir() else []
+        files = _drafts(drafts_dir) if drafts_dir.is_dir() else []
 
     if not files:
         print("未找到要发布的文件", file=sys.stderr)

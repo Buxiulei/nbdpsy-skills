@@ -42,10 +42,35 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
 ### 流程
 
 0. 确认输入：话题/想法（唯一必需）。可选：指定篇数、只到某一级停。
-1. 【长文】触发 nbdpsy-seo-artical-creator 完成选题→查证→撰写→自检。
+1. 【长文】触发 nbdpsy-seo-artical-creator 完成选题→查证→撰写。写作态正文里的引用只写
+   `【引: 作者/机构 年份, 文献简称】` 简称标记，编号、URL、参考文献区、frontmatter `citations`
+   都不在这一步做（2026-07-26 老板定案：写作只管组织语言）。
+1.5【引用落地】派**独立子代理**（不是写作那个实例）按 nbdpsy-seo-artical-creator 的「引用落地」步
+   执行：扫标记 → 对回「查证优先」步产出的素材清单 → 去重编号 → 替换成 `[[n]](url)` → 生成文末
+   「## 参考文献」与 frontmatter `citations` → 实跑 lint_markdown.py / preflight.py 自检。
+   细则以那一步为准，此处不重抄。
+   **派单时必须把两个绝对路径一并交给子代理**——它是新实例，没有写作那段对话，清单不落盘等于没有：
+   带标记的草稿 `$WS/drafts/{slug}.md` + 素材清单 `$WS/drafts/{slug}.sources.md`
+   （`WS=$(python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace)`）。
+   **派单前先确认 `$WS/drafts/{slug}.sources.md` 存在且非空**：
+   ⛔ 缺文件 / 空文件 = **打回第 1 步补查证轮并把清单落盘**，落盘后再派 1.5；
+   **绝不许让子代理改走「自己联网查」分支**——那个口子只留给「清单里漏了的单条」，
+   不是给「根本没有清单」用的，全靠联网自查正是编造风险最高的那条路。
+   **产出是发布态**：正文 `【引:` 残留数为 0，
+   `[[n]](url)` 与 `citations[n-1].url` 逐字一致，preflight 的**引用职责内三项**（`CITE-MATCH` / `RENDER-cite` / 残留=0）全绿。
+   ⚠️ **不要在这一级要求「preflight 全绿」**——preflight 还判 R1 字数、R10 结构、加粗、title 长度等一堆与引用无关的项，
+   而引用 agent **不许改正文措辞**（细则见 `nbdpsy-seo-artical-creator` 的「引用落地」步「preflight 门槛分级」）。
+   写成全绿会让它要么违规改正文、要么反复打回烧掉返工预算。职责外的 fail **原样记进报告、随打回清单交给写作端**。
+   引用 agent 打回（简称对不上素材清单、联网也查不到出处）→ 视同本级不过，把打回清单交回
+   nbdpsy-seo-artical-creator 定向返工（换一条有出处的说法或删掉该断言）→ 重跑本步；
+   沿用【审查】那套返工协议，长文这一级的返工轮次与第 2 步**合并计数**（≤2轮，仍不过→停，
+   汇报人工），不因多这一步而放宽。
+   ⛔ 本步没跑完不得进第 2 步：带简称标记的长文审查必判 FAIL，更糟的是第 4 步拆小红书时
+   会把标记一起拆进笔记正文。
 2. 【审查】派独立子代理加载 nbdpsy-content-reviewer 审长文（checklist-article）。
    FAIL → 把报告交回 nbdpsy-seo-artical-creator 定向返工 → 复审（≤2轮，仍FAIL→停，汇报人工）。
-3. 【发布】PASS 后按 nbdpsy-seo-artical-creator 第 5 步 API 发布，记录 slug。
+   引用 agent 报告里标注「引用阶段新增、未经查证轮」的条目要提示审查端重点复核。
+3. 【发布】PASS 后按 nbdpsy-seo-artical-creator 的「生成即发布」步（API 直发）发布，记录 slug。
 4. 【拆笔记】触发 nbdpsy-xiaohongshu-creator，传入 slug（自动拉文）。
 5. 【审查】nbdpsy-content-reviewer 逐篇审笔记（checklist-note），FAIL 同返工协议。
 6. 【出图】按 nbdpsy-xiaohongshu-creator 的宿主自适应出图章节执行：
@@ -72,7 +97,22 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
 ### 铁律
 
 - 每级审查者必须是独立子代理（新实例加载 nbdpsy-content-reviewer），绝不让生产 agent 自审。
+- 长文这一级有两道闸，顺序不可颠倒：先【引用落地】（第 1.5 步，`【引:` 残留必须为 0），
+  后【审查】（第 2 步）。引用 agent **绝不自己编 URL**，对不上素材清单就打回写作端（2026-07-26 老板定案）。
 - 审查 FAIL 未消除前不进下一级；第 3 轮仍 FAIL 必须停下找人，禁止硬闯。
 - 人工等待点只有三类：笔记配图回传（第 6 步）、视频参考图回传（nbdpsy-text-to-video 第 2.5 步）、
   以及 dreamina 排队/扫码类外部依赖。停等时必须结束回合，恢复时从停等点续跑。
 - 中断恢复：重新触发本 skill 并告知已完成到哪级，从该级之后续跑（各级产物都在工作区，幂等）。
+  **长文这一级要问到 1.5 级粒度**：「写完了」（第 1 步，正文还是 `【引: ...】` 简称标记）与
+  「引用已落地」（第 1.5 步，已替换成 `[[n]](url)` 的发布态）是两级；运营口头说的"长文写完了"
+  通常只到第 1 级，**别顺势跳到第 2 步审查**——带标记进审查必判 FAIL，还会把标记一路拆进小红书笔记。
+  不确定就机检判定，不靠追问：
+
+  ```bash
+  WS=$(python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace)
+  # cite_scan.py 在 nbdpsy-seo-artical-creator 的 skill 根目录下（记作 {SEO_SKILL_DIR}）
+  python3 {SEO_SKILL_DIR}/scripts/cite_scan.py "$WS/drafts/{slug}.md" --expect-empty
+  ```
+
+  exit 0（残留 0）→ 第 1.5 步已完成，可进第 2 步；**非 0 → 一律不进第 2 步，停在第 1.5 步先把引用落地**
+  （exit 2 = 连草稿文件都找不到，说明第 1 步就没完成，回第 1 步）。
