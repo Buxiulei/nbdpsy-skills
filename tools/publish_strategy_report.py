@@ -354,10 +354,15 @@ def main():
                "bytes": nbytes, "dry_run": True, "outcome": "dry-run"})
         return
 
-    key = nbdpsy_common.get_secret(nbdpsy_common.STRATEGY_API_KEY)
+    # 战略报告默认复用发文 key（见 nbdpsy_common.strategy_api_key）：运营只配一把，
+    # 能不能写战略报告由服务端按 scope 判定，不由本机配了几把 key 决定。
+    key = nbdpsy_common.strategy_api_key()
     if not key:
-        print(f"MISSING:{nbdpsy_common.STRATEGY_API_KEY} 请找管理员要含 strategy:write 的密钥，"
-              f"再用 nbdpsy_common.py secret import <凭据包> 导入", file=sys.stderr)
+        print(f"MISSING:{nbdpsy_common.BLOG_API_KEY} 本机没有任何可用凭据"
+              f"（战略报告默认复用发文 key {nbdpsy_common.BLOG_API_KEY}；"
+              f"{nbdpsy_common.STRATEGY_API_KEY} 只在需要独立吊销时才单配）。"
+              f"请找管理员要「凭据配置包」，再用 nbdpsy_common.py secret import <凭据包> 导入",
+              file=sys.stderr)
         _emit({"slug": args.slug, "id": None, "created": None,
                "version_label": args.version_label, "bytes": nbytes,
                "reason": "missing_credential", "outcome": "failed"})
@@ -393,6 +398,17 @@ def main():
             _emit({**base, "outcome": "conflict"})
             sys.exit(1)
         print(f"请求失败（409）：{_error_text(resp)}", file=sys.stderr)
+        _emit({**base, "outcome": "failed"})
+        sys.exit(1)
+
+    if resp.status_code == 403:
+        # 凭据本身是好的，缺的是这把 key 上的 strategy:write scope——服务端 fail-closed 拦下。
+        # 只回显服务端文案等于把人卡在原地：直接给出「谁去哪个页面点什么」。
+        print(f"权限不足（403）：服务端说「{_error_text(resp)}」。"
+              f"这把 API key 缺 strategy:write 权限——请管理员在**管理后台**"
+              f"（manage.nbdpsy.com）→ 博客 → API Keys 页给这把 key 补勾 strategy:write，"
+              f"或重新签发一把同时含 blog:write + strategy:write 的 key。"
+              f"补好权限后本命令原样重跑即可，无需换凭据、无需重新导入。", file=sys.stderr)
         _emit({**base, "outcome": "failed"})
         sys.exit(1)
 

@@ -81,17 +81,49 @@ def _last_json(capsys):
 # ---- 凭据缺失：非零退出且不发请求，stdout 仍守输出契约 ----
 
 def test_missing_secret_exits_nonzero_without_request(monkeypatch, tmp_path, capsys):
+    """两把 key 都没有才算缺凭据（战略报告默认复用发文 key）。"""
     mod, p, sender = _install(monkeypatch, tmp_path, key=None)
     with pytest.raises(SystemExit) as exc:
         _run(mod, monkeypatch, p)
     assert exc.value.code != 0
     cap = capsys.readouterr()
-    assert "MISSING:NBDPSY_STRATEGY_API_KEY" in cap.err
+    assert "MISSING:NBDPSY_BLOG_API_KEY" in cap.err
+    assert "凭据配置包" in cap.err
     assert sender.calls == []
     # docstring 声明的输出契约：stdout 必须是可解析 JSON 且带 outcome
     data = json.loads(cap.out.strip().splitlines()[-1])
     assert data["outcome"] == "failed"
     assert data["reason"] == "missing_credential"
+
+
+# ---- 凭据收敛：战略报告默认复用发文 key，运营只配一把 ----
+
+def _install_with_secrets(monkeypatch, tmp_path, secrets: dict):
+    """按 key 名分别打桩 get_secret（区分 BLOG / STRATEGY），返回 (module, html_path, sender)。"""
+    mod, p, sender = _install(monkeypatch, tmp_path)
+    monkeypatch.setattr(mod.nbdpsy_common, "get_secret", lambda k: secrets.get(k))
+    return mod, p, sender
+
+
+def test_falls_back_to_blog_key(monkeypatch, tmp_path, capsys):
+    """只配 NBDPSY_BLOG_API_KEY 时照样发得出请求，用的就是这把 key。
+    把 strategy_api_key 改回只读 STRATEGY，本用例即变红（会走 missing_credential）。"""
+    mod, p, sender = _install_with_secrets(
+        monkeypatch, tmp_path, {"NBDPSY_BLOG_API_KEY": "nbdblog_x"})
+    _run(mod, monkeypatch, p)
+    assert _last_json(capsys)["outcome"] == "created"
+    assert len(sender.calls) == 1
+    assert sender.calls[0]["key"] == "nbdblog_x"
+
+
+def test_explicit_strategy_key_takes_precedence(monkeypatch, tmp_path, capsys):
+    """显式单配的战略 key 优先于发文 key（独立吊销的场景仍走得通）。"""
+    mod, p, sender = _install_with_secrets(
+        monkeypatch, tmp_path,
+        {"NBDPSY_BLOG_API_KEY": "nbdblog_x", "NBDPSY_STRATEGY_API_KEY": "nbdstrat_y"})
+    _run(mod, monkeypatch, p)
+    assert _last_json(capsys)["outcome"] == "created"
+    assert sender.calls[0]["key"] == "nbdstrat_y"
 
 
 # ---- 预检：完整 HTML 文档拒绝 ----
@@ -727,6 +759,20 @@ def test_403_is_failed(monkeypatch, tmp_path, capsys):
     cap = capsys.readouterr()
     assert json.loads(cap.out.strip().splitlines()[-1])["outcome"] == "failed"
     assert "strategy:write" in cap.err
+
+
+def test_403_hint_is_actionable_not_just_server_echo(monkeypatch, tmp_path, capsys):
+    """凭据没错、缺的是这把 key 上的 scope——只回显服务端一句「Forbidden」等于把人卡住。
+    提示必须告诉运营去哪儿、找谁、点什么。"""
+    mod, p, sender = _install(monkeypatch, tmp_path,
+                              resp=Resp(403, {"success": False, "error": "Forbidden"}))
+    with pytest.raises(SystemExit):
+        _run(mod, monkeypatch, p)
+    err = capsys.readouterr().err
+    assert "管理后台" in err and "API Keys" in err     # 去哪个页面
+    assert "权限" in err and "strategy:write" in err   # 补什么
+    assert "管理员" in err                             # 找谁
+    assert len(err.strip()) > len("请求失败（403）：Forbidden") + 20  # 不是纯回显
 
 
 def test_network_exception_is_failed(monkeypatch, tmp_path, capsys):
