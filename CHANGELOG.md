@@ -127,13 +127,26 @@ python3 tools/publish_strategy_report.py --html 报告-artifact版.html \
 **权限不足读不了**都走 `preflight_failed` 这一条，不抛裸 traceback——否则 stdout 一个字都没有，
 调用方无从解析。stderr 只给人看。`--dry-run` 只打字段摘要，不打正文全文，且**全程不使用密钥**
 （运营等管理员发密钥期间就该能本地自查 `--html` 有没有指错）；任何日志、报错、异常里都不出现密钥或
-其片段，请求失败只回显状态码与服务端 `error` 文案。`--generated-at` 设为**必填**——省了的话页头
+其片段，请求失败只回显状态码与服务端 `error` 文案（403 另附「去哪儿补权限」的可行动指引，见下）。
+`--generated-at` 设为**必填**——省了的话页头
 「生成于」显示的是推送时间而不是出数时间，同一份内容重发时间还会漂。
 
-**新增可选凭据 `NBDPSY_STRATEGY_API_KEY`**（scopes 需含 `strategy:write`）：`doctor` 多报一项
-`strategy_ready`，未配置只在 notes 里提示、**不判整体失败**。不复用 `NBDPSY_BLOG_API_KEY`——
-写入目标是内部管理后台里被渲染的内容，与写公开站内容不是同一信任级别，单开一把才能独立吊销
-而不牵连发文流水线；也**不进 `REQUIRED_KEYS`**，否则所有只写内容的人 doctor 都会无谓变红。
+**凭据只用一把：战略报告复用发文 key，无需单配。** 运营侧要配的仍然只有
+`NBDPSY_BLOG_API_KEY` 一行——脚本按 `NBDPSY_STRATEGY_API_KEY or NBDPSY_BLOG_API_KEY` 取值，
+`doctor` 的 `strategy_ready` 同口径（两者其一存在即就绪），且**不进 `REQUIRED_KEYS`**、
+不判整体失败。
+
+**权限由后台勾选，不由凭据数量区分。** 服务端 `blog_api_keys.scopes` 是 JSONB 数组，一把 key
+天然可同时持有 `["blog:write","strategy:write"]`，并逐 scope **fail-closed** 校验——隔离在
+scope 层就已经完成，物理上分两把 key 只是签发时的选择，不构成额外隔离。所以回退**不降级安全**：
+拿一把只有 `blog:write` 的 key 去调战略端点，会被服务端 403 拦住，不会静默越权。
+`NBDPSY_STRATEGY_API_KEY` 保留为**显式覆盖**（真需要一把能独立吊销的战略专用 key 时单配它即优先生效）。
+
+配套两处文案不谎报、可行动：`doctor` 就绪那条 note 明说「能不能发由服务端按 scope 判定，
+这把 key 若没勾 `strategy:write` 会在发布时被 403 拒绝」；脚本遇 **403 不再只回显服务端原文**，
+直接给出「请管理员在管理后台 → 博客 → API Keys 页给这把 key 补勾 `strategy:write`，或重新签发
+一把含 `blog:write` + `strategy:write` 的 key，补好后原样重跑」。缺凭据的 `MISSING:` 提示也改为
+「两把都没有」的口径，指向发文凭据配置包。
 
 ## [1.40.0] — 2026-07-27
 

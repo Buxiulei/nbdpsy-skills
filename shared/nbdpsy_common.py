@@ -57,13 +57,17 @@ def set_secret(key: str, value: str) -> Path:
 def ensure_secrets(keys):
     return [k for k in keys if not get_secret(k)]
 
-REQUIRED_KEYS = ["NBDPSY_BLOG_API_KEY"]
+BLOG_API_KEY = "NBDPSY_BLOG_API_KEY"  # 发文凭据，必需
+REQUIRED_KEYS = [BLOG_API_KEY]
 DOUBAO_API_KEY = "VOLC_TTS_API_KEY"  # 新版控制台单一凭据，优先
 DOUBAO_KEYS = ["VOLC_TTS_APPID", "VOLC_TTS_ACCESS_TOKEN"]  # 旧版双凭据，向后兼容
 XHS_API_KEY = "NBDPSY_XHS_API_KEY"  # 小红书运营 API（nbdpsy-api）运营专属 apikey，可选
-# 战略规划报告发布（管理后台 /strategy）专用 apikey，可选。不复用 NBDPSY_BLOG_API_KEY：
-# 写入目标是内部管理后台里被渲染的内容，与写公开站内容不是同一信任级别；单开一把才能
-# 独立吊销而不牵连发文流水线。只有出数据报告的人需要它，故不进 REQUIRED_KEYS。
+# 战略规划报告发布（管理后台 /strategy）凭据，**可选**：不配就回退用发文 key。
+# 权限隔离在服务端的 scope 层已经完成——blog_api_keys.scopes 是 JSONB 数组，一把 key
+# 天然可同时持有 ["blog:write","strategy:write"]，服务端逐 scope fail-closed 校验；
+# 物理上分两把 key 只是签发时的选择，不构成额外隔离。故运营只需一把 key，权限由管理员
+# 在后台勾选，不由凭据数量区分。本键保留为**显式覆盖**：真要一把能独立吊销的战略专用 key
+# 时单配它即优先生效。
 STRATEGY_API_KEY = "NBDPSY_STRATEGY_API_KEY"
 XHS_API_BASE_KEY = "NBDPSY_XHS_API_BASE"
 DEFAULT_XHS_API_BASE = "https://mcp.nbdpsy.com"
@@ -83,6 +87,12 @@ def get_base(key: str):
         return os.environ[key]
     return _read_env_file(user_secrets_path(), key)
 
+def strategy_api_key():
+    """战略报告凭据：显式配的 NBDPSY_STRATEGY_API_KEY 优先，否则回退发文 key。
+    回退不降级安全：服务端按 scope fail-closed，只带 blog:write 的 key 调 strategy
+    端点会被 403 拦住，不会静默越权。"""
+    return get_secret(STRATEGY_API_KEY) or get_secret(BLOG_API_KEY)
+
 def xhs_api_base() -> str:
     return get_base(XHS_API_BASE_KEY) or DEFAULT_XHS_API_BASE
 
@@ -94,7 +104,7 @@ def doctor():
     required_missing = [k for k in REQUIRED_KEYS if not get_secret(k)]
     doubao_ready = bool(get_secret(DOUBAO_API_KEY)) or all(get_secret(k) for k in DOUBAO_KEYS)
     xhs_ready = bool(get_secret(XHS_API_KEY))
-    strategy_ready = bool(get_secret(STRATEGY_API_KEY))
+    strategy_ready = bool(strategy_api_key())
     ok = not required_missing
     notes = []
     if required_missing:
@@ -108,8 +118,13 @@ def doctor():
         notes.append("小红书自动发布未配置（可选）：缺 NBDPSY_XHS_API_KEY——管理员在后台"
                      "「小红书运营接入」生成的接入包里带此凭据；不配则小红书笔记只能人工发布。")
     if not strategy_ready:
-        notes.append("战略规划报告发布不可用（可选）：缺 NBDPSY_STRATEGY_API_KEY——需管理员生成含 "
-                     "strategy:write 的密钥；只有出运营数据报告的人需要它，不配不影响其它功能。")
+        notes.append("战略规划报告发布不可用（可选）：本机一把 key 都没有——它默认复用发文凭据 "
+                     "NBDPSY_BLOG_API_KEY，配好那一把即可，无需单配 NBDPSY_STRATEGY_API_KEY。")
+    else:
+        # 不谎报「可用」：这里只证明「有凭据可发」，能不能写进战略报告由服务端 scope 说了算。
+        notes.append("战略规划报告发布：用的是发文凭据（若单配了 NBDPSY_STRATEGY_API_KEY 则以它为准）。"
+                     "**权限由服务端按 scope 判定**——这把 key 若没勾 strategy:write，发布时会被 403 "
+                     "拒绝；届时请管理员在管理后台 → 博客 → API Keys 页给它补勾该权限。")
     notes.append("视频画面用的即梦需登录一次：让 AI 帮你登录（会自动弹浏览器，用抖音 App 扫码/点确认即可）；"
                  "登录态由 nbdpsy-text-to-video/scripts/check_env.py 检测。")
     return {"ok": ok, "required_missing": required_missing,
