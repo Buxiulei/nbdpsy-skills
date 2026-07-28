@@ -35,7 +35,8 @@ python3 PUB --self-check              # 小红书 API：连通性 + 身份 + 被
   导入后重试（导入：把配置包整段存成 creds.txt，跑 `python3 COMMON secret import creds.txt`）。
 - `--self-check` 报 `Host not allowed`/超时 → 沙盒拦网：`python3 COMMON sandbox allow` 后**重启 Claude**。
 - `doctor` 还会报**本机工具包版本**（形如 `工具包 v1.41.0（b4c5812，装于 2026-07-28）`）：运营说「更新工具包」时先看这行，
-  比最新版落后、或显示「版本标记缺失」（旧安装器装的），都是重跑一次 `install.sh` 就好（覆盖式安装，秒级，不动凭据）。
+  比最新版落后、或显示「版本标记缺失」（旧安装器装的），都是跑一次 `python3 COMMON update` 就好
+  （覆盖式安装，秒级，不动凭据；详见下面「更新工具包」节的四条路径与 ⛔ 禁令）。
 
 **不管是本来就全绿、还是刚 `secret import` 完配置包，紧接着做第 1.5 步读他的风格档案**，别跳过——
 他的笔记与配图都按那份档案做。
@@ -531,18 +532,88 @@ python3 SP --admin-default /tmp/default-config.json --note "本次改动说明"
 
 ## 更新工具包（运营说「更新 / 升级 / 装最新版」时）
 
-**命令由你替他跑**，运营一个字不用敲。更新 = 重跑一遍官方安装命令，把 7 个 skill 整目录覆盖成 GitHub 最新版：
+**命令由你替他跑**，运营一个字不用敲——他是非技术兼职人员，别让他开终端、别让他背命令。
+更新 = 把 7 个 skill 整目录覆盖成 GitHub 最新版（凭据一概不动）。
+
+> ### ⚠️ 但有一件事必须他点头：更新会改写你自己的行为准则
+>
+> 这 7 个 skill 里的 `SKILL.md` **就是你（agent）之后办事的指令**。更新 = 从网上拉一份新的下来、
+> 覆盖掉现在这份——**拉来的内容会直接变成你的行为方式，中间没有任何人看过**。
+> 所以这件事**不能你自己决定**，必须运营明确说"更新吧"才动手。
+>
+> **怎么问**（一句话，别念术语）：
+> 「要把工具包更到最新版吗？会把 7 个技能文件覆盖成 GitHub 上的最新版本——
+> 你的账号密钥、风格档案都不会动。更新吗？」
+> 他说"更新 / 好 / 可以" → 跑 ①。他没明确答应、或在问别的事 → **先别跑**。
+>
+> ⛔ **不要为了"省事"跳过这一问**：这道闸挡的是"仓库万一被人推了坏东西，所有装了工具包的机器上
+> agent 自动照做"——概率低，但代价是所有人的 agent 一起出问题，而问一句的成本几乎为零。
+> **例外**：运营自己开口说的就是「更新工具包 / 升级 / 装最新版」——那本身就是明确同意，直接跑，别再追问一遍。
+
+得到同意后，按 ①→②→③ 的顺序试，顺序不许调换：① 由你执行（绝大多数情况到这就完了），
+②③ 是 ① 跑不通时才用、需要运营本人动手的退路。
+
+### ① 首选 · 你直接跑 `COMMON update`
 
 ```bash
-# Windows（Claude Code 的 Bash 是 Git Bash，须借 powershell 跑）：
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.ps1 | iex"
-# Linux / macOS：
-curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.sh | bash
+python3 COMMON update                        # git clone 官方仓库最新版 → 覆盖 ~/.claude/skills 与 ~/.agents/skills
+python3 COMMON update --source <本地仓库路径>  # 手上已有仓库副本时（测试/内网）跳过 clone
 ```
 
-- 看到 7 个 skill 逐个打 ✓ 即更新成功。
+- **为什么用它而不是安装脚本**：它是运营机器上**早就装好的**那个工具（跟你天天跑的 `COMMON doctor`、
+  `COMMON secret import` 同一个文件），纯 Python、跨系统一条命令（Windows 把 `python3` 换成 `python`），
+  没有 zsh / bash 的行为差异——手写 shell 脚本踩过的坑（见下面 ⛔ 禁令）它一个都不会踩。
+  它内部每复制完一个 skill 都会校验 `SKILL.md` 真的落地了，**失败立刻报错退出，不会假装成功**。
+- 跑完把 `✓ 工具包 v{旧} → v{新}（{commit}）` 这行念给运营听；stdout 的 JSON 里 `skills` 是本次覆盖的清单、
+  `dests` 是装到哪两个目录。**没打这行、或某个 skill 报错退出 = 没更新成功**，别当成功汇报。
+- 报 **git 不存在 / clone 失败** → 直接转 ② 或 ③，**别自己另想办法**（见下面 ⛔ 禁令）。
+- 本机装的还是**旧版、没有 `update` 子命令**（跑出来是「用法: nbdpsy_common.py workspace | doctor | …」）
+  → 同样转 ② 或 ③；装过一次新版之后就有了。
+
+### ② 备选 A · 让运营在他**自己的终端**里跑官方安装命令
+
+把命令发给运营，让他在系统终端（macOS「终端」/ Windows PowerShell）里粘贴执行：
+
+```bash
+# Linux / macOS：
+curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.sh | bash
+# Windows：
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.ps1 | iex"
+```
+
+⚠️ **这条要麻烦运营本人操作，所以只在 ① 跑不通时用**（他多半不熟终端，你得一步步指路：
+在哪儿打开终端、粘哪一行、回车之后看什么）。让他把输出念回来：7 个 skill 逐个打 ✓ 即更新成功。
+
+### ③ 备选 B · 会话里让运营自己敲 `!` 前缀命令
+
+运营嫌开终端麻烦，就让他**在 Claude Code 输入框里自己敲**（开头那个 `!` 不能省——
+`!` 前缀 = 这条命令由**运营本人**执行，不是 agent 的工具调用）：
+
+```
+! curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.sh | bash
+```
+
+仓库已经克隆到本地的，就让他敲 `! bash install.sh`。**你不能替他敲这条**，得他本人发出去才算数。
+
+### ⛔ 禁令 · 绝不手写「等效安装脚本」
+
+安装器跑不起来时，**不许**通读 `install.sh` 之后自己手搓一份「功能一样」的复制脚本。真实事故（2026-07-28，
+同事 macOS 机器）：agent 手写的等效脚本里写了 `SKILLS="a b c …"` + `for s in $SKILLS`——
+
+- **zsh 不做无引号变量分词**（bash 会，zsh 不会），7 个 skill 名被当成**一整个路径**；
+- 循环体里 `cp` 全部失败，但 **`echo "✓ $s"` 照常打印**——**一个 skill 都没复制，屏幕上却全是 ✓**，
+  agent 还向运营汇报「更新成功」；
+- 同一个循环里的 `rm -rf "$dest/$s"` 拿着同样那个畸形路径删东西，**只是侥幸目标不存在**才没删错文件。
+
+静默零复制 + 假 ✓ + `rm -rf` 误删风险，一次踩齐。所以：**这条路直接封死**。
+万一真到了只能手搓的地步（正常情况下不会），三条硬要求：用 **`bash`**（明确写 `#!/usr/bin/env bash`，
+不许在 zsh 下裸跑）、用**数组**（`SKILLS=(a b c)` + `"${SKILLS[@]}"`）、**每复制一个就断言
+`[ -f "$dest/$s/SKILL.md" ]`**，断言不过立刻 `exit 1`——**绝不允许在失败路径上打 ✓**。
+
+### 更新完照例交代三句
+
 - 凭据**不会**被更新冲掉：博客/小红书/豆包 key 存在用户级 `secrets.env`（仓库目录外），即梦登录态在 `~/.dreamina_cli/`，全都原样保留。
-- 更新完提醒运营**重启一下 Claude Code** 再继续——新版 skill 重启后才生效。
+- 提醒运营**重启一下 Claude Code** 再继续——新版 skill 重启后才生效。
 - **插件也会更新**：`python3 PUB --extension-info` 返回的 **`extension_version`**（当前 2.1.3）才是插件
   版本（`version` 字段是服务端版本，别拿它比对）；运营 `chrome://extensions` 显示的版本低于它时，
   让 TA 重新下载 `download_url` 的 zip、解压替换后在 `chrome://extensions` 点「重新加载」（或删旧加载新）。
@@ -574,7 +645,7 @@ curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/insta
 | 「搬运这个 YouTube / 把这条油管翻译配音」 | 第 3.5 步（`TV --url <链接>`，只收 YouTube） |
 | 「这条视频 XX 处改一下 / 再改改」 | 第 3.5 步 revise（`TV --revise <任务号> --instructions "原话"`，仅 remake 成片可修订、可反复迭代） |
 | 「提示缺 key / 连不上」 | 第 1 步的两个兜底（要接入包 / sandbox allow） |
-| 「更新工具包 / 升级 / 装最新版」 | 上面「更新工具包」节：你替他跑安装命令，完了提醒重启 Claude Code |
+| 「更新工具包 / 升级 / 装最新版」 | 上面「更新工具包」节：运营这么开口本身就是同意，**直接 `python3 COMMON update`**（①）；跑不通再按 ②③ 退（要他本人动手）。完了提醒重启 Claude Code。⛔ 绝不手写等效安装脚本 |
 | 「插件怎么用 / 帮助在哪」 | 让 TA 点插件弹窗底部「**使用帮助**」（2.1.3 起内置离线指南：配置/扫码/账号状态/FAQ） |
 | 「插件是不是旧版」 | 比对 `--extension-info` 的 `extension_version` ↔ TA 的 chrome://extensions 显示版本；旧了按「更新工具包」节换新包 |
 | 「装不了 / 你说没有本机执行能力」 | 提醒他用 **Claude Desktop 的「Code」标签页**，别用 Chat/网页/手机版 |
