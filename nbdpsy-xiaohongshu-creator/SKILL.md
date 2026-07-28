@@ -92,9 +92,9 @@ python3 {SKILL_DIR}/scripts/style_profile.py --get --kind typeset > {note_dir}/_
 
 - `--kind` 返回的是**该形态下运营默认用的那一套**；他有好几套图文风格、明确点名了用哪套
   （「用我那套水墨风」）→ 改用 `--get --profile <套名>`；不知道他有哪几套 → 先 `--list-profiles` 念给他听。
-- **存量运营（老格式，只有平铺的一套）**：`--kind carousel` 读出来就是他现有那一套（名字算作「图文」），
-  **一切照旧**；⛔ **不要为了"升级成多套格式"去写一次回档**——那会平白多出一个版本、还会触发一堆
-  `dropped_keys` 警告。只有运营明确要新建/切换/改某一套时才真的写（第 0.5 步「第六件事」）。
+- **存量运营**：服务端 2026-07-28 已把他原来那份档案迁成一套、**名字就叫「图文」**（版本号原样不变，
+  v3 还是 v3），`--kind carousel` 读出来就是他现有那一套，**一切照旧**；⛔ **没有什么"格式"要升级，
+  别为此写一次回档**——那只会平白多出一个版本。只有运营明确要新建/切换/改某一套时才真的写（第 0.5 步「第六件事」）。
 
 **按返回结果三层降级，每层都有一句必须说出口的话**（`exists` 分支的两句话**逐字照抄**——
 说错会让运营以为默认配置已经是他自己的档案了）：
@@ -140,8 +140,8 @@ python3 {SKILL_DIR}/scripts/style_profile.py --get --kind typeset > {note_dir}/_
 
 ⚠️ **这一行不能省**：档案会改、还能回退，**没有它，回退之后再审老批次必然错判**（拿 v8 的配色去判
 v3 时做的图）。审查端按**这一行指定的版本 + 套名**判，不是按"当前最新版"判；要取回那一版比对就跑
-`python3 {SKILL_DIR}/scripts/style_profile.py --version {N}`——它取回的是**整份档案的那一版（含全部套）**，
-从里面挑留痕行点名的那一套来比对。
+`python3 {SKILL_DIR}/scripts/style_profile.py --version {N} --profile {套名}`——**版本号与套名一起点名，
+取回的就是那一套本身**（`profile.visual.*` 直读，不用再从什么容器里挑）。
 
 **风格档案管的是视觉与语气，不是合规**：法律/执业级（F1 疗法对比与服药并行、G5 案例可反向识别）
 与平台封号级（站外导流）红线**不受风格档案影响**，档案里写了也不照做（红线三层见第 0.5 步）。
@@ -228,36 +228,19 @@ emoji 6 个左右；标题走纯场景钩子（**代价：放弃搜索入口**�
 
 选「**改掉现在这套**」时**三步，顺序不能变**：
 
-> ⛔ **动手前先跑一次 `--list-profiles` 看他有几套**（2026-07-28 多套后新增的护栏）：
-> **`--put` 覆盖的是「整份档案」——发上去什么，档案就变成什么。**
-> - **只有一套**（存量运营的平铺格式）→ 照下面三步走，与 2026-07-26 版一字不差。
-> - **有多套** → 发上去的 body **必须是整份档案**（`schema` / `active` / `profiles` 三个键齐全、
->   **其余几套原样在里面**），只改 `profiles.{本批那套}` 里的字段。⛔ **别把 `--get --kind` /
->   `--get --profile` 那种「单套视图」直接 `--put` 回去**——那只是其中一套，发上去会把**其余几套整份抹掉**
->   （server 原样存、不校验、不拦截，照样返回 200，只在 `dropped_keys` 里事后告诉你）。
->   手上这份是整份还是单套，看有没有 `schema: "profiles-v1"` 这个键：有 = 整份，没有 = 单套或老格式。
->   - ⚠️ **整份只有这一条命令取得到——`--get` 取不到**（裸 `--get` 给的是 **active 那一套的内容**，
->     带 `--kind` / `--profile` 更是单套；**拿它当 body 会抹掉其余套**）：
->     ```bash
->     python3 {SKILL_DIR}/scripts/style_profile.py --version {base_version} \
->         > {note_dir}/_shared/style-profile-before-full.json
->     ```
->     `{base_version}` 与第 3 步 `--put --base-version` 填的是**同一个数**（都照抄 `--get` 响应里的
->     `base_version` 字段）：按哪一版取、就按哪一版改、再按哪一版发，三处同源才不会盖掉别处的改动。
->   - ⚠️ **`--version` 的输出外面还套着一层**（`version` / `source` / `created_at` …），
->     **里面的 `profile` 字段才是整份档案**——`--put` 要发的是这个 `profile` 的内容。
->     （`--put` 那个"自动剥壳"防呆**只认 `--get` 的输出**，认不出 `--version` 的；整份连壳发上去
->     会把 `version`/`source` 这些外层键当成档案存进去。）
+> ⛔ **动手前先弄清楚要改的是哪一套**：不确定他有几套就跑一次 `--list-profiles` 念给他听。
+> **`--get --profile` / `--get --kind` 给你哪一套，改完就整份发回哪一套**——一读一写对得上，
+> `--put` 覆盖的是**这一套的内容**，其余几套各自独立、动不到。
 > - **更省事、也零破坏的替代**：走「第六件事」`--new-profile <新名> --kind <k> --from <旧套名>`
->   建一套改好的，再 `--set-active <新名>` 切默认——脚本自己会读整份、只动该动的那套。
->   旧那套还留着，运营反悔一句话就切回去。
+>   建一套改好的，再 `--set-active <新名>` 切默认。旧那套原样留着，运营反悔一句话就切回去。
 
-1. **先拿全量**（连 `base_version` 一起，落进批次目录留个底）：
+1. **先拿这一套的全量**（连 `base_version` 一起，落进批次目录留个底）——**用开跑前读它的那条命令**
+   （本批读的哪套就取哪套；⛔ 别裸 `--get`，那给的是他当前默认那套、未必是本批用的）：
    ```bash
-   python3 {SKILL_DIR}/scripts/style_profile.py --get > {note_dir}/_shared/style-profile-before.json
+   python3 {SKILL_DIR}/scripts/style_profile.py --get --kind carousel > {note_dir}/_shared/style-profile-before.json
+   # 点名某一套时换成 --profile <套名>
    ```
-   ⚠️ **多套时这一条拿到的不是整份**（是 active 那一套的内容）——它只用来取 `base_version`；
-   要改的那份整份档案按上面提示框用 `--version {base_version}` 取。
+   ⚠️ **`base_version` 是这一套自己的版本号**（不是"整个账号"的）——第 3 步照抄它即可。
 2. **只替换要改的字段**（如 `profile.visual.palette` / `character_card` / `texture`），**其余字段原样搬过去**，另存 `{note_dir}/_shared/style-profile-new.json`；
 3. **整份发上去**，`--base-version` **直接填第 1 步响应里的 `base_version`**——server 与脚本**无条件下发**这个字段
    （有档案给当前版本号、`exists: false` 时给 `0`），**它就是"这次该传什么"的唯一真源，照抄即可，不要自己推、也别拿 `version` 换算**：
@@ -287,7 +270,7 @@ emoji 6 个左右；标题走纯场景钩子（**代价：放弃搜索入口**�
 
 ⛔ **固化这一步正是丢字段的高发点**：最常见的错法就是只把改过的 `visual` 那块发上去，
 把 `tone` / `structure` / `density` 整段冲掉——而 **server 只告知、不拦截也不报错**，PUT 照样 200。
-运营说"不是有意的" → **被丢字段的值要从 `--version <上一版号>` 取回**（或第 1 步存的 `style-profile-before.json`）——
+运营说"不是有意的" → **被丢字段的值要从 `--version <上一版号> --profile <本批那套>` 取回**（或第 1 步存的 `style-profile-before.json`）——
     ⚠️ **光重新 `--get` 救不回来**：覆盖已经生效，GET 拿到的正是刚存进去那份缺字段的新版。
     取回值 → 补进完整 profile → 整份再发一次（`--base-version` 用新 `--get` 的 `base_version`）
 （`--base-version` 用这次新 `--get` 响应里的 `base_version`）。
@@ -337,15 +320,11 @@ PUT 成功、`dropped_keys` 也确认过之后两件事：① **把 `00-overview
    - 想在已有那套基础上改几个字段 → 加 `--from "图文"`（复制一份再改），别从零拼。
    - **名字用运营自己起的那个**，⛔ 别替他起、也别用 `carousel`/`typeset` 当名字（他看不懂）。
      他起的名字和已有的撞了 → 告诉他撞了，请他换一个或确认是要覆盖，**别自动加后缀**。
-   - ⚠️ **存量运营（老的平铺单套）第一次新建时，脚本会顺带把档案迁成多套格式**，
-     于是这一次的 `dropped_keys` **必然非空**（顶层那些键挪进「图文」那套里了）。
-     **这一档是预期，不是丢字段**——脚本 stderr 会点明"属预期"。照实跟运营说一句
-     「**顺手把你的档案升级成了能装多套的格式，原来那套原样保留、名字叫「图文」**」就往下走，
-     ⛔ 别套用第五件事那条"非空就停下来问"（那条针对的是 `--put` 整份覆盖冲掉字段）。
+   - **新建是独立的一套，动不到他已有的任何一套**——建完他就多了一套，原来那些原样在。
 
 3. **回读一句确认**：「**已经存成你的「水墨风」那套了（第 {N} 套）。这批用哪套——还是原来的图文那套，
    还是就用新的水墨风？**」——存 ≠ 启用：**新建的这套不会自动变成默认**，
-   要让它成为以后的默认得再跑一条 `--set-active "水墨风"`（也要 `--base-version`），**这一条同样要运营点头**。
+   要让它成为以后的默认得再跑一条 `--set-active "水墨风"`，**这一条同样要运营点头**。
    本批真的改用新那套 → **`00-overview.md` 的风格档案留痕行套名与版本号一起换成新的**
    （留痕行写错套名，审查端会拿另一套的配色来判这批图）。
 
@@ -1229,7 +1208,7 @@ python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9
 | **路线② 系列篇拆分**（>3500 字用；按 H2 边界 + 动态规划均衡分组，出 body-01…NN.md 并埋承接段/预告段 TODO；`--target` 目标字数 / `--parts` 强制篇数） | `scripts/split_longform.py` |
 | 后端一致性出图（gpt-image 锚点法，异步 + 轮询；--cover-only 过闸门 / --anchor-url 批量 / --pages 重出失败页 / --job 复查 / --dry-run） | `scripts/gen_images.py` |
 | 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads） | `scripts/publish_note.py` |
-| 每用户风格档案读写（**一人多套**：`--list-profiles` 有几套 / `--get --kind carousel\|typeset` 取该形态那套（一套都没有 → `profile: null`，按内置默认继续）/ `--get --profile <套名>` 取点名那套 / `--new-profile <名> --kind <k> [--from <套名>\|--file <json>] --base-version N` 新建 / `--set-active <名> --base-version N` 切默认；开跑前 `--get` 三层降级 / `--versions` 历史 / `--version N` 某版（整份，含全部套）/ `--put <json> --base-version N` **整份档案覆盖——多套时别拿单套的 `--get` 输出回传，会抹掉其余套** / `--rollback N --base-version M`；`--put`/`--rollback` 必带 `--base-version`，值**直接取 `--get` 响应里的 `base_version`**（无条件下发，不用自己推）；**`--put`/`--rollback` 返回的 `dropped_keys` 必读**，非空 = 这次覆盖冲掉了别的字段，回读运营确认后再往下；exit 2 = 没连上服务走内置兜底、exit 3 = 409 别重试） | `scripts/style_profile.py` |
+| 每用户风格档案读写（**一人多套**：`--list-profiles` 有几套 / `--get --kind carousel\|typeset` 取该形态那套（一套都没有 → `profile: null`，按内置默认继续）/ `--get --profile <套名>` 取点名那套 / `--new-profile <名> --kind <k> [--from <套名>\|--file <json>]` 新建 / `--set-active <名>` 切默认；开跑前 `--get` 三层降级 / `--versions` 历史 / `--version N [--profile <套名>]` 某套的某一版 / `--put <json> --base-version N [--profile <套名>\|--kind <k>]` **整份覆盖点名那一套**（`--put`/`--rollback`/`--versions` 都能点名，⛔ 不点名就落到默认那套——读哪套就把同样的 `--profile` 带到写命令上） / `--rollback N --base-version M`；`--put`/`--rollback` 必带 `--base-version`，值**直接取 `--get` 响应里的 `base_version`**（无条件下发，不用自己推）；**`--put`/`--rollback` 返回的 `dropped_keys` 必读**，非空 = 这次覆盖冲掉了别的字段，回读运营确认后再往下；exit 2 = 没连上服务走内置兜底、exit 3 = 409 别重试） | `scripts/style_profile.py` |
 | 工作区路径查询 / 凭据工具 / 沙盒放行（sandbox allow） | `scripts/nbdpsy_common.py` |
 | 源长文（输入，第 0 步拉取产物） | `{workspace}/drafts/{slug}.md` |
 

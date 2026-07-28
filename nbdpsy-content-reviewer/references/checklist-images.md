@@ -41,10 +41,8 @@ grep -n "拆解路线" <note_dir>/00-overview.md
 2. **按留痕行指定的那一套 + 那一版取回档案**（档案会改、还能回退，**拿当前最新版去判老批次必然错判**——用 v8 的配色去判 v3 时做的图，判出来的 FAIL 全是假的）：
 
    ```bash
-   # 首选：版本 + 套名一起点名，取回的 profile 就是那一套（脚本已放开 --version 配 --profile）
+   # 版本 + 套名一起点名，取回的 profile 就是那一套本身
    python3 ../nbdpsy-xiaohongshu-creator/scripts/style_profile.py --version {N} --profile {套名}
-   # 老脚本不认这个组合（报"--profile 只能配 --get 用"）才退这条，然后自己从容器里挑（见下表）
-   python3 ../nbdpsy-xiaohongshu-creator/scripts/style_profile.py --version {N}
    ```
 
    （`../nbdpsy-xiaohongshu-creator/` 指安装后与本 skill 同级的兄弟 skill 目录，口径见 SKILL.md §3；命令在本 skill 目录下执行或换算成绝对路径。）
@@ -52,18 +50,9 @@ grep -n "拆解路线" <note_dir>/00-overview.md
    `palette`（配色）/ `text_color`（文字色）/ `character_card`（人物卡整句）/ `texture`（质感）/ `cover_layout`、`content_layout`（封面与内容页版式）。
    ⛔ **不要用 `--get` 代替**——那读的是"当前最新版"（而且是运营**当前默认那一套**），正是这一步要避开的东西。
 
-   ⚠️ **取值路径按返回里有没有 `schema: "profiles-v1"` 分两种**（2026-07-28 多套化：`--version {N}` **不带** `--profile` 取回的是**整份容器**，不是某一套）：
-
-   | 返回里 | 什么格式 | 判据从哪儿取 |
-   |---|---|---|
-   | 带了 `--profile` 且 `outcome: "ok"` | 脚本已把 `profile` 换成挑中的那一套 | 直接 `profile.visual.*`，下文写法原样可用 |
-   | 有 `schema: "profiles-v1"`（没带 `--profile`） | **多套容器** `{schema, active, profiles:{套名:{kind,…}}}` | `profile.profiles.{留痕行那个套名}.visual.*`——⛔ **此时 `profile.visual` 恒 `undefined`**，照老写法取会全部扑空、静默回落内置默认口径，**把自带配色的运营整批判成假 FAIL**（正是本节开宗明义要防的那件事） |
-   | 没有 `schema` 键 | **老的平铺格式**（存量批次） | `profile.visual.*`，照旧 |
-
-   - ⛔ **别拿容器里的 `active` 那一套顶替留痕行的套名**：`active` 是"运营现在默认用哪套"、随时会变；留痕行点名的那一套才是这批当时真用的。
-   - **留痕行的套名在那一版里找不到**（运营后来改名 / 删了；或带 `--profile` 取回的 `outcome` 不是 `ok`、`profile: null`）→ 按下面第 4 条当"那一版取不回来"处置，报告写明「留痕行的套名在该版档案里不存在」，**不据此单独判 FAIL**。
-
-   **本清单下文一律写 `profile.visual.*`——那是「取到那一套之后」的写法**；没带 `--profile`、自己从多套容器里挑时，实际路径是 `profile.profiles.{套名}.visual.*`。
+   - **取回的 `profile` 就是那一套本身**——`profile.visual.*` **直读**，本清单下文的写法原样可用，不需要从任何中间层里挑。
+   - ⛔ **别省掉 `--profile {套名}`**：不带它取回的是运营**当前默认那一套**的第 N 版（"当前默认哪套"随时会变），未必是留痕行点名的这一套——拿另一套的配色判这批图，会**把自带配色的运营整批判成假 FAIL**（正是本节开宗明义要防的那件事）。
+   - **留痕行的套名在那一版里找不到**（运营后来改名 / 删了；或取回的 `outcome` 不是 `ok`、`profile: null`）→ 按下面第 4 条当"那一版取不回来"处置，报告写明「留痕行的套名在该版档案里不存在」，**不据此单独判 FAIL**。
 
 3. **三种来源怎么判**：
 

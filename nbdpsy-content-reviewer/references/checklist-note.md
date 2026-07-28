@@ -64,26 +64,17 @@ grep -nE "\[\[|\]\(http|参考文献|References" <note_dir>/body.md
 2. **按留痕行指定的那一套 + 那一版取回档案**（档案会改、还能回退，**拿当前最新版去判老批次必然错判**——用 v8 的口径去判 v3 时写的笔记，判出来的 FAIL 全是假的）：
 
    ```bash
-   # 首选：版本 + 套名一起点名，取回的 profile 就是那一套（脚本已放开 --version 配 --profile）
+   # 版本 + 套名一起点名，取回的 profile 就是那一套本身
    python3 ../nbdpsy-xiaohongshu-creator/scripts/style_profile.py --version {N} --profile {套名}
-   # 老脚本不认这个组合（报"--profile 只能配 --get 用"）才退这条，然后自己从容器里挑（见下表）
-   python3 ../nbdpsy-xiaohongshu-creator/scripts/style_profile.py --version {N}
    ```
 
    ⛔ **不要用 `--get` 代替**——那读的是"当前最新版"（而且是运营**当前默认那一套**），正是这一步要避开的东西。
 
-   ⚠️ **取值路径按返回里有没有 `schema: "profiles-v1"` 分两种**（2026-07-28 多套化：`--version {N}` **不带** `--profile` 取回的是**整份容器**，不是某一套）：
+   - **取回的 `profile` 就是那一套本身**——`profile.visual.*` / `profile.tone.*` / `profile.density.*` **直读**，本清单下文的写法原样可用，不需要从任何中间层里挑。
+   - ⛔ **别省掉 `--profile {套名}`**：不带它取回的是运营**当前默认那一套**的第 N 版（"当前默认哪套"随时会变），未必是留痕行点名的这一套——拿另一套的口径判这批笔记，会**把自带调性的运营整批判成假 FAIL**（正是本节开宗明义要防的那件事）。
+   - **留痕行的套名在那一版里找不到**（运营后来改名 / 删了；或取回的 `outcome` 不是 `ok`、`profile: null`）→ 按下面第 4 条当"那一版取不回来"处置，报告写明「留痕行的套名在该版档案里不存在」，**不据此单独判 FAIL**。
 
-   | 返回里 | 什么格式 | 判据从哪儿取 |
-   |---|---|---|
-   | 带了 `--profile` 且 `outcome: "ok"` | 脚本已把 `profile` 换成挑中的那一套 | 直接 `profile.*`，下文写法原样可用 |
-   | 有 `schema: "profiles-v1"`（没带 `--profile`） | **多套容器** `{schema, active, profiles:{套名:{kind,…}}}` | `profile.profiles.{留痕行那个套名}.*`——⛔ **此时 `profile.visual` / `profile.tone` / `profile.density` 恒 `undefined`**，照老写法取会全部扑空、静默回落内置默认口径，**把自带调性的运营整批判成假 FAIL**（正是本节开宗明义要防的那件事） |
-   | 没有 `schema` 键 | **老的平铺格式**（存量批次） | `profile.*`，照旧 |
-
-   - ⛔ **别拿容器里的 `active` 那一套顶替留痕行的套名**：`active` 是"运营现在默认用哪套"、随时会变；留痕行点名的那一套才是这批当时真用的。
-   - **留痕行的套名在那一版里找不到**（运营后来改名 / 删了；或带 `--profile` 取回的 `outcome` 不是 `ok`、`profile: null`）→ 按下面第 4 条当"那一版取不回来"处置，报告写明「留痕行的套名在该版档案里不存在」，**不据此单独判 FAIL**。
-
-   **本清单下文一律写 `profile.visual.*` / `profile.tone.*` / `profile.density.*`——那是「取到那一套之后」的写法**；没带 `--profile`、自己从多套容器里挑时，同一字段的实际路径是 `profile.profiles.{套名}.visual.*`（`tone` / `density` 同理）。取到那一套后，里面三块与本清单相关：
+   取到那一套后，里面三块与本清单相关：
    - `profile.visual.*`（`palette` / `text_color` / `character_card`）→ **判据 2**（每页提示词里的配色与人物卡）；
    - `profile.tone.*`（`emoji` 数量与款式 / `quotes` 引号口径 / `person` 人称 / `sentence_length` 句长 / `paragraph_rhythm` 段落节奏，对照表见创作端 `xiaohongshu-spec.md` §1.7 B；**该版档案里没有的字段就照 skill 默认判**）→ **判据 9**；
    - `profile.density.*`（密度五字段，**`信息密度档位` / `每页文字量` / `每页信息点` / `版式档` / `运营原话` 五个中文 key 原样，不是英文**）→ **判据 6**。

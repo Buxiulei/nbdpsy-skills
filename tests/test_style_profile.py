@@ -6,6 +6,9 @@
 server v0.11.0 起另盯四处：base_version 透传优先于本地派生；dropped_keys 非空必须警告；
 --versions 分页参数透传；--admin-default 的 403 是「你不是运营老大」不是「服务挂了」（exit 1 不是 2）。
 
+2026-07-29（server 原生多套）起：`--put` / `--admin-default` **发之前不再 GET 一次**
+（容器方案的那两道守卫已随容器一起下线），所以这里的响应序列都是**单段**，第一个请求就是写。
+
 术语（2026-07-26）：role=admin 的运营叫**运营老大**、role=operator 叫**一般用户**、没有个人档案时
 跟随的那份叫**默认配置**；「管理员」只指登录管理后台的系统管理员。`admin_default` / `--admin-default`
 是接口标识不是称呼，照旧。
@@ -57,13 +60,6 @@ def _run(monkeypatch, capsys, argv, responses=None, sender=None, key="k"):
     cap = capsys.readouterr()
     out = json.loads(cap.out.strip().splitlines()[-1]) if cap.out.strip() else None
     return out, ei.value.code, cap.err, calls
-
-
-def _cur(profile=None, version=3):
-    """`--put` 发之前那次守卫 GET 的响应（守卫要看当前档案是不是多套，见 test_style_profile_multi）。
-    单套档案 → 守卫放行，行为与加守卫之前一致。"""
-    return _Resp(200, {"exists": True, "version": version,
-                       "profile": PROFILE if profile is None else profile})
 
 
 def _never_called():
@@ -175,7 +171,7 @@ def test_usage_error_exit_code_is_not_2(tmp_path):
 
 def test_put_sends_whole_profile_with_base_version(monkeypatch, capsys, tmp_path):
     """PUT 体 = {base_version, profile 全量, source, note}，整份覆盖不是打补丁。
-    （守卫 GET 在前，PUT 是第二个请求；单套档案下守卫放行。）"""
+    **第一个请求就是 PUT**：守卫 GET 已随容器方案下线，写命令不再多一个来回。"""
     f = tmp_path / "p.json"
     f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
     resp = _Resp(200, {"exists": True, "version": 4, "source": "reference_sample",
@@ -183,10 +179,10 @@ def test_put_sends_whole_profile_with_base_version(monkeypatch, capsys, tmp_path
     out, err, calls = _main_ok(monkeypatch, capsys,
                                ["--put", str(f), "--base-version", "3",
                                 "--source", "reference_sample", "--note", "按参考样本更新"],
-                               [_cur(), resp])
-    assert [c["method"] for c in calls] == ["GET", "PUT"]
-    assert calls[1]["url"].endswith("/api/style-profile")
-    body = calls[1]["payload"]
+                               [resp])
+    assert [c["method"] for c in calls] == ["PUT"], "写命令不该再先 GET 一次"
+    assert calls[0]["url"].endswith("/api/style-profile")
+    body = calls[0]["payload"]
     assert body == {"base_version": 3, "profile": PROFILE,
                     "source": "reference_sample", "note": "按参考样本更新"}
     assert out["version"] == 4 and out["warnings"] == []
@@ -198,9 +194,9 @@ def test_put_unwraps_get_envelope(monkeypatch, capsys, tmp_path):
     f.write_text(json.dumps({"exists": True, "version": 3, "layer": "user_profile",
                              "profile": PROFILE}, ensure_ascii=False), encoding="utf-8")
     _, err, calls = _main_ok(monkeypatch, capsys, ["--put", str(f), "--base-version", "3"],
-                             [_cur(), _Resp(200, {"exists": True, "version": 4})])
-    assert calls[1]["payload"]["profile"] == PROFILE
-    assert "exists" not in calls[1]["payload"]["profile"]
+                             [_Resp(200, {"exists": True, "version": 4})])
+    assert calls[0]["payload"]["profile"] == PROFILE
+    assert "exists" not in calls[0]["payload"]["profile"]
 
 
 def test_put_rejects_empty_profile(monkeypatch, capsys, tmp_path):
@@ -219,17 +215,17 @@ def test_put_warns_when_density_keys_renamed_to_english(monkeypatch, capsys, tmp
     f = tmp_path / "bad.json"
     f.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
     out, err, calls = _main_ok(monkeypatch, capsys, ["--put", str(f), "--base-version", "0"],
-                               [_cur(), _Resp(200, {"exists": True, "version": 1})])
+                               [_Resp(200, {"exists": True, "version": 1})])
     joined = "；".join(out["warnings"])
     assert "信息密度档位" in joined and "每页文字量" in joined and "中文" in joined
-    assert "⚠" in err and calls[1]["payload"]["profile"] == bad  # 只警告不改写用户数据
+    assert "⚠" in err and calls[0]["payload"]["profile"] == bad  # 只警告不改写用户数据
 
 
 def test_put_warns_when_density_section_missing(monkeypatch, capsys, tmp_path):
     f = tmp_path / "nod.json"
     f.write_text(json.dumps({"visual": {"text_color": "#000"}}, ensure_ascii=False), encoding="utf-8")
     out, _, _ = _main_ok(monkeypatch, capsys, ["--put", str(f), "--base-version", "0"],
-                         [_cur(), _Resp(200, {"exists": True, "version": 1})])
+                         [_Resp(200, {"exists": True, "version": 1})])
     assert any("density" in w for w in out["warnings"])
 
 
@@ -247,8 +243,6 @@ def test_put_409_does_not_retry_and_exits_3(monkeypatch, capsys, tmp_path):
     calls = []
 
     def sender(method, url, k, payload=None, timeout=30):
-        if method == "GET":         # 守卫那次读（单套 → 放行），冲突发生在真正的 PUT 上
-            return _cur()
         calls.append(payload)
         return _conflict_resp()
 
@@ -283,7 +277,7 @@ def test_conflict_detail_tolerates_flat_body(monkeypatch, capsys, tmp_path):
     f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
     resp = _Resp(409, {"current_version": 9})
     out, code, _, _ = _run(monkeypatch, capsys, ["--put", str(f), "--base-version", "2"],
-                           sender=lambda m, *a, **k: _cur() if m == "GET" else resp)
+                           sender=lambda *a, **k: resp)
     assert code == 3 and out["current_version"] == 9
 
 
@@ -416,7 +410,7 @@ def test_put_warns_when_dropped_keys_non_empty(monkeypatch, capsys, tmp_path):
     resp = _Resp(200, {"exists": True, "version": 5,
                        "dropped_keys": ["tone", "visual.character_card"]})
     out, err, _ = _main_ok(monkeypatch, capsys,
-                           ["--put", str(f), "--base-version", "4"], [_cur(), resp])
+                           ["--put", str(f), "--base-version", "4"], [resp])
     assert out["dropped_keys"] == ["tone", "visual.character_card"]
     assert "本次覆盖丢掉了" in err and "tone" in err and "visual.character_card" in err
     assert "--get" in err  # 指路：先 --get 拿全量再重发
@@ -427,8 +421,8 @@ def test_put_empty_dropped_keys_is_silent(monkeypatch, capsys, tmp_path):
     f = tmp_path / "p.json"
     f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
     out, err, _ = _main_ok(monkeypatch, capsys, ["--put", str(f), "--base-version", "4"],
-                           [_cur(), _Resp(200, {"exists": True, "version": 5,
-                                                "dropped_keys": []})])
+                           [_Resp(200, {"exists": True, "version": 5,
+                                        "dropped_keys": []})])
     assert out["dropped_keys"] == [] and "丢掉了" not in err
 
 
@@ -476,13 +470,11 @@ def test_admin_default_puts_profile_without_base_version(monkeypatch, capsys, tm
     f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
     out, err, calls = _main_ok(monkeypatch, capsys,
                                ["--admin-default", str(f), "--note", "统一莫兰迪三色"],
-                               # 守卫先 GET 一次当前默认配置（单套 → 放行），再 PUT
-                               [_Resp(200, {"profile": PROFILE}),
-                                _Resp(200, {"version": 6, "updated_at": "2026-07-26T14:00:00"})])
-    assert [c["method"] for c in calls] == ["GET", "PUT"]
-    assert calls[1]["url"].endswith("/api/style-profile/admin-default")
-    assert calls[1]["payload"] == {"profile": PROFILE, "note": "统一莫兰迪三色"}
-    assert "base_version" not in calls[1]["payload"]
+                               [_Resp(200, {"version": 6, "updated_at": "2026-07-26T14:00:00"})])
+    assert [c["method"] for c in calls] == ["PUT"], "守卫 GET 已下线，第一个请求就是 PUT"
+    assert calls[0]["url"].endswith("/api/style-profile/admin-default")
+    assert calls[0]["payload"] == {"profile": PROFILE, "note": "统一莫兰迪三色"}
+    assert "base_version" not in calls[0]["payload"]
     assert out["version"] == 6
     # 三条语义必须当场说清（运营老大按下去之前得知道波及面）
     assert "任何运营老大都能改" in err                       # ① 谁能改
@@ -501,9 +493,7 @@ def test_admin_default_403_says_admin_only_and_exits_1(monkeypatch, capsys, tmp_
     f.write_text(json.dumps(PROFILE, ensure_ascii=False), encoding="utf-8")
     out, code, err, _ = _run(
         monkeypatch, capsys, ["--admin-default", str(f)],
-        # GET /admin-default 一般用户可读（--get-default 就是它），只有 PUT 才 403
-        sender=lambda method, *a, **k: (_Resp(200, {"profile": PROFILE}) if method == "GET"
-                                        else _Resp(403, {"detail": "需要管理员权限"})))
+        sender=lambda *a, **k: _Resp(403, {"detail": "需要管理员权限"}))
     assert code == style_profile.EXIT_ERROR == 1
     assert code != style_profile.EXIT_UNREACHABLE
     assert "只有运营老大能改默认配置" in err and "没连上风格档案服务" not in err
@@ -530,13 +520,12 @@ def test_stdout_is_pure_json_on_every_path(monkeypatch, capsys, tmp_path):
         (["--versions"], [_Resp(200, {"versions": []})], None),
         (["--version", "1"], [_Resp(200, {"version": 1, "profile": PROFILE})], None),
         (["--put", str(f), "--base-version", "1"],
-         [_cur(), _Resp(200, {"exists": True, "version": 2, "dropped_keys": ["tone"]})], None),
+         [_Resp(200, {"exists": True, "version": 2, "dropped_keys": ["tone"]})], None),
         (["--rollback", "1", "--base-version", "2"],
          [_Resp(200, {"exists": True, "version": 3, "dropped_keys": []})], None),
         (["--versions", "--limit", "1", "--offset", "2"],
          [_Resp(200, {"versions": [], "total": 3, "limit": 1, "offset": 2, "has_more": True})], None),
-        (["--admin-default", str(f)],
-         [_Resp(200, {"profile": PROFILE}), _Resp(200, {"version": 6})], None),
+        (["--admin-default", str(f)], [_Resp(200, {"version": 6})], None),
         (["--put", str(f), "--base-version", "1"], None, 3),   # 409
         (["--get"], None, 2),                                  # 网络挂
         (["--admin-default", str(f)], None, 1),                # 403：不是运营老大
@@ -546,18 +535,15 @@ def test_stdout_is_pure_json_on_every_path(monkeypatch, capsys, tmp_path):
                             ["style_profile.py", "--api-base", "https://stub.test"] + argv)
         monkeypatch.setattr(style_profile.nbdpsy_common, "get_secret", lambda k: "k")
         if fail_code == 3:
-            # 守卫那次 GET 正常返回（单套 → 放行），409 发生在真正的 PUT 上
             monkeypatch.setattr(style_profile, "send_request",
-                                lambda m, *a, **k: _cur() if m == "GET" else _conflict_resp())
+                                lambda *a, **k: _conflict_resp())
         elif fail_code == 2:
             def boom(*a, **k):
                 raise ConnectionError("Max retries exceeded")
             monkeypatch.setattr(style_profile, "send_request", boom)
         elif fail_code == 1:
-            # GET /admin-default 一般用户可读（--get-default 就是它），只有 PUT 才 403
             monkeypatch.setattr(style_profile, "send_request",
-                                lambda m, *a, **k: (_Resp(200, {"profile": PROFILE}) if m == "GET"
-                                                    else _Resp(403, {"detail": "需要管理员权限"})))
+                                lambda *a, **k: _Resp(403, {"detail": "需要管理员权限"}))
         else:
             seq = iter(resps)
             monkeypatch.setattr(style_profile, "send_request", lambda *a, **k: next(seq))

@@ -9,6 +9,50 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.50.0] — 2026-07-29
+
+### 切到 server 原生 profile_set，下线 profiles-v1 容器方案
+
+server v0.17.0 已原生支持多套风格档案（回执 `NBDpsy/文档/2026-07-28-server回执-profile-set上线.md`）。
+上一版为绕开"一人一份档案"而塞进 `profile` JSON 的容器整个下线，改调原生端点。
+**运营的命令行一个字没变**，换的全是底层。
+
+⚠️ **必须升级**：server 有 B5 哨兵——旧客户端再把 `profiles-v1` 容器 PUT 上来会
+**400「工具包版本过旧，请升级后重试」**。低于本版的运营改风格时会撞到，跑一次
+`python3 COMMON update` 即可。guide 里已加显眼提醒 + 速查表条目。
+
+**删掉**：十个容器操作函数（`is_multi`/`to_multi`/`select_set`/…）、`--put` 与 `--admin-default`
+的两道守卫及其多出来的 GET、`profile_warnings`/`warn_dropped_keys` 的容器分流。
+`dropped_keys` 语义自动回正（PUT 的是单套内容，套内部字段丢失现在能正确算出）。
+
+**新增 `--init-sets`**：server 不给新运营预建套（回执 §2 交给客户端），
+按默认配置的套数在自己名下建齐。
+
+**实测纠正了三处猜测**（Owner A 在 nbdpsy-server 源码仓跑真实 FastAPI + 隔离 sqlite 取证，零生产写入）：
+
+- `POST /sets` **不要 `base_version`**——建套/改名/删套/切默认四个动作**都没有乐观锁**。
+  四条命令不再强制它；传了则接受+忽略+提示一句（老文档还在传）。
+- **`from` 跨不了 scope**：以自己的 scope 建套时 `from` 只在自己的套里找，
+  复制默认配置的套会 404。`--init-sets` 改走 `GET /sets?scope=admin-default` →
+  `GET /admin-default?set=名` → `POST /sets {name,kind,profile}`。
+- **`GET /api/style-profile?set=名&scope=admin-default` 不通**：该端点没有 `scope` 参数。
+- 附带坑：**零套运营 `GET ?set=文字版` 不 404**，返 200 + `exists:false` + `set:"图文"`（忽略 set 的回落）。
+  照单全收就会把图文的内容当文字版喂给创作端。`--get --profile` 已加判据。
+
+**验证抓到的静默错套（本轮最要紧的修复）**
+
+`--profile` 原本只放行给了读命令（`--get` / `--version N`），而 `--put` / `--versions` /
+`--rollback` / `--admin-default` 这四个 server 都支持 `?set=` 的端点没放行、也不拼 `?set=`——
+**运营以为在改文字版，实际改的是默认那套**，响应 200、照报「✓ 已整份覆盖」。
+`--admin-default` 那条更是全公司级：老大想把自己的文字版推成默认配置，会写进默认配置的图文套。
+
+已统一修：四个动作放行 `--profile`/`--kind`、共用同一份挑套逻辑、请求拼 `?set=`；
+**写完再核一次服务端回的 `set` 与点名的是否一致**，不一致直接报错而不是打勾；
+成功那行也带上套名（原来只报版本号，看不出写了谁）。
+
+新增/重写测试：`test_style_profile_multi.py` 整体重写（78 条容器用例 → 73 条端点用例），
+全量 **681 passed**。
+
 ## [1.49.0] — 2026-07-28
 
 ### 文字版页脚改成品牌名
