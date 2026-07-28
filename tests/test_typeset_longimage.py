@@ -149,9 +149,12 @@ class TestBuildPromo:
         html = self._promo(blurb='更短的推介')
         assert '更短的推介' in html and '一段介绍。' not in html
 
-    def test_危机声明在位含12356(self):
-        # check_compliance.py 的危机声明判据就是文本含 12356
-        assert '12356' in self._promo()
+    def test_推介卡不放危机声明(self):
+        # G6（xiaohongshu-spec §1.5）：危机声明不与商业 CTA 同页/同屏。
+        # 这张卡带品牌行与「目前接受预约」这类 CTA，12356 的位置在发布正文里。
+        html = self._promo()
+        assert '12356' not in html
+        assert 'NBDpsy · 咨询师全员北大硕博' in html      # 品牌行仍在
 
     def test_没有咨询师返回空串(self):
         assert T.build_promo(None, '', T.THEMES['clean']) == ''
@@ -159,6 +162,60 @@ class TestBuildPromo:
     def test_咨询师字段被转义(self):
         html = T.build_promo({'display_name': '<b>x</b>'}, '', T.THEMES['clean'])
         assert '&lt;b&gt;x&lt;/b&gt;' in html
+
+
+class TestHeadline:
+    C = {'display_name': '李宇', 'title': '中级心理治疗师',
+         'profile_sections': {'specialties': [{'title': '创伤应激'}, {'title': '情绪困扰'}]}}
+
+    def test_显式标题原样用(self):
+        # 好标题是内容判断（要结合本篇文章主题），agent 写好传进来，脚本不得改写
+        assert T.build_headline(self.C, '心理咨询师-李宇，陪你整合创伤与秩序') \
+            == '心理咨询师-李宇，陪你整合创伤与秩序'
+
+    def test_兜底走三要素结构(self):
+        assert T.build_headline(self.C) == '心理咨询师-李宇，陪你面对创伤应激'
+
+    def test_没有专长时只留姓名前缀(self):
+        assert T.build_headline({'display_name': '张三'}) == '心理咨询师-张三'
+
+    def test_兜底也兼容list接口的字符串数组(self):
+        assert T.build_headline({'display_name': '王五', 'specialties': ['亲密关系']}) \
+            == '心理咨询师-王五，陪你面对亲密关系'
+
+    def test_标题进了推介卡(self):
+        html = T.build_promo(dict(self.C), '', T.THEMES['clean'], '心理咨询师-李宇，陪你整合创伤与秩序')
+        assert '心理咨询师-李宇，陪你整合创伤与秩序' in html
+
+
+class TestPromoComplianceGate:
+    """推介文案的违禁词闸门：check_compliance.py 只吃文件路径，
+    而 headline/blurb 是命令行字符串——不落盘就等于这段带 CTA 的文字完全没被扫过。"""
+
+    def test_落盘后跑扫描并返回判定(self, tmp_path):
+        verdict, draft = T.scan_promo_compliance('心理咨询师-李宇，陪你练习开口拒绝',
+                                                 '他的方法针对的正是这类模式。', tmp_path)
+        assert draft.exists() and draft.name == 'promo-draft.md'
+        assert '心理咨询师-李宇' in draft.read_text(encoding='utf-8')
+        assert verdict.get('ok') is True
+
+    def test_违禁词被拦下(self, tmp_path):
+        # 极限词违广告法 §9，是这条路线上最容易出现在 CTA 里的一类
+        verdict, _ = T.scan_promo_compliance('心理咨询师-李宇，陪你练习开口拒绝',
+                                             '找他一定能彻底根治你的讨好型人格。', tmp_path)
+        assert verdict.get('ok') is False
+
+
+class TestCheckHeadline:
+    def test_老师称呼被拦(self):
+        # counselor-note-spec §1.1 红线：直呼其名，绝不加「老师」
+        assert any('老师' in w for w in T.check_headline('心理咨询师-李宇老师，陪你整合创伤'))
+
+    def test_过长被拦(self):
+        assert T.check_headline('心' * 25)
+
+    def test_合格标题无告警(self):
+        assert T.check_headline('心理咨询师-李宇，陪你整合创伤与秩序') == []
 
 
 class TestSeriesMeta:

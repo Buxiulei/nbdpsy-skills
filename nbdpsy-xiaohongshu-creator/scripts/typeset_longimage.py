@@ -47,6 +47,9 @@ PAGE_W, PAGE_H = 1440, 2400
 PAD_X = 96          # 左右版心留白
 PAD_TOP = 104       # 内容区上边距
 PAD_BOTTOM = 190    # 下边距（含页脚水印带）
+# 首页封面安全边距：小红书 feed 缩略图按 3:4 裁这张 3:5 的图，上下各切掉 (2400-1920)/2 = 240px。
+# PAD_TOP 只有 104，标题会被削掉顶部——补到 240 以上，标题才完整出现在 feed 里。
+COVER_SAFE_TOP = 156
 
 FONT_SANS = ('"Noto Sans SC","Noto Sans CJK SC","Source Han Sans SC","PingFang SC",'
              '"Microsoft YaHei","WenQuanYi Micro Hei",sans-serif')
@@ -91,6 +94,25 @@ def fetch_counselor(emp_no, avatar_dir):
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout).strip() or f'fetch_counselor.py 退出码 {proc.returncode}')
     return json.loads(proc.stdout)
+
+
+def scan_promo_compliance(headline, blurb, out_dir):
+    """把推介卡的标题与文案落盘再跑 check_compliance.py。
+
+    ⚠️ 这一步不能省：check_compliance.py 只接受**文件路径**，而 headline/blurb 是命令行
+    字符串、从不落盘——所以在此之前，全套图里商业风险最高的这段文字（它带 CTA）
+    是**完全绕过**违禁词扫描的。落盘顺带留痕，审查端也能复核。
+    `--no-crisis`：危机声明按 G6 不在这张卡上（在发布正文里），这里不该要求它。
+    """
+    draft = out_dir / 'promo-draft.md'
+    draft.write_text(f'{headline}\n\n{blurb}\n', encoding='utf-8')
+    script = pathlib.Path(__file__).resolve().parent / 'check_compliance.py'
+    proc = subprocess.run([sys.executable, str(script), str(draft), '--no-crisis'],
+                          capture_output=True, text=True, timeout=60)
+    try:
+        return json.loads(proc.stdout), draft
+    except json.JSONDecodeError:
+        return {'ok': False, 'error': (proc.stderr or proc.stdout).strip()}, draft
 
 
 def data_uri(path):
@@ -175,7 +197,7 @@ THEMES = {
         'bg': '#ffffff', 'texture': 'none', 'fg': '#252525',
         'accent': '#B3282D', 'accent_soft': '#FBE9E7',
         'body_size': 46, 'body_lh': 1.92, 'indent': '0', 'p_gap': 40,
-        'h1_size': 76, 'h1_weight': 900, 'h1_lh': 1.34,
+        'h1_size': 104, 'h1_weight': 900, 'h1_lh': 1.3,
         'h2_size': 52, 'h3_size': 44, 'meta_size': 30,
         'card_bg': '#ffffff', 'promo_bg': '#FBF1F0', 'topbar': True,
     },
@@ -185,22 +207,57 @@ THEMES = {
         'bg': '#D8E1F3', 'texture': PAPER_TEXTURE, 'fg': '#16181d',
         'accent': '#3A4A7A', 'accent_soft': '#C9D5EE',
         'body_size': 48, 'body_lh': 2.0, 'indent': '2em', 'p_gap': 22,
-        'h1_size': 88, 'h1_weight': 700, 'h1_lh': 1.5,
+        'h1_size': 104, 'h1_weight': 700, 'h1_lh': 1.42,
         'h2_size': 54, 'h3_size': 46, 'meta_size': 32,
         'card_bg': 'rgba(255,255,255,.72)', 'promo_bg': '#CDD8EF', 'topbar': False,
     },
 }
 
 
-CRISIS_LINE = '如果你正处在情绪危机中，请拨打全国心理援助热线 12356，或联系当地紧急服务。'
+# ⚠️ 推介卡**不渲染危机声明**：G6（xiaohongshu-spec §1.5）要求危机声明与商业 CTA
+# 不同页/不同屏，而这张卡上有品牌行与「目前接受预约」这类 CTA。
+# 危机声明按 longform-typeset-spec §5 写在**发布正文**里（那里才是它的位置）。
 
 
-def build_promo(counselor, blurb, t):
+def build_headline(counselor, explicit=''):
+    """推介卡主标题，走「三要素」口径（姓名 + 能力 + 来访画像），
+    与 references/counselor-note-spec.md §1 的发布标题同一套写法：
+
+        心理咨询师-{姓名}，{陪你/带你 + 能力动词短语（嵌来访画像的困扰词）}
+        例：心理咨询师-李宇，陪你整合创伤与秩序
+
+    好标题是内容判断，脚本写不出「整合创伤与秩序」这种动词短语——所以优先用 agent
+    按 spec §1 写好后经 --counselor-headline 传进来；不传时才退到下面这个机械兜底
+    （拿第一条擅长方向拼「陪你面对X」，合规但平淡，main() 会 warning 提醒）。
+    """
+    if explicit:
+        return explicit.strip()
+    name = counselor.get('display_name') or counselor.get('name', '')
+    raw = (counselor.get('profile_sections') or {}).get('specialties') \
+        or counselor.get('specialties') or []
+    first = ''
+    if raw:
+        head = raw[0]
+        first = head.get('title', '') if isinstance(head, dict) else str(head)
+    return f'心理咨询师-{name}，陪你面对{first}' if first else f'心理咨询师-{name}'
+
+
+def check_headline(text):
+    """三要素标题的两条硬红线自检（spec §1.1/§1.2）。返回 warning 列表。"""
+    warns = []
+    if '老师' in text:
+        warns.append(f'推介标题里出现「老师」——spec §1.1 红线：直呼其名，不加「老师」：{text}')
+    if len(text) > 24:
+        warns.append(f'推介标题 {len(text)} 字偏长（发布标题硬限 20 字，卡片上建议 ≤24），'
+                     f'排版会折成两行：{text}')
+    return warns
+
+
+def build_promo(counselor, blurb, t, headline=''):
     """末页咨询师推介卡。**与正文同一套排版语言**（同字体、同色系、同版心）——
     这条路线的图全是排版渲染的，末页若混一张 AI 合成图，风格必裂。"""
     if not counselor:
         return ''
-    name = html_mod.escape(counselor.get('display_name') or counselor.get('name', ''))
     title_txt = html_mod.escape(counselor.get('title') or counselor.get('highlight', ''))
     # 专长在详情里是 profile_sections.specialties（[{title,desc}]）；--list 那边是字符串数组。两种都收。
     raw_tags = (counselor.get('profile_sections') or {}).get('specialties') \
@@ -210,31 +267,33 @@ def build_promo(counselor, blurb, t):
     intro = html_mod.escape(blurb or counselor.get('introduction', ''))
     avatar = f'<img class="avatar" src="{counselor["_avatar_data_uri"]}" alt="">' \
         if counselor.get('_avatar_data_uri') else ''
+    head_txt = html_mod.escape(build_headline(counselor, headline))
     return f"""<div class="promo" id="promo"><div class="promo-inner" id="promoInner">
   <div class="promo-card">
-    <div class="promo-eyebrow">陪你一起看这件事的人</div>
     {avatar}
-    <div class="promo-name">{name}<span>{title_txt}</span></div>
+    <div class="promo-name">{head_txt}<span>{title_txt}</span></div>
     <div class="promo-rule"></div>
     {f'<div class="promo-tags">{tags}</div>' if tags else ''}
     <div class="promo-intro">{intro}</div>
   </div>
   <div class="promo-foot">
     <div class="promo-brand">NBDpsy · 咨询师全员北大硕博 · 纯线上心理咨询</div>
-    <div class="promo-crisis">{CRISIS_LINE}</div>
   </div>
 </div></div>"""
 
 
-def build_html(title, meta_line, blocks, theme_name, xhs_id, counselor=None, blurb=''):
+def build_html(title, meta_line, blocks, theme_name, xhs_id, counselor=None, blurb='', headline=''):
     t = THEMES[theme_name]
     content_h = PAGE_H - PAD_TOP - PAD_BOTTOM
     parts = []
 
-    if title:
-        parts.append(f'<h1>{inline(title)}</h1>')
+    # 首页 = 小红书 feed 封面，标题是唯一的视觉焦点。
+    # 副信息行放在标题**上方**（对齐运营给的实拍范本）：它是前置元信息，
+    # 压在标题下面会把「标题→正文」这一跳打断，标题就不再是绝对主体。
     if meta_line:
         parts.append(f'<div class="meta">{html_mod.escape(meta_line)}</div>')
+    if title:
+        parts.append(f'<h1>{inline(title)}</h1>')
 
     for kind, payload in blocks:
         if kind == 'h2':
@@ -276,13 +335,17 @@ def build_html(title, meta_line, blocks, theme_name, xhs_id, counselor=None, blu
   .stage {{ position:absolute; left:{PAD_X}px; top:{PAD_TOP}px;
             width:{PAGE_W - 2 * PAD_X}px; height:{content_h}px; overflow:hidden; }}
   #flow {{ position:absolute; left:0; top:0; width:100%; }}
+  /* 首页 = feed 封面，小红书按 3:4 裁 1440×2400（上下各切掉约 240px）。
+     只给 flow 的第一个块加顶部安全边距，把标题整体压进安全区——
+     它只出现在第一页，后面几页不受影响。 */
+  #flow > :first-child {{ margin-top:{COVER_SAFE_TOP}px; }}
 
-  /* 标题区与正文之间留足呼吸：标题是一页里最重的东西，贴着正文会糊成一坨 */
+  /* 首页标题 = feed 封面主体：大字号 + 下方大留白，正文离得远才显得标题是"主标题" */
   h1 {{ font-family:{t['h1_font']}; font-size:{t['h1_size']}px; font-weight:{t['h1_weight']};
-        line-height:{t['h1_lh']}; margin:24px 0 48px;
-        {"background:" + t['accent_soft'] + "; border-left:10px solid " + t['accent'] + "; padding:26px 30px 30px;" if theme_name == 'clean' else "text-align:left; letter-spacing:.06em;"} }}
-  .meta {{ font-size:{t['meta_size']}px; color:#6b6b6b; margin:0 0 96px;
-           border-left:6px solid {t['accent']}; padding-left:18px; line-height:1.5; }}
+        line-height:{t['h1_lh']}; margin:0 0 116px; letter-spacing:.01em;
+        {"border-left:12px solid " + t['accent'] + "; padding:6px 0 10px 34px;" if theme_name == 'clean' else "text-align:left; letter-spacing:.05em;"} }}
+  .meta {{ font-size:{t['meta_size']}px; color:#8a8a8a; margin:0 0 34px; padding-bottom:26px;
+           border-bottom:2px solid rgba(0,0,0,.08); line-height:1.5; letter-spacing:.02em; }}
   h2 {{ font-size:{t['h2_size']}px; font-weight:800; line-height:1.5; margin:56px 0 30px;
         border-left:10px solid {t['accent']}; padding-left:26px; }}
   h3 {{ font-size:{t['h3_size']}px; font-weight:500; line-height:1.55; margin:46px 0 26px;
@@ -316,11 +379,12 @@ def build_html(title, meta_line, blocks, theme_name, xhs_id, counselor=None, blu
   .promo-card {{ background:{t['card_bg']}; border-radius:40px; padding:78px 64px 84px;
                  width:100%; display:flex; flex-direction:column; align-items:center;
                  box-shadow:0 24px 64px rgba(0,0,0,.09); }}
-  .promo-eyebrow {{ font-size:28px; color:#a5a5a5; letter-spacing:.14em; margin-bottom:44px; }}
   .avatar {{ width:300px; height:300px; border-radius:50%; object-fit:cover;
              border:6px solid #fff; box-shadow:0 0 0 2px {t['accent_soft']}, 0 18px 44px rgba(0,0,0,.10);
-             margin-bottom:52px; }}
-  .promo-name {{ font-size:58px; font-weight:800; line-height:1.35; letter-spacing:.04em; }}
+             margin-bottom:48px; }}
+  /* 主标题走三要素（姓名+能力+来访画像），比单个姓名长，字号相应收一档、留出折行空间 */
+  .promo-name {{ font-size:50px; font-weight:800; line-height:1.5; letter-spacing:.02em;
+                 max-width:1000px; }}
   .promo-name span {{ display:block; font-size:31px; font-weight:400; color:{t['accent']};
                       margin-top:18px; letter-spacing:.1em; }}
   .promo-rule {{ width:64px; height:3px; background:{t['accent']}; opacity:.55; margin:40px 0; }}
@@ -330,13 +394,10 @@ def build_html(title, meta_line, blocks, theme_name, xhs_id, counselor=None, blu
                   max-width:940px; text-align:justify; text-align-last:center; }}
   .promo-foot {{ margin-top:76px; }}
   .promo-brand {{ font-size:29px; color:{t['accent']}; letter-spacing:.08em; }}
-  /* 危机声明必须单行放下——折行后末尾会掉出「务。」这样的孤字 */
-  .promo-crisis {{ font-size:24px; color:#a5a5a5; line-height:1.7; margin-top:22px;
-                   white-space:nowrap; }}
 </style></head>
 <body><div class="viewport" id="vp">{topbar}<div class="texture"></div>
 <div class="stage" id="stage"><div id="flow">{''.join(parts)}</div></div>
-{build_promo(counselor, blurb, t)}{footer}</div>
+{build_promo(counselor, blurb, t, headline)}{footer}</div>
 </body></html>"""
 
 
@@ -426,7 +487,11 @@ def main():
     ap.add_argument('--counselor', metavar='EMP_NO',
                     help='末页追加一页咨询师推介（可选）；取数与头像复用 fetch_counselor.py')
     ap.add_argument('--counselor-blurb', default='',
-                    help='推介文案，覆盖官网 introduction（原文太长放不下时用）')
+                    help='**针对性**推介文案：说明这位咨询师为什么能陪来访解决本文讲的问题'
+                         '（不传则退回官网 introduction 通用介绍，会 warning）')
+    ap.add_argument('--counselor-headline', default='',
+                    help='推介卡主标题，三要素口径「心理咨询师-{姓名}，{陪你+能力动词短语}」，'
+                         '结合本文主题写（不传则机械兜底，会 warning）')
     ap.add_argument('--max-pages', type=int, default=30, help='页数安全上限（默认 30）')
     ap.add_argument('--html-only', action='store_true', help='只产 HTML 不截图（无 playwright 时降级）')
     args = ap.parse_args()
@@ -486,13 +551,44 @@ def main():
                 ensure_ascii=False))
             return 1
 
-    doc = build_html(title, meta_line, blocks, theme, xhs_id, counselor, args.counselor_blurb)
+        # 停单的人不做推介：引来了约不上，体验最差（counselor-note-spec §6.2 同口径）
+        if not counselor.get('is_accepting'):
+            print(json.dumps({
+                'ok': False,
+                'error': f'{counselor.get("display_name") or args.counselor} 当前停止接单'
+                         f'（is_accepting=false），不给他做推介末页',
+                'how_to_fix': ['换一位在接单的咨询师（fetch_counselor.py --list 看 is_accepting）',
+                               '或本篇不挂推介末页（去掉 --counselor）']},
+                ensure_ascii=False))
+            return 1
+
+        # 推介文案带 CTA，是全套图里商业风险最高的一段——出图前必须过违禁词扫描
+        verdict, draft_path = scan_promo_compliance(
+            build_headline(counselor, args.counselor_headline),
+            args.counselor_blurb or counselor.get('introduction', ''), out_dir)
+        if not verdict.get('ok'):
+            print(json.dumps({
+                'ok': False,
+                'error': '推介卡的标题/文案没过合规扫描',
+                'compliance': verdict,
+                'draft': str(draft_path),
+                'how_to_fix': ['按 violations 改掉命中的词，再重跑',
+                               '替换口径见 references/xiaohongshu-spec.md 的禁用词替换表']},
+                ensure_ascii=False))
+            return 1
+
+    doc = build_html(title, meta_line, blocks, theme, xhs_id, counselor,
+                     args.counselor_blurb, args.counselor_headline)
     html_path = out_dir / '_typeset.html'
     html_path.write_text(doc, encoding='utf-8')
 
     if args.html_only:
+        # ⚠️ 这条降级路径**不产出正文页与推介页的任何闸门结果**（不跑 warnings、
+        # 不跑推介卡溢出检查），所以它不能用来验收推介页——挂了 --counselor 就得走完整出图。
         print(json.dumps({'ok': True, 'html_only': True, 'html': str(html_path),
-                          'theme': theme, 'chars': total_chars, 'han': han},
+                          'theme': theme, 'chars': total_chars, 'han': han,
+                          'note': ('--html-only 不跑 warnings 与推介卡溢出检查，'
+                                   '不能拿它的 ok=true 当推介页验收依据') if args.counselor else None},
                          ensure_ascii=False))
         return 0
 
@@ -561,8 +657,20 @@ def main():
             files.append(str(fp))
         browser.close()
 
+    warnings = []
+    if counselor:
+        head = build_headline(counselor, args.counselor_headline)
+        warnings += check_headline(head)
+        if not args.counselor_headline:
+            warnings.append('推介标题用的是机械兜底，没有结合本文主题——老板要的是**针对性推介**：'
+                            '按 counselor-note-spec §1 三要素写一个，用 --counselor-headline 传进来')
+        if not args.counselor_blurb:
+            warnings.append('推介文案用的是官网通用 introduction，没说明「他为什么能陪来访解决本文这类问题」——'
+                            '按 longform-typeset-spec §8 写一段针对性文案，用 --counselor-blurb 传进来')
+
     print(json.dumps({
         'ok': True, 'theme': theme, 'pages': len(files), 'files': files,
+        'warnings': warnings,
         'chars': total_chars, 'han': han, 'reading_minutes': minutes,
         'series': series.lstrip('｜') or None,
         'counselor_page': bool(counselor),
