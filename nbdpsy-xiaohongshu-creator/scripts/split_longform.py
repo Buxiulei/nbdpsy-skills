@@ -151,7 +151,6 @@ def main():
 
     base_title = meta.get('title', md_path.stem)
     theme = meta.get('theme', 'clean')
-    xhs_id = meta.get('xhs_id', '')
 
     files, report, warnings = [], [], []
     for i, group in enumerate(groups):
@@ -168,8 +167,6 @@ def main():
             chunks.append(TODO_NEXT)
 
         fm = [f'title: {title}', f'theme: {theme}']
-        if xhs_id:
-            fm.append(f'xhs_id: {xhs_id}')
         fm += [f'series_index: {i + 1}', f'series_total: {parts}']
         doc = '---\n' + '\n'.join(fm) + '\n---\n\n' + '\n\n'.join(chunks) + '\n'
 

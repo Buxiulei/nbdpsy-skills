@@ -22,7 +22,6 @@ markdown → HTML/CSS 排版 → Chromium 渲染 → 按行边界切页 → PNG�
     ---
     title: 当感受被真正"看见"：什么是有效化
     theme: clean          # clean=白底红黑黑体 / paper=蓝纸衬线
-    xhs_id: 49398056290   # 页脚水印小红书号，不给则不画页脚
     ---
     正文段落…
     ## 二级标题
@@ -292,6 +291,9 @@ def resolve_theme(cli_theme, typeset, meta):
     return cli_theme or (typeset or {}).get('theme') or meta.get('theme') or 'clean'
 
 
+#: 每页右下角的页脚水印。固定品牌名——不写小红书号（换号就废、也没必要对外露）。
+FOOTER_BRAND = 'NBDpsy心理咨询工作室'
+
 # ⚠️ 推介卡**不渲染危机声明**：G6（xiaohongshu-spec §1.5）要求危机声明与商业 CTA
 # 不同页/不同屏，而这张卡上有品牌行与「目前接受预约」这类 CTA。
 # 危机声明按 longform-typeset-spec §5 写在**发布正文**里（那里才是它的位置）。
@@ -360,7 +362,7 @@ def build_promo(counselor, blurb, t, headline=''):
 </div></div>"""
 
 
-def build_html(title, meta_line, blocks, theme_name, xhs_id, counselor=None, blurb='', headline='',
+def build_html(title, meta_line, blocks, theme_name, counselor=None, blurb='', headline='',
                theme_over=None):
     # theme_over = 风格档案覆盖的键（--style）；不传时与主题原样等价，行为一字不变
     t = dict(THEMES[theme_name])
@@ -395,7 +397,7 @@ def build_html(title, meta_line, blocks, theme_name, xhs_id, counselor=None, blu
         else:
             parts.append(f'<p>{inline(payload)}</p>')
 
-    footer = (f'<div class="footer">小红书号 {html_mod.escape(xhs_id)}</div>') if xhs_id else ''
+    footer = f'<div class="footer">{FOOTER_BRAND}</div>'
     topbar = '<div class="topbar"></div>' if t['topbar'] else ''
 
     return f"""<!doctype html>
@@ -567,7 +569,6 @@ def main():
                     help='运营个人风格档案里 kind="typeset" 的那一套（style_profile.py --get '
                          '--kind typeset 的产物）；其 typeset 段覆盖主题默认值，null 的字段不覆盖')
     ap.add_argument('--title', help='首页大标题，默认取 frontmatter title')
-    ap.add_argument('--xhs-id', help='页脚小红书号，默认取 frontmatter xhs_id；不给则不画页脚')
     ap.add_argument('--no-meta', action='store_true', help='不渲染「全文N字｜阅读需M分钟」副信息行')
     ap.add_argument('--counselor', metavar='EMP_NO',
                     help='末页追加一页咨询师推介（可选）；取数与头像复用 fetch_counselor.py')
@@ -607,7 +608,6 @@ def main():
                          ensure_ascii=False))
         return 1
     title = args.title or meta.get('title', '')
-    xhs_id = args.xhs_id if args.xhs_id is not None else meta.get('xhs_id', '')
 
     body, todos = strip_comments(body)
     if todos:
@@ -676,7 +676,7 @@ def main():
                 ensure_ascii=False))
             return 1
 
-    doc = build_html(title, meta_line, blocks, theme, xhs_id, counselor,
+    doc = build_html(title, meta_line, blocks, theme, counselor,
                      args.counselor_blurb, args.counselor_headline, theme_over)
     html_path = out_dir / '_typeset.html'
     html_path.write_text(doc, encoding='utf-8')

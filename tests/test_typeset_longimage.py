@@ -90,7 +90,7 @@ class TestCountChars:
 class TestBuildHTML:
     def _html(self, **kw):
         args = dict(title='标题', meta_line='全文100字｜阅读需1分钟',
-                    blocks=[('p', '正文')], theme_name='clean', xhs_id='123')
+                    blocks=[('p', '正文')], theme_name='clean')
         args.update(kw)
         return T.build_html(**args)
 
@@ -99,9 +99,11 @@ class TestBuildHTML:
         expected = T.PAGE_H - T.PAD_TOP - T.PAD_BOTTOM
         assert f'height:{expected}px' in self._html()
 
-    def test_不给小红书号就不画页脚(self):
-        assert 'class="footer"' not in self._html(xhs_id='')
-        assert '小红书号 123' in self._html()
+    def test_页脚固定是品牌名(self):
+        # 页脚不写小红书号：换号就废，也没必要对外露账号
+        html = self._html()
+        assert 'NBDpsy心理咨询工作室' in html
+        assert '小红书号' not in html
 
     def test_两套主题各用各的底色(self):
         assert T.THEMES['paper']['bg'] in self._html(theme_name='paper')
@@ -333,7 +335,7 @@ class TestResolveTheme:
 
 class TestBuildHTMLWithStyle:
     ARGS = dict(title='标题', meta_line='全文100字｜阅读需1分钟',
-                blocks=[('p', '正文')], theme_name='clean', xhs_id='123')
+                blocks=[('p', '正文')], theme_name='clean')
 
     def test_不传theme_over时与原来逐字一致(self):
         # 这条是本次最容易翻车处：不带 --style 的行为必须一字不变
