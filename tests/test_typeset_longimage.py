@@ -1,14 +1,18 @@
-"""路线② 排版长图渲染器的纯函数测试（不打浏览器、不出图）。
+"""路线② 文字版渲染器的纯函数测试（不打浏览器、不出图）。
 
 浏览器那半截（行盒测量 + 截图）靠实跑目视验证，这里只钉住可确定性断言的部分：
 frontmatter 解析、块解析、切页贪心、字数统计、HTML 组装的关键不变量。
 """
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts"))
 
 import typeset_longimage as T  # noqa: E402
+
+SCRIPT = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts" / "typeset_longimage.py"
 
 
 class TestFrontmatter:
@@ -224,3 +228,173 @@ class TestSeriesMeta:
         html = T.build_html('标题', '全文100字｜阅读需1分钟｜系列 2/3',
                             [('p', '正文')], 'clean', '', None, '')
         assert '系列 2/3' in html
+
+
+# ── 风格档案（--style）──────────────────────────────────────────────────────
+def _style_file(tmp_path, typeset, kind='typeset', name='style.json'):
+    f = tmp_path / name
+    f.write_text(json.dumps({'kind': kind, 'typeset': typeset}, ensure_ascii=False),
+                 encoding='utf-8')
+    return f
+
+
+class TestLoadStyle:
+    def test_取出typeset段(self, tmp_path):
+        f = _style_file(tmp_path, {'theme': 'paper', 'accent': '#123456'})
+        assert T.load_style(f) == {'theme': 'paper', 'accent': '#123456'}
+
+    def test_自动剥掉get的整份输出外层(self, tmp_path):
+        # 运营多半直接 `style_profile.py --get --kind typeset > 文字版.json`，
+        # 那份带 exists/base_version/trace_line 外层——不剥就读不到 kind，白报错
+        f = tmp_path / 'get.json'
+        f.write_text(json.dumps({'exists': True, 'base_version': 3,
+                                 'profile': {'kind': 'typeset', 'typeset': {'theme': 'paper'}},
+                                 'trace_line': '风格档案：文字版 v3'}), encoding='utf-8')
+        assert T.load_style(f) == {'theme': 'paper'}
+
+    def test_图文那套被拒(self, tmp_path):
+        # carousel 里全是人物卡/配色/每页信息点，没有排版字段——拿它渲染文字版等于没设置
+        f = _style_file(tmp_path, None, kind='carousel')
+        try:
+            T.load_style(f)
+            assert False, '应当拒绝 carousel'
+        except ValueError as exc:
+            assert 'typeset' in str(exc)
+
+    def test_整份多套档案被拒并指路(self, tmp_path):
+        f = tmp_path / 'all.json'
+        f.write_text(json.dumps({'schema': 'profiles-v1', 'active': '图文',
+                                 'profiles': {'文字版': {'kind': 'typeset'}}}), encoding='utf-8')
+        try:
+            T.load_style(f)
+            assert False, '应当拒绝整份多套档案'
+        except ValueError as exc:
+            assert '--kind typeset' in str(exc)
+
+    def test_没有typeset段时返回空(self, tmp_path):
+        f = tmp_path / 's.json'
+        f.write_text(json.dumps({'kind': 'typeset'}), encoding='utf-8')
+        assert T.load_style(f) == {}
+
+
+class TestStyleOverrides:
+    def test_null与缺省一律不覆盖(self):
+        # 契约的核心一条：null = 「这项我没定，听主题的」。写进 CSS 会渲染成字面量 None
+        all_null = {'theme': 'clean', 'bg': None, 'accent': None, 'accent_soft': None,
+                    'font': None, 'title_font': None, 'indent': None, 'texture': None}
+        assert T.style_overrides(all_null) == {}
+        assert T.style_overrides({}) == {}
+
+    def test_颜色原样覆盖(self):
+        over = T.style_overrides({'bg': '#101820', 'accent': '#2F6FEB',
+                                  'accent_soft': 'rgba(47,111,235,.12)'})
+        assert over == {'bg': '#101820', 'accent': '#2F6FEB',
+                        'accent_soft': 'rgba(47,111,235,.12)'}
+
+    def test_字体只映射到既有三条字体链(self):
+        assert T.style_overrides({'font': 'serif'})['font'] == T.FONT_SERIF
+        assert T.style_overrides({'title_font': 'kai'})['h1_font'] == T.FONT_KAI
+        assert T.style_overrides({'font': 'sans'})['font'] == T.FONT_SANS
+
+    def test_缩进布尔转成CSS取值(self):
+        assert T.style_overrides({'indent': True})['indent'] == '2em'
+        assert T.style_overrides({'indent': False})['indent'] == '0'
+
+    def test_纸纹映射(self):
+        assert T.style_overrides({'texture': 'paper'})['texture'] == T.PAPER_TEXTURE
+        assert T.style_overrides({'texture': 'none'})['texture'] == 'none'
+
+    def test_非法取值报错而不是静默忽略(self):
+        # 静默忽略 = 出一套「看着不对但说不上哪不对」的图，运营发现不了
+        for bad in ({'font': 'kai'},            # kai 只给标题，正文没有楷体链
+                    {'font': 'Comic Sans'},
+                    {'title_font': 'mono'},
+                    {'texture': 'linen'},
+                    {'indent': '2em'},          # 只收 true/false
+                    {'bg': '#fff; } body { display:none'}):   # 撑破 CSS
+            try:
+                T.style_overrides(bad)
+                assert False, f'应当拒绝 {bad}'
+            except ValueError:
+                pass
+
+
+class TestResolveTheme:
+    def test_命令行最高档案次之再frontmatter(self):
+        assert T.resolve_theme('paper', {'theme': 'clean'}, {'theme': 'clean'}) == 'paper'
+        assert T.resolve_theme(None, {'theme': 'paper'}, {'theme': 'clean'}) == 'paper'
+        assert T.resolve_theme(None, {}, {'theme': 'paper'}) == 'paper'
+        assert T.resolve_theme(None, {}, {}) == 'clean'
+
+    def test_档案theme为null时让位给frontmatter(self):
+        # null 语义与其余字段一致：不参与，而不是「档案里有这个键就算数」
+        assert T.resolve_theme(None, {'theme': None}, {'theme': 'paper'}) == 'paper'
+
+
+class TestBuildHTMLWithStyle:
+    ARGS = dict(title='标题', meta_line='全文100字｜阅读需1分钟',
+                blocks=[('p', '正文')], theme_name='clean', xhs_id='123')
+
+    def test_不传theme_over时与原来逐字一致(self):
+        # 这条是本次最容易翻车处：不带 --style 的行为必须一字不变
+        assert T.build_html(**self.ARGS) == T.build_html(**self.ARGS, theme_over=None)
+        assert T.build_html(**self.ARGS) == T.build_html(**self.ARGS, theme_over={})
+
+    def test_覆盖的键进了CSS(self):
+        doc = T.build_html(**self.ARGS, theme_over={'accent': '#2F6FEB', 'indent': '2em'})
+        assert '#2F6FEB' in doc and 'text-indent:2em' in doc
+        assert T.THEMES['clean']['accent'] not in doc      # 主题原值已被顶掉
+
+    def test_未覆盖的键仍走主题默认(self):
+        doc = T.build_html(**self.ARGS, theme_over={'accent': '#2F6FEB'})
+        assert T.THEMES['clean']['bg'] in doc
+        assert f"font-size:{T.THEMES['clean']['body_size']}px" in doc
+
+    def test_覆盖不污染THEMES本体(self):
+        # dict(THEMES[t]) 拷了一份才 update；直接改会串到同进程后续每一次渲染
+        T.build_html(**self.ARGS, theme_over={'bg': '#000000'})
+        assert T.THEMES['clean']['bg'] == '#ffffff'
+
+
+class TestStyleCLI:
+    """整条 CLI 串起来跑（--html-only，不需要 playwright）。"""
+
+    MD = '---\ntitle: 测试标题\ntheme: clean\n---\n\n一段正文。\n'
+
+    def _run(self, tmp_path, *extra):
+        md = tmp_path / 'body.md'
+        md.write_text(self.MD, encoding='utf-8')
+        r = subprocess.run([sys.executable, str(SCRIPT), '--md', str(md),
+                            '--out', str(tmp_path / 'out'), '--html-only', *extra],
+                           capture_output=True, text=True)
+        return r, json.loads(r.stdout)
+
+    def test_档案生效且theme来自档案(self, tmp_path):
+        f = _style_file(tmp_path, {'theme': 'paper', 'accent': '#2F6FEB', 'indent': True,
+                                   'bg': None, 'font': 'sans'})
+        r, d = self._run(tmp_path, '--style', str(f))
+        assert r.returncode == 0 and d['ok'] is True
+        assert d['theme'] == 'paper' and d['style'] == str(f)
+        html = Path(d['html']).read_text(encoding='utf-8')
+        assert '#2F6FEB' in html and 'text-indent:2em' in html
+        assert T.THEMES['paper']['bg'] in html               # bg=null → 仍用 paper 底色
+        assert f'font-family:{T.FONT_SANS}' in html          # font=sans 顶掉 paper 的衬线
+
+    def test_命令行theme压过档案(self, tmp_path):
+        f = _style_file(tmp_path, {'theme': 'paper'})
+        _, d = self._run(tmp_path, '--style', str(f), '--theme', 'clean')
+        assert d['theme'] == 'clean'
+
+    def test_不传style时与没这个功能之前一致(self, tmp_path):
+        _, d = self._run(tmp_path)
+        assert d['ok'] is True and d['theme'] == 'clean' and d['style'] is None
+        html = Path(d['html']).read_text(encoding='utf-8')
+        assert html == T.build_html('测试标题', '全文5字｜阅读需1分钟',
+                                    T.parse_blocks('一段正文。'), 'clean', '')
+
+    def test_档案坏了报人话而不是抛栈(self, tmp_path):
+        bad = tmp_path / 'bad.json'
+        bad.write_text('{"kind": "carousel"}', encoding='utf-8')
+        r, d = self._run(tmp_path, '--style', str(bad))
+        assert r.returncode == 1 and d['ok'] is False
+        assert 'typeset' in d['error'] and d['how_to_fix']
