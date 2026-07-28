@@ -576,11 +576,11 @@ def test_rename_profile_keeps_order_and_follows_active(monkeypatch, capsys):
     responses = [_get({"exists": True, "version": 3, "profile": multi(active="文字版")}),
                  _get({"exists": True, "version": 4})]
     out, err, calls = _main_ok(monkeypatch, capsys,
-                               ["--rename-profile", "文字版", "文字版版", "--base-version", "3"],
+                               ["--rename-profile", "文字版", "水墨文字版", "--base-version", "3"],
                                responses)
     sent = calls[1]["payload"]["profile"]
-    assert list(sent["profiles"]) == ["图文", "文字版版"]
-    assert sent["active"] == "文字版版", "改的正好是默认那套时，active 要跟着改名"
+    assert list(sent["profiles"]) == ["图文", "水墨文字版"]
+    assert sent["active"] == "水墨文字版", "改的正好是默认那套时，active 要跟着改名"
 
 
 def test_delete_profile_reassigns_active(monkeypatch, capsys):
@@ -667,7 +667,7 @@ def test_stdout_is_single_line_json_on_new_commands(monkeypatch, capsys, tmp_pat
         (["--set-active", "文字版", "--base-version", "3"],
          [_get({"exists": True, "version": 3, "profile": multi()}),
           _get({"exists": True, "version": 4})]),
-        (["--rename-profile", "文字版", "文字版版", "--base-version", "3"],
+        (["--rename-profile", "文字版", "水墨文字版", "--base-version", "3"],
          [_get({"exists": True, "version": 3, "profile": multi()}),
           _get({"exists": True, "version": 4})]),
         (["--delete-profile", "文字版", "--base-version", "3"],
