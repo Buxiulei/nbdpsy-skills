@@ -350,6 +350,12 @@ PUT 成功、`dropped_keys` 也确认过之后两件事：① **把 `00-overview
 - **选了路线②** → **不走本文件的第 1、3 步**（没有场景分箱、没有绘图提示词），改按
   `references/longform-typeset-spec.md` 从头走一遍（文本改造四道工序 → 出图 → 正文 → 验收）；
   第 4 步合规、第 5 步落盘/审查、第 7 步发布**照常走本文件**。
+- **路线② 里长文 >3500 字 → 再拆一层「系列篇」**（上/中/下 或 一/二/三/四，
+  `split_longform.py`，规格见 spec §7）：**优先拆系列，不优先砍内容**——砍掉的都是查证过的材料，
+  拆成系列则读者追更、笔记数量还翻倍。每篇是独立笔记（各自标题/正文/标签/危机声明），
+  第 2 篇起必须有**承接段**（没填 TODO 出不了图，硬闸门）。
+- **路线② 的末页可选挂一页咨询师推介**（`--counselor EMP…`，spec §8）：⛔ **不用 AI 合成**，
+  推介卡与正文同一套排版语言渲染，混 AI 图必风格裂。选谁是运营的分配决策，**没点名就问**。
 - **两条路不混用**：运营既要轮播又要长图 = 两个批次分别做，产物落 `{slug}/` 与 `{slug}-longform/`。
 - **留痕**（`00-overview.md` 开头，与风格档案留痕行并列，各写各的）：
 
@@ -711,6 +717,9 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 
 > ⛔ **走路线② 的批次不走本节任何一条路线**（不过 AI、不用 anchor、不看 2:3）：
 > ```bash
+> # 长文 >3500 字先拆系列（可选，spec §7）：产出 body-01.md…body-NN.md，逐篇填掉承接段/预告段
+> python3 {SKILL_DIR}/scripts/split_longform.py --md {note_dir}/body.md --target 2000
+> # 出图（--counselor 可选，末页追加一页咨询师推介，spec §8）
 > python3 {SKILL_DIR}/scripts/typeset_longimage.py --md {note_dir}/body.md --out {note_dir}/images --theme clean
 > ```
 > 出 **1440×2400** 的 `P01…PNN.png`，页数由字数决定。分页规则（跨页断句允许、标题不孤行、
@@ -1032,7 +1041,8 @@ python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9
 | 正文汉字计数 + 页数区间判定 | `scripts/count_xhs.py` |
 | 高置信违禁词扫描 + 危机声明在位检查（`--no-crisis` 跳过危机声明检查，咨询师推介场景用；违禁词照扫） | `scripts/check_compliance.py` |
 | 渲染预览页（发布文案 UI + 提示词一键复制） | `scripts/render_preview.py` |
-| **路线② 排版长图渲染**（markdown → HTML/CSS → Chromium → 按行边界切页 → 1440×2400 PNG；`--theme clean\|paper` / `--no-meta` / `--max-pages` / `--html-only` 降级） | `scripts/typeset_longimage.py` |
+| **路线② 排版长图渲染**（markdown → HTML/CSS → Chromium → 按行边界切页 → 1440×2400 PNG；`--theme clean\|paper` / `--no-meta` / `--max-pages` / `--html-only` 降级 / **`--counselor EMP…` 末页追加咨询师推介卡**） | `scripts/typeset_longimage.py` |
+| **路线② 系列篇拆分**（>3500 字用；按 H2 边界 + 动态规划均衡分组，出 body-01…NN.md 并埋承接段/预告段 TODO；`--target` 目标字数 / `--parts` 强制篇数） | `scripts/split_longform.py` |
 | 后端一致性出图（gpt-image 锚点法，异步 + 轮询；--cover-only 过闸门 / --anchor-url 批量 / --pages 重出失败页 / --job 复查 / --dry-run） | `scripts/gen_images.py` |
 | 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads） | `scripts/publish_note.py` |
 | 每用户风格档案读写（开跑前 `--get` 三层降级 / `--versions` 历史 / `--version N` 某版 / `--put <json> --base-version N` **整份覆盖** / `--rollback N --base-version M`；`--put`/`--rollback` 必带 `--base-version`，值**直接取 `--get` 响应里的 `base_version`**（无条件下发，不用自己推）；**`--put`/`--rollback` 返回的 `dropped_keys` 必读**，非空 = 这次覆盖冲掉了别的字段，回读运营确认后再往下；exit 2 = 没连上服务走内置兜底、exit 3 = 409 别重试） | `scripts/style_profile.py` |

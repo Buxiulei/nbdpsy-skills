@@ -110,3 +110,60 @@ class TestBuildHTML:
 
     def test_行内加粗与代码转成标签(self):
         assert '<b>粗</b>' in self._html(blocks=[('p', '**粗**')])
+
+    def test_没有咨询师时不产推介层(self):
+        assert 'class="promo"' not in self._html()
+
+
+class TestStripComments:
+    def test_注释被剥掉(self):
+        body, todos = T.strip_comments('正文\n<!-- 普通注释 -->\n更多正文')
+        assert '注释' not in body and todos == []
+
+    def test_未填的TODO占位被拎出来(self):
+        _, todos = T.strip_comments('<!-- TODO 承接段：写这里 -->\n正文')
+        assert len(todos) == 1 and todos[0].startswith('TODO 承接段')
+
+
+class TestBuildPromo:
+    COUNSELOR = {
+        'display_name': '张三', 'title': 'CPS注册心理师',
+        'introduction': '一段介绍。',
+        'profile_sections': {'specialties': [{'title': '创伤应激', 'desc': 'x'},
+                                             {'title': '情绪困扰', 'desc': 'y'}]},
+    }
+
+    def _promo(self, **kw):
+        c = dict(self.COUNSELOR); c.update(kw.pop('counselor', {}))
+        return T.build_promo(c, kw.get('blurb', ''), T.THEMES['clean'])
+
+    def test_专长从profile_sections取title(self):
+        # --emp 详情里 specialties 是 [{title,desc}]，不是字符串数组（踩过：整行空白）
+        assert '创伤应激 · 情绪困扰' in self._promo()
+
+    def test_也兼容list接口的字符串数组(self):
+        html = T.build_promo({'display_name': '李四', 'specialties': ['甲', '乙']}, '', T.THEMES['clean'])
+        assert '甲 · 乙' in html
+
+    def test_blurb覆盖官网introduction(self):
+        html = self._promo(blurb='更短的推介')
+        assert '更短的推介' in html and '一段介绍。' not in html
+
+    def test_危机声明在位含12356(self):
+        # check_compliance.py 的危机声明判据就是文本含 12356
+        assert '12356' in self._promo()
+
+    def test_没有咨询师返回空串(self):
+        assert T.build_promo(None, '', T.THEMES['clean']) == ''
+
+    def test_咨询师字段被转义(self):
+        html = T.build_promo({'display_name': '<b>x</b>'}, '', T.THEMES['clean'])
+        assert '&lt;b&gt;x&lt;/b&gt;' in html
+
+
+class TestSeriesMeta:
+    def test_系列信息进副信息行(self):
+        # 首页那行「全文1726字｜阅读需5分钟｜系列 2/2」
+        html = T.build_html('标题', '全文100字｜阅读需1分钟｜系列 2/3',
+                            [('p', '正文')], 'clean', '', None, '')
+        assert '系列 2/3' in html
