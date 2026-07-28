@@ -82,6 +82,50 @@ def test_doctor_strategy_not_ready_without_any_key(monkeypatch, tmp_path):
     assert "NBDPSY_BLOG_API_KEY" in note
 
 
+# ---- 安装版本标记：有则报版本，没有也只是 info，绝不判 fail ----
+
+def _isolate_marker(monkeypatch, m, tmp_path):
+    """把标记查找完全关进 tmp：__file__ 指向假 skills 树、HOME 指向空家目录。
+    返回假 skills 根（标记该落在这层）。"""
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    skills_root = tmp_path / "skills"
+    scripts = skills_root / "nbdpsy-content-pipeline" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(m, "__file__", str(scripts / "nbdpsy_common.py"))
+    return skills_root
+
+
+def test_doctor_reports_toolkit_version_from_marker(monkeypatch, tmp_path):
+    """装过新版安装器 → doctor 报出 版本/commit/安装日期。"""
+    m = _fresh(monkeypatch, tmp_path, "NBDPSY_BLOG_API_KEY=nbdblog_x\n")
+    skills_root = _isolate_marker(monkeypatch, m, tmp_path)
+    (skills_root / ".nbdpsy-skills-install.json").write_text(
+        '{"version": "1.41.0", "commit": "b4c5812", '
+        '"installed_at": "2026-07-28T11:05:00+08:00", "source": "local-repo"}',
+        encoding="utf-8")
+    report, code = m.doctor()
+    assert code == 0
+    note = next(n for n in report["notes"] if n.startswith("工具包 v"))
+    assert "1.41.0" in note and "b4c5812" in note and "2026-07-28" in note
+    assert "11:05" not in note                      # 只报日期部分，不报时分秒
+    assert report["install_marker"]["source"] == "local-repo"
+
+
+def test_doctor_missing_marker_is_info_not_fail(monkeypatch, tmp_path):
+    """存量机器全都没有这个文件——必须只给 info 提示，ok/exit code 一个都不能变红。"""
+    m = _fresh(monkeypatch, tmp_path, "NBDPSY_BLOG_API_KEY=nbdblog_x\n")
+    _isolate_marker(monkeypatch, m, tmp_path)      # 不写标记
+    report, code = m.doctor()
+    assert code == 0
+    assert report["ok"] is True
+    assert report["install_marker"] is None
+    note = next(n for n in report["notes"] if "版本标记缺失" in n)
+    assert "install.sh" in note                    # 给出可行动的补救办法
+
+
 def test_doctor_doubao_ready_via_api_key_only(monkeypatch, tmp_path):
     """新版单一凭据 VOLC_TTS_API_KEY 单独齐备（无 appid/token）也应判定 doubao_ready=True。"""
     m = _fresh(monkeypatch, tmp_path, "NBDPSY_BLOG_API_KEY=nbdblog_x\nVOLC_TTS_API_KEY=sk-x\n")

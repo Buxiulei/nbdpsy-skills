@@ -14,6 +14,7 @@ $Skills = @("nbdpsy-seo-artical-creator", "nbdpsy-xiaohongshu-creator", "nbdpsy-
 $LegacySkills = @('seo-artical-creator','xiaohongshu-creator','text-to-video','content-reviewer','content-pipeline')
 # 定位 skill 源目录：脚本同级有 skill 目录则用本地；否则临时 clone（远程 irm | iex 时 $PSScriptRoot 为空）
 $Src = $PSScriptRoot
+$SrcKind = "local-repo"
 if ([string]::IsNullOrEmpty($Src) -or -not (Test-Path (Join-Path $Src $Skills[0]))) {
     $Tmp = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Path $Tmp | Out-Null
@@ -21,6 +22,41 @@ if ([string]::IsNullOrEmpty($Src) -or -not (Test-Path (Join-Path $Src $Skills[0]
     git clone --depth 1 $RepoUrl (Join-Path $Tmp "repo") *> $null
     if ($LASTEXITCODE -ne 0) { throw "git clone 失败（网络或权限问题）" }
     $Src = Join-Path $Tmp "repo"
+    $SrcKind = "github-clone"
+}
+
+# 版本标记：每个安装目的地落一份 .nbdpsy-skills-install.json，供 doctor 上报本机装的是哪版
+# 取值失败一律写 unknown、写盘失败只提示不中断——标记是锦上添花，装不上也得把 skill 装完
+function Write-InstallMarker {
+    param([string]$Dest)
+    $ver = "unknown"; $commit = "unknown"; $now = "unknown"
+    try {
+        $pluginJson = Join-Path $Src ".claude-plugin\plugin.json"
+        if (Test-Path $pluginJson) {
+            $m = [regex]::Match((Get-Content -Path $pluginJson -Raw), '"version"\s*:\s*"([^"]*)"')
+            if ($m.Success -and $m.Groups[1].Value) { $ver = $m.Groups[1].Value }
+        }
+    } catch { }
+    $PrevEAP = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $c = & git -C $Src rev-parse --short HEAD 2>$null
+        if ($LASTEXITCODE -eq 0 -and $c) { $commit = ([string]($c | Select-Object -First 1)).Trim() }
+    } catch {
+    } finally {
+        $ErrorActionPreference = $PrevEAP
+    }
+    try { $now = (Get-Date -Format o) -replace '\.\d+', '' } catch { }
+    try {
+        $json = "{`n  ""version"": ""$ver"",`n  ""commit"": ""$commit"",`n  ""installed_at"": ""$now"",`n  ""source"": ""$SrcKind""`n}`n"
+        # 绝对路径：.NET API 不认 PowerShell 的当前位置
+        $markerPath = Join-Path ((Resolve-Path -LiteralPath $Dest).Path) ".nbdpsy-skills-install.json"
+        # UTF-8 无 BOM：Set-Content -Encoding UTF8 在 PS 5.1 会写 BOM，导致 doctor 端 json.load 解析失败
+        [System.IO.File]::WriteAllText($markerPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "  ✓ 版本标记 v$ver（$commit）"
+    } catch {
+        Write-Host "  ! 版本标记写入失败（不影响 skill 安装）"
+    }
 }
 
 function Copy-ToDest {
@@ -46,6 +82,7 @@ function Copy-ToDest {
         Copy-Item -Path (Join-Path $Src $s) -Destination $destSkill -Recurse -Force
         Write-Host "  ✓ $s"
     }
+    Write-InstallMarker -Dest $Dest
 }
 
 $ClaudeDir = Join-Path $env:USERPROFILE ".claude\skills"

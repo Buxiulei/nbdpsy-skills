@@ -99,6 +99,40 @@ def xhs_api_base() -> str:
 def video_api_base() -> str:
     return get_base(VIDEO_API_BASE_KEY) or DEFAULT_VIDEO_API_BASE
 
+# ── 安装版本标记（install.sh / install.ps1 落盘，doctor 只读、不联网）──
+# 装完本机曾经没有任何版本痕迹（版本号只住在仓库根 .claude-plugin/plugin.json，从没被拷到安装目的地），
+# 想知道装的是哪版只能靠 mtime 猜。现在安装器在每个 skills 根写一份标记，doctor 读出来报给运营。
+INSTALL_MARKER_NAME = ".nbdpsy-skills-install.json"
+
+def _marker_search_dirs():
+    """标记候选目录：本文件往上 4 层（scripts/ → skill 目录 → skills 根 → 其上），
+    再退 ~/.claude/skills 与 ~/.agents/skills 两个固定安装位置。"""
+    dirs = list(Path(__file__).resolve().parents[:4])
+    dirs += [Path.home() / ".claude" / "skills", Path.home() / ".agents" / "skills"]
+    return dirs
+
+def find_install_marker():
+    """读安装版本标记，返回 (data: dict|None, path: Path|None)。
+    读不到 / 解析失败一律当没有——版本标记是纯信息项，绝不参与 doctor 的成败判定。"""
+    for d in _marker_search_dirs():
+        p = d / INSTALL_MARKER_NAME
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(data, dict):
+            return data, p
+    return None, None
+
+def _toolkit_version_note(marker):
+    """版本行文案。⚠️ 缺标记只是 info：存量机器全都没有这个文件，判 fail 会让所有人 doctor 变红。"""
+    if not marker:
+        return ("工具包版本标记缺失（旧版安装器装的）——重跑一次 install.sh 即可补上，不影响任何功能。")
+    ver = str(marker.get("version") or "unknown")
+    commit = str(marker.get("commit") or "unknown")
+    date = str(marker.get("installed_at") or "unknown").split("T")[0]
+    return f"工具包 v{ver}（{commit}，装于 {date}）"
+
 def doctor():
     """自检可复制类凭据。返回 (report, exit_code)。绝不把密钥值放进 report。"""
     required_missing = [k for k in REQUIRED_KEYS if not get_secret(k)]
@@ -127,9 +161,12 @@ def doctor():
                      "拒绝；届时请管理员在管理后台 → 博客 → API Keys 页给它补勾该权限。")
     notes.append("视频画面用的即梦需登录一次：让 AI 帮你登录（会自动弹浏览器，用抖音 App 扫码/点确认即可）；"
                  "登录态由 nbdpsy-text-to-video/scripts/check_env.py 检测。")
+    marker, _ = find_install_marker()
+    notes.append(_toolkit_version_note(marker))
     return {"ok": ok, "required_missing": required_missing,
             "doubao_ready": doubao_ready, "xhs_ready": xhs_ready,
-            "strategy_ready": strategy_ready, "notes": notes}, (0 if ok else 1)
+            "strategy_ready": strategy_ready, "install_marker": marker,
+            "notes": notes}, (0 if ok else 1)
 
 # ── Claude Code 沙盒网络放行 ──
 # Claude Code 的 Bash 沙盒（macOS/Linux/WSL2；原生 Windows 无沙盒）默认拦外网，

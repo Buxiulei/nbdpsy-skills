@@ -9,6 +9,29 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.42.0] — 2026-07-28
+
+### 安装落盘版本标记，doctor 上报工具包版本
+
+老板点破的缺口：装完 skill 本机**没有任何版本痕迹**——`install.sh` 只拷 7 个 skill 目录，
+版本号住在仓库根 `.claude-plugin/plugin.json`，从来没被拷过去。后果：想知道本机哪版只能靠
+mtime + 对 master diff 猜；同事机器落后 10 个版本没人发现（自检只说"已装过→跳过"）。
+
+- 两个安装器（`install.sh` / `install.ps1`）在每个安装目的地写
+  **`.nbdpsy-skills-install.json`**（version / commit 短哈希 / installed_at / source
+  是本地仓库还是 curl 克隆）。无 jq 依赖；提不到值写 `unknown`、写盘失败只提示一行，
+  **绝不让 skill 安装因此失败**。PS 侧显式写 UTF-8 无 BOM（PS 5.1 的 `-Encoding UTF8`
+  会带 BOM，`json.load` 直接炸）。
+- `doctor` 新增「工具包版本」一行：`工具包 v1.42.0（{commit}，装于 {日期}）`。
+  **标记缺失 = info 不 = fail**——存量机器全都没有这个文件，判 fail 会让所有人的 doctor
+  一夜变红；提示"重跑一次 install.sh 即可补上"（覆盖式、秒级、不动凭据）。
+- doctor **不联网比对最新版**（保持本地自检语义），"是否落后"归 guide 更新流程；
+  `installed_at` **只当字符串展示、不 parse**——bash `date -Iseconds` 与 PowerShell
+  `Get-Date -Format o` 格式不同，一 parse 就会被其中一种咬（实测七位小数秒也能正常展示）。
+- 坏标记（空文件 / 坏 JSON / 缺键）一律静默跳过按"缺失"处理，doctor 不崩。
+
+---
+
 ## [1.41.0] — 2026-07-26
 
 ### 新增：战略规划报告一键搬运（`tools/publish_strategy_report.py`）

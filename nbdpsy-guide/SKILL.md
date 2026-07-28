@@ -34,6 +34,8 @@ python3 PUB --self-check              # 小红书 API：连通性 + 身份 + 被
 - `doctor` 缺 `NBDPSY_XHS_API_KEY` 或 `--self-check` 报 401 → **找系统管理员（在 NBDpsy 管理后台生成配置包的那位）要/重发「运营接入配置包」**，
   导入后重试（导入：把配置包整段存成 creds.txt，跑 `python3 COMMON secret import creds.txt`）。
 - `--self-check` 报 `Host not allowed`/超时 → 沙盒拦网：`python3 COMMON sandbox allow` 后**重启 Claude**。
+- `doctor` 还会报**本机工具包版本**（形如 `工具包 v1.41.0（b4c5812，装于 2026-07-28）`）：运营说「更新工具包」时先看这行，
+  比最新版落后、或显示「版本标记缺失」（旧安装器装的），都是重跑一次 `install.sh` 就好（覆盖式安装，秒级，不动凭据）。
 
 **不管是本来就全绿、还是刚 `secret import` 完配置包，紧接着做第 1.5 步读他的风格档案**，别跳过——
 他的笔记与配图都按那份档案做。

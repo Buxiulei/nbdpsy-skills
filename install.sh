@@ -16,13 +16,33 @@ done
 TARGET="${TARGET:-all}"
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+SRC_KIND="local-repo"
 if [ -z "${SRC:-}" ] || [ ! -d "$SRC/${SKILLS[0]}" ]; then
   TMP="$(mktemp -d)"; echo "→ 临时克隆 $REPO_URL ..."
-  git clone --depth 1 "$REPO_URL" "$TMP/repo" >/dev/null 2>&1; SRC="$TMP/repo"
+  git clone --depth 1 "$REPO_URL" "$TMP/repo" >/dev/null 2>&1; SRC="$TMP/repo"; SRC_KIND="github-clone"
 fi
 
 # 旧版（无 nbdpsy- 前缀）skill 名，安装时顺带清理，防新旧并存重复触发
 LEGACY_SKILLS=(seo-artical-creator xiaohongshu-creator text-to-video content-reviewer content-pipeline)
+
+# 版本标记：每个安装目的地落一份 .nbdpsy-skills-install.json，供 doctor 上报本机装的是哪版
+# 取值失败一律写 unknown、写盘失败只提示不中断——标记是锦上添花，装不上也得把 skill 装完
+write_marker () {  # write_marker <dest>
+  local dest="$1" ver commit now
+  ver="$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$SRC/.claude-plugin/plugin.json" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)"$/\1/')" || true
+  [ -n "${ver:-}" ] || ver="unknown"
+  commit="$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null)" || true
+  [ -n "${commit:-}" ] || commit="unknown"
+  now="$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null)" || true
+  [ -n "${now:-}" ] || now="unknown"
+  if ( printf '{\n  "version": "%s",\n  "commit": "%s",\n  "installed_at": "%s",\n  "source": "%s"\n}\n' \
+        "$ver" "$commit" "$now" "$SRC_KIND" > "$dest/.nbdpsy-skills-install.json" ) 2>/dev/null; then
+    echo "  ✓ 版本标记 v$ver（$commit）"
+  else
+    echo "  ! 版本标记写入失败（不影响 skill 安装）"
+  fi
+}
 
 copy_to () {  # copy_to <dest> <label>
   mkdir -p "$1"; echo "→ 安装到 $2（$1）"
@@ -30,6 +50,7 @@ copy_to () {  # copy_to <dest> <label>
     [ -e "${1:?}/$s" ] && { rm -rf "${1:?}/$s"; echo "  ✗ 清理旧名 $s"; }
   done
   for s in "${SKILLS[@]}"; do rm -rf "${1:?}/$s"; cp -R "$SRC/$s" "$1/$s"; echo "  ✓ $s"; done
+  write_marker "$1" || true
 }
 link_codex () {  # ~/.codex/skills/<s> -> ~/.agents/skills/<s>
   local dest="${CODEX_HOME:-$HOME/.codex}/skills"; mkdir -p "$dest"
