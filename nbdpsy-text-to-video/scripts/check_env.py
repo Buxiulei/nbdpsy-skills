@@ -108,7 +108,7 @@ def check(install: bool) -> dict:
         else:
             login_helper = Path(__file__).resolve().parent / "dreamina_login.py"
             add("dreamina 登录 & 积分", False, "未登录或无法读取积分",
-                fix=f"agent 直接跑：python3 {login_helper}  # 自动弹浏览器/出二维码图，用户只需抖音 App 扫码确认")
+                fix=f"agent 直接跑：python3 {login_helper}  # 脚本自己打开登录页，用户只需抖音 App 扫页面上的二维码")
     else:
         add("dreamina 登录 & 积分", False, "CLI 未装，跳过", fix="先装 dreamina")
 

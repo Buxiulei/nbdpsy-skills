@@ -38,7 +38,7 @@ python3 {SKILL_DIR}/scripts/check_env.py --install  # 缺啥自动装(dreamina �
 
 读 stdout 的 `{"ready": true/false, "checks":[...]}`：
 - `dreamina CLI` 缺 → 自动 `curl -fsSL https://jimeng.jianying.com/cli | bash`。
-- `dreamina 登录 & 积分` 失败 → **agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py`（后台运行或把 Bash 工具超时设 ≥5 分钟；实时把 stderr 进度转述给用户）。脚本自动弹浏览器（有屏机器）或生成二维码图片（无屏服务器），用户唯一要做的是用**抖音 App 扫码/点确认**。**绝不让用户手动复制终端里的网址**——终端折行会截断 user_code（Windows 真实事故）。积分偏低会给警告。
+- `dreamina 登录 & 积分` 失败 → **agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py`（后台运行或把 Bash 工具超时设 ≥5 分钟；实时把 stderr 进度转述给用户）。脚本会**自己把即梦登录页开到用户浏览器里**，用户唯一要做的是用**抖音 App 扫页面上那张二维码**。登录页的回调地址是 `127.0.0.1`，**必须在跑脚本的这台电脑上打开**——让用户拿手机扫脚本给的网址是死路（回调回不到他电脑）。浏览器没弹出时脚本会印一整行完整网址供本机手动粘贴。积分偏低会给警告。
 - `ffmpeg`/`ffprobe`/`Noto Sans CJK SC 字体` 缺 → 给 `sudo apt-get install -y ffmpeg fonts-noto-cjk`（macOS 用 brew；Windows 无 Noto 时字幕回退微软雅黑，或用 `FONT_PATH` 环境变量显式指定字体文件）。
 - `edge-tts 旁白(可选)` 缺 → `pip install edge-tts`（要 TTS 配音才需要；纯字幕+BGM 可不装）。
 - `requests(豆包TTS依赖)` 缺 → `pip install requests`（用豆包高音质旁白才需要；edge 引擎不需要）。
@@ -57,7 +57,7 @@ check_env 报某项凭据缺失时，按下表**主动引导用户提供**，拿
 |---|---|---|
 | 豆包 TTS · 新版（`VOLC_TTS_API_KEY`，**优先**）| skill `.env` | 主动问用户要（火山控制台 `speech/new/setting/apikeys` 自建单一 API Key），写入 `.env`。不配也行 → 用 edge-tts 免费旁白（`--engine edge`） |
 | 豆包 TTS · 旧版（`VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` / `VOLC_TTS_CLUSTER`，向后兼容）| skill `.env` | 已有 `VOLC_TTS_API_KEY` 可不填；否则主动问用户要（火山控制台→语音合成大模型），写入 `.env` |
-| 即梦登录 | `~/.dreamina_cli/`（本地）| **agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py` 帮用户登录（自动弹浏览器/出二维码图，用户只需**抖音 App 扫码/点确认**）；凭据存本机 `~/.dreamina_cli/`、agent 不经手凭据本体，即梦登录无法进凭据配置包 |
+| 即梦登录 | `~/.dreamina_cli/`（本地）| **agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py` 帮用户登录（脚本自己打开登录页，用户只需**抖音 App 扫页面上的二维码**）；凭据存本机 `~/.dreamina_cli/`、agent 不经手凭据本体，即梦登录无法进凭据配置包 |
 | 首模型合规授权 | Dreamina 网页端 | 报 `AigcComplianceConfirmationRequired` 时引导用户去网页端一次性授权 |
 | sudo（装 ffmpeg/字体，如需）| 不留存 | 需要时即时问用户密码，用完不写进任何文件/日志 |
 
