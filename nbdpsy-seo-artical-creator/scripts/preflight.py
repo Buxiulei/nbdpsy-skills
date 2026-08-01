@@ -214,13 +214,13 @@ def run(md_text: str, online: bool = False, api_base: str = DEFAULT_API_BASE):
         add("F0", "frontmatter", "fail", f"frontmatter 解析失败：{e}",
             "文件须以 `---` 开头的 YAML frontmatter 起始（见 pillar-spec「交付格式」）")
 
-    # ===== R1 篇幅：纯汉字 3000–5000（截去正文 FAQ 与参考文献小节后计） =====
+    # ===== R1 篇幅：纯汉字 4000–6000（截去正文 FAQ 与参考文献小节后计） =====
     n = _hanzi(_trim_faq_refs(body))
-    if 3000 <= n <= 5000:
-        add("R1", "word-count", "pass", f"正文纯汉字 {n}（区间 3000–5000，已截去 FAQ 与参考文献小节）")
+    if 4000 <= n <= 6000:
+        add("R1", "word-count", "pass", f"正文纯汉字 {n}（区间 4000–6000，已截去 FAQ 与参考文献小节）")
     else:
         add("R1", "word-count", "fail",
-            f"正文纯汉字 {n}，区间外（要求 3000–5000，已截去 FAQ 与参考文献小节）",
+            f"正文纯汉字 {n}，区间外（要求 4000–6000，已截去 FAQ 与参考文献小节）",
             "不足按缺口补真实内容（多一分论点/表/共情段），超出压缩低信息密度段落；不靠注水或砍参考文献凑数")
 
     # ===== R2 答案前置：H1 后首段 80–120 字直答（<80 fail；>120 warn；语义 manual） =====

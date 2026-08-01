@@ -15,7 +15,7 @@ def count_hanzi(text: str) -> int:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("file"); ap.add_argument("--min", type=int, default=3000); ap.add_argument("--max", type=int, default=5000)
+    ap.add_argument("file"); ap.add_argument("--min", type=int, default=4000); ap.add_argument("--max", type=int, default=6000)
     a = ap.parse_args()
     try:
         text = Path(a.file).read_text(encoding="utf-8")

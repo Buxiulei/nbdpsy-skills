@@ -9,7 +9,7 @@
 
 | 命令 | 预期 | exit 语义 |
 |------|------|-----------|
-| `python3 ../nbdpsy-seo-artical-creator/scripts/count_hanzi.py <文件>` | 纯汉字 3000–5000 | JSON 输出；区间外 exit 2 |
+| `python3 ../nbdpsy-seo-artical-creator/scripts/count_hanzi.py <文件>` | 纯汉字 4000–6000 | JSON 输出；区间外 exit 2 |
 | `python3 ../nbdpsy-seo-artical-creator/scripts/check_links.py <文件>` | dead 为空 | JSON 输出；有 dead 链接 exit 1（`suspect` 不算 dead，但须逐条人工点开定性后写入报告） |
 | `python3 ../nbdpsy-seo-artical-creator/scripts/lint_markdown.py <文件> --citations <citations 条数>` | ok=true，无违规 | JSON 输出；bold-flanking（加粗渲染兼容性）或 citation-marker（文内引用覆盖率）任一违规 exit 1（`--citations` 取 frontmatter `citations` 数组条数） |
 
