@@ -841,6 +841,19 @@ class Test队列查询与撤销:
         code, data, _ = run_cli(S, ["--list"], capsys)
         assert code == 0 and data["items"][0]["run_at_label"] is None
 
+    def test_待确认状态念得出人话且劝住重排(self, net, capsys):
+        """45028 落的 unconfirmed 若掉进「未收录的状态」，运营读不出「配额已计」，
+        照着失败重排一条 = 推送两次 + 烧掉两次月配额。"""
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"id": 21, "job_type": "mass_send", "status": "unconfirmed",
+             "run_at": "2026-08-03T09:00:00+08:00"}]}))
+        code, data, _ = run_cli(S, ["--list", "--status", "unconfirmed"], capsys)
+        assert code == 0 and "status=unconfirmed" in net.calls[0]["url"]
+        label = data["items"][0]["status_label"]
+        assert "未收录" not in label                    # ⛔ 六态齐了才不掉进兜底话术
+        assert "配额已计" in label and "绝不重排" in label
+        assert data["items"][0]["can_cancel"] is False   # 不是 pending，撤不掉
+
     def test_cancel成功(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "cancelled": True}))
         code, data, _ = run_cli(S, ["--cancel", "12"], capsys)

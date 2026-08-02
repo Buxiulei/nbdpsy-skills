@@ -20,7 +20,9 @@
 
 - **菜单**：`/cgi-bin/menu/create`、`/get`、`/delete`、`/addconditional`、`/delconditional`、`/trymatch`、`/cgi-bin/get_current_selfmenu_info`
 - **草稿**：`/cgi-bin/draft/add`、`/get`、`/update`、`/delete`、`/count`、`/batchget`
-- **素材**（只读 + 删）：`/cgi-bin/material/get_material`、`/batchget_material`、`/get_materialcount`、`/del_material`
+- **素材**（只读 + 删）：`/cgi-bin/material/batchget_material`、`/get_materialcount`、`/del_material`
+  （⛔ **`get_material` 刻意不在白名单**：图片/语音素材回的是裸二进制，服务端强制 JSON 解析会误报
+  「解析微信响应失败」，把好好的素材说成坏了。要查素材一律用 `batchget_material`，它带 url。）
 - **发布**（只读）：`/cgi-bin/freepublish/get`、`/getarticle`、`/batchget`
 - **统计**：前缀 `/datacube/` 全放（全部只读）
 
@@ -34,16 +36,17 @@
 
 | 端点 | 行为 |
 |---|---|
-| `POST /api/external/wechat/publish` | `{media_id, title?}` → 提交发布，台账插 `publishing` 行，返回台账 id |
+| `POST /api/external/wechat/publish` | `{media_id}`（**服务端只收这一个字段**，标题跟着草稿走，发布时改不了）→ 提交发布，台账插 `publishing` 行，返回台账 id |
 | `POST /api/external/wechat/upload-image` | multipart，转发 `media/uploadimg`，返回 **mmbiz URL**（正文配图用；jpg/png ≤1MB） |
 | `POST /api/external/wechat/upload-material` | multipart，`type=image\|thumb`，返回**永久 media_id**（封面用） |
-| `POST /api/external/wechat/mass-send` | **高危**：`{article_ledger_id 或 media_id（二选一）, filter（**必填**）, confirm, note}`。`filter` = `{"is_to_all":true}` 或 `{"is_to_all":false,"tag_id":N}`——**服务端不给默认值**，漏填直接拒（防的就是「漏填 = 悄悄全员群发」），且**参数校验先于配额预检**，所以 `confirm:false` 的预检调用也必须带 filter。`confirm≠true` 时**不发**，只回本月配额现状；台账记 `msg_id` / `mass_sent_at` |
+| `POST /api/external/wechat/mass-send` | **高危**：`{article_ledger_id 或 media_id（二选一）, filter（**必填**）, confirm, note}`。`filter` = `{"is_to_all":true}` 或 `{"is_to_all":false,"tag_id":N}`——**服务端不给默认值**，漏填直接拒（防的就是「漏填 = 悄悄全员群发」），且**参数校验先于配额预检**，所以 `confirm:false` 的预检调用也必须带 filter。`confirm≠true` 时**不发**，只回本月配额现状；台账记 `msg_id` / `mass_sent_at`。**配额已用满 → 409**（`{success:false, error, quota_used, quota_total}`），这道闸**排在 confirm 预检之前**——配额满时不会先回一句 `success:true` 的假绿预检，带不带 `confirm` 都是 409 |
 | `POST /api/external/wechat/article-delete` | **高危**：`{article_id, index?, confirm}`。`confirm≠true` 只回警示；执行后台账标 `deleted` |
 | `GET /api/external/wechat/ledger` | `?status&limit&offset` 台账分页——**"线上有什么"的唯一权威** |
+| `GET /api/external/wechat/ledger/:id` | 台账**单行直查**。「刚提交那条现在怎么样了」是最高频的一问，行数一多就翻不到，别用列表翻页找。id 不是整数 → 400；查无此行 → **404，且响应体是 JSON**（`{success:false, error}`，不是 axum 的裸文本） |
 | `POST /api/external/wechat/schedule` | `{job_type: publish\|mass_send, run_at(RFC3339 带时区), payload}` 入定时队列；`mass_send` 型同样要 `confirm`+`note`，`payload` 里带 `media_id` 与 `filter`（受众跟着任务进队列，到点原样用），入队即校验配额、执行时二次校验 |
-| `GET /api/external/wechat/schedule` | `?status` 队列查询 |
+| `GET /api/external/wechat/schedule` | `?status` 队列查询。状态共**六**态：`pending` / `running` / `done` / `failed` / `unconfirmed` / `cancelled` |
 | `POST /api/external/wechat/schedule/cancel` | `{id}`，**仅 pending 可取消** |
-| `GET /api/external/wechat/stats` | `?type&from&to&msgid` 查每日快照（本地聚合，**支持跨任意区间**） |
+| `GET /api/external/wechat/stats` | `?stat_type&from&to&msgid` 查每日快照（本地聚合，**支持跨任意区间**）。`stat_type` **必填**且必须在六词表内，否则 400：`getusersummary`（用户增减）/ `getusercumulate`（累计关注）/ `getbizsummary`（内容概况）/ `getarticleread`（按篇阅读）/ `getarticleshare`（按篇分享）/ `getarticletotaldetail`（按篇详细，含逐日）。后三个按篇挂 `msgid`，前三个是账号级（`msgid` 为空） |
 
 服务端异步节奏：发布状态每 **5 分钟**轮询一次微信；定时队列每 **1 分钟**扫一次；统计快照每日 **08:30** 抓前一天。
 
@@ -98,3 +101,14 @@
 > 群发保护已触发：请管理员在 30 分钟内于手机微信确认本次群发；超时未确认则本次失败。之后以台账/后台核实为准。注意：本次已计入本月群发配额（4 次），若管理员超时未确认（实际未发出），可请管理员删除对应群发流水校正配额
 
 ⛔ 不新增第五态：`done|partial|failed|unknown` 四态信封是全 skill 家族的共同约定，语义由 `hint` 承载。
+
+### 定时队列撞上 45028：`unconfirmed` 终态
+
+定时群发到点执行时撞 45028，队列这条任务落 **`unconfirmed`**（不是 `failed`），`fail_reason`
+固定为「45028群发保护待管理员确认，配额流水已计」。
+
+它既不能算 `done`（没确认就确实没发出去），也不能算 `failed`——**归 `failed` 会诱导运营照失败重排一条，
+而管理员一确认就是真发出：两次推送 + 烧掉两次月配额，全都不可逆。**
+
+看到这个状态只做两件事：**催管理员去手机微信确认**（30 分钟内，超时即本次未发出）；**绝不重排**。
+若管理员确实超时没确认（实际没发出去），请管理员按「45028待管理员确认：」前缀捞流水删掉，把配额校正回来。

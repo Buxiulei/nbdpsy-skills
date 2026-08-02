@@ -57,6 +57,7 @@ JOB_STATUS_LABELS = {
     "running": "执行中（已经开始跑了，撤不掉）",
     "done": "已执行完成（看 result）",
     "failed": "执行失败（看 fail_reason）",
+    "unconfirmed": "待管理员确认（45028 群发保护，配额已计，绝不重排——重排=推送两次+烧两次配额）",
     "cancelled": "已取消（不会再执行）",
 }
 JOB_TYPE_LABELS = {
@@ -290,7 +291,8 @@ def main(argv=None):
 
     ap.add_argument("--at", "--run-at", dest="at", metavar="时间",
                     help='执行时刻，**必须带时区**，如 "2026-08-03T09:00:00+08:00"')
-    ap.add_argument("--status", help="--list 的过滤：pending/running/done/failed/cancelled")
+    ap.add_argument("--status",
+                    help="--list 的过滤：pending/running/done/failed/unconfirmed/cancelled")
     ap.add_argument("--to-all", dest="to_all", action="store_true",
                     help="定时群发受众：**全部粉丝**（与 --tag-id 二选一，没有默认值）")
     ap.add_argument("--tag-id", dest="tag_id", type=int, metavar="标签id",
