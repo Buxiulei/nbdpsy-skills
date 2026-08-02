@@ -94,6 +94,12 @@ MAX_DAILY_ROWS = 62      # 逐日明细超过这个天数就省略：糊满几�
 FINISH_RATE_NOTE = ("`read_finish_rate`（阅读完成率）是**微信直接给的**字段，逐日在 daily 里、"
                     "区间值在 averages 里（**按阅读人数加权，不是求和**——费率相加没有意义）。"
                     "rates 里那几个是另一回事：由人数字段现算的转化率。两者别混着念。")
+# 送达率的分母本该是推送数、不是阅读人数，加权只是近似。这句挂在**算出这个值的那一处**
+# （weighted_mean），--overview 与 --article 就共用同一份；各自在调用点补一句的下场是
+# 其中一条路径漏了，近似值被当精确值报给运营。
+DELIVERY_RATE_FIELD = "read_delivery_rate"
+DELIVERY_RATE_CAVEAT = ("；⚠️ 送达率的分母本该是**推送数**而不是阅读人数，这里拿阅读人数当权重只是近似，"
+                        "T15 拿真数据核准前别当精确值报给运营")
 # 新口径的单篇明细只追踪发布后 30 天，老文章查空是**合法结果**，不是 msgid 写错。
 TRACK_WINDOW_NOTE = ("这个接口每篇只追踪**发布后 30 天**：更早发的文章查不到数据属正常，"
                      "不是故障、也不是 msgid 写错——别让运营以为数据丢了。")
@@ -247,6 +253,8 @@ def weighted_mean(records, field, weight_field="read_user"):
     else:
         value = sum(v for v, _ in pairs) / len(pairs)
         how = f"简单平均（这段区间没有可用的{weight_label}做权重）"
+    if field == DELIVERY_RATE_FIELD:
+        how += DELIVERY_RATE_CAVEAT
     return {"value": round(value, 4), "days": len(pairs), "how": how}
 
 
@@ -459,9 +467,12 @@ def do_article(args, api_base, key):
         warnings.append(f"这批快照里还混着**别的文章**的数据（msgid：{shown}），"
                         f"已按 msgid={msgid} 过滤，下面的数字与标题**只属于这一篇**。"
                         "（服务端没按 msgid 滤干净，本身不影响这里的结果。）")
-    if rows and not series:
+    # 只在**确实看见了别篇**时才说「msgid 是不是写错了」：rows 非空但一条 msgid 都认不出来
+    # （payload 空/结构变了）与「写错 msgid」是两回事，那种情况交给下面的 missing_warning
+    # 说「服务端换了字段名」，别把结构问题诬成运营手滑。
+    if rows and not series and foreign:
         warnings.append(f"这批快照里**一条 msgid={msgid} 的记录都没有**，只有别的文章"
-                        f"（{'、'.join(foreign[:5]) or '未知'}）——msgid 是不是写错了？"
+                        f"（{'、'.join(foreign[:5])}）——msgid 是不是写错了？"
                         "台账里那条的 `msg_id` 才是。")
     if not rows:
         warnings.append(f"msgid={msgid} 一行快照都没有。五种可能，**先别下结论**："
@@ -475,11 +486,6 @@ def do_article(args, api_base, key):
     # 费率与均值单列：它们是微信直接给的，按阅读人数加权汇总，**不求和**
     averages = {f: weighted_mean(series, f)
                 for f in ARTICLE_RATE_FIELDS + ARTICLE_AVG_FIELDS}
-    if averages.get("read_delivery_rate"):
-        # 送达率的分母本该是推送数，不是阅读人数——权重只是近似，别当精确值念
-        averages["read_delivery_rate"]["how"] += (
-            "；⚠️ 送达率的分母本该是**推送数**而不是阅读人数，这里拿阅读人数当权重只是近似，"
-            "T15 拿真数据核准前别当精确值报给运营")
     # 现算的转化率，与上面的 read_finish_rate 是两回事。新口径不给送达数与原文页阅读数，
     # 那两项**置 null 而不是硬凑**——送达情况直接看微信给的 read_delivery_rate。
     rates = {

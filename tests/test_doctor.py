@@ -35,6 +35,23 @@ def test_doctor_missing_blog_key(monkeypatch, tmp_path):
     assert any("API Keys" in n for n in report["notes"])
 
 
+def test_doctor_reports_wechat_key(monkeypatch, tmp_path):
+    """服务号那把 key 是**另一把**（不是发文 key），doctor 不报它，运营就只能等到真去群发
+    时才发现没配。缺的时候给可行动提示，配了则如实报就绪。"""
+    m = _fresh(monkeypatch, tmp_path, "NBDPSY_BLOG_API_KEY=nbdblog_x\n")
+    monkeypatch.delenv("NBDPSY_WECHAT_API_KEY", raising=False)
+    report, code = m.doctor()
+    assert code == 0 and report["wechat_ready"] is False      # 可选，不拖垮 ok
+    note = next(n for n in report["notes"] if "微信服务号" in n)
+    assert "NBDPSY_WECHAT_API_KEY" in note and "凭据配置包" in note
+
+    m2 = _fresh(monkeypatch, tmp_path,
+                "NBDPSY_BLOG_API_KEY=nbdblog_x\nNBDPSY_WECHAT_API_KEY=nbdwx_y\n")
+    report2, _ = m2.doctor()
+    assert report2["wechat_ready"] is True
+    assert not any("微信服务号未配置" in n for n in report2["notes"])
+
+
 def test_doctor_doubao_optional(monkeypatch, tmp_path):
     m = _fresh(monkeypatch, tmp_path, "NBDPSY_BLOG_API_KEY=nbdblog_x\n")
     report, code = m.doctor()

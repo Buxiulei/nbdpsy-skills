@@ -3,6 +3,15 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "shared"))
 
+ROOT = Path(__file__).parent.parent
+
+
+def test_fuwuhao_registered_in_installers_and_plugin():
+    """skill 目录在仓库里 ≠ 装得到：漏进清单就是「本地跑得通、运营装完没有」。"""
+    assert "nbdpsy-fuwuhao-operator" in (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "./nbdpsy-fuwuhao-operator" in (
+        ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+
 
 def _fresh(tmp_path, monkeypatch):
     """把凭据与工作区都关进 tmp，再拿一份干净的模块。"""

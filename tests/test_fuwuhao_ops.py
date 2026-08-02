@@ -166,6 +166,25 @@ class Test两桶口径:
         assert env["hint"] == W.MASS_PROTECT_HINT and "30 分钟" in env["hint"]
         assert env["wechat_errcode"] == 45028
 
+    def test_群发保护提示全文含配额校正办法(self):
+        """45028 这一次**已经占掉本月 4 次配额**，哪怕管理员没确认、实际没发出去。
+        只说「超时未确认则失败」而不说配额已扣，运营会以为还剩 4 次、白白多排一篇。
+        文案由 SKILL.md 钉死，改动必须同步（见下一条把两份文档一起钉住的用例）。"""
+        assert W.MASS_PROTECT_HINT == (
+            "群发保护已触发：请管理员在 30 分钟内于手机微信确认本次群发；"
+            "超时未确认则本次失败。之后以台账/后台核实为准。"
+            "注意：本次已计入本月群发配额（4 次），若管理员超时未确认（实际未发出），"
+            "可请管理员删除对应群发流水校正配额")
+
+    def test_钉死的hint文案与两份文档逐字一致(self):
+        """SKILL.md 与 wechat-oa-spec.md 都把这句原样引了一遍。文档与代码各说各的
+        「固定为这句」，agent 照文档复述、脚本回另一句，运营两头对不上。"""
+        root = Path(__file__).parent.parent / "nbdpsy-fuwuhao-operator"
+        for doc in (root / "SKILL.md", root / "references" / "wechat-oa-spec.md"):
+            quoted = [ln[2:].strip() for ln in doc.read_text(encoding="utf-8").splitlines()
+                      if ln.startswith("> 群发保护已触发")]
+            assert quoted == [W.MASS_PROTECT_HINT], f"{doc.name} 里钉死的 hint 与代码不一致"
+
     def test_没有errcode的success_false是服务端拒的不是微信拒的(self, net):
         net.serve(FakeResp(200, {"success": False, "error": "缺少 confirm"}))
         with pytest.raises(W.OpFailed) as e:
@@ -1119,6 +1138,18 @@ class Test统计CLI:
         assert code == 0 and data["totals"]["read_user"] is None and data["title"] is None
         assert any("一条 msgid=2247 的记录都没有" in w and "写错" in w for w in data["warnings"])
 
+    def test_有快照行却一条记录都认不出来时不诬成msgid写错(self, net, capsys):
+        """空壳 payload（服务端换了结构/快照落了个空 list）与「msgid 写错」是两回事。
+        这时一篇别篇也没看见，说「只有别的文章（未知）——是不是写错了」会把运营支去
+        反复核对一个根本没错的 id；该由 missing_warning 说「多半是服务端换了字段名」。"""
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"ref_date": "2026-07-03", "payload": {"list": []}}]}))
+        code, data, _ = run_cli(ST, ["--article", "2247"], capsys)
+        assert code == 0 and data["totals"]["read_user"] is None
+        joined = "｜".join(data["warnings"])
+        assert "msgid 是不是写错了" not in joined and "只有别的文章" not in joined
+        assert "服务端换了字段名" in joined and "别当成 0" in joined
+
     def test_送达率的权重语义带免责(self, net, capsys):
         net.serve(FakeResp(200, self.ARTICLE_ROWS))
         code, data, _ = run_cli(ST, ["--article", "2247483647"], capsys)
@@ -1126,6 +1157,18 @@ class Test统计CLI:
         assert "推送数" in how and "近似" in how and "T15" in how
         # 完成率那条不该被这句免责污染
         assert "推送数" not in data["averages"]["read_finish_rate"]["how"]
+
+    def test_概况里的送达率带同一份免责(self, net, capsys):
+        """免责句挂在算出这个值的那一处（weighted_mean），--overview 与 --article 共用一份。
+        各自在调用点补一句，迟早有一条路径漏掉，把近似值当精确值报出去。"""
+        net.serve(FakeResp(200, self.USER_ROWS),
+                  FakeResp(200, {"success": True, "items": [
+                      {"ref_date": "2026-07-01", "payload": {"read_user": 100,
+                                                             "read_delivery_rate": 0.8}}]}))
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026-07-01",
+                                     "--to", "2026-07-02"], capsys)
+        how = data["non_additive"]["getbizsummary"]["read_delivery_rate"]["how"]
+        assert "推送数" in how and "近似" in how
 
     def test_概况里的费率字段不求和但也不许消失(self, net, capsys):
         """挡在求和路径外之后若哪儿都不出现，就成了「微信给了、脚本吞了、谁也不知道」。"""

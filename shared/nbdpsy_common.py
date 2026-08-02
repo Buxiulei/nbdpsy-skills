@@ -148,6 +148,7 @@ def doctor():
     required_missing = [k for k in REQUIRED_KEYS if not get_secret(k)]
     doubao_ready = bool(get_secret(DOUBAO_API_KEY)) or all(get_secret(k) for k in DOUBAO_KEYS)
     xhs_ready = bool(get_secret(XHS_API_KEY))
+    wechat_ready = bool(get_secret(WECHAT_API_KEY))
     strategy_ready = bool(strategy_api_key())
     ok = not required_missing
     notes = []
@@ -161,6 +162,10 @@ def doctor():
     if not xhs_ready:
         notes.append("小红书自动发布未配置（可选）：缺 NBDPSY_XHS_API_KEY——管理员在后台"
                      "「小红书运营接入」生成的接入包里带此凭据；不配则小红书笔记只能人工发布。")
+    if not wechat_ready:
+        notes.append("微信服务号运营未配置（可选）：缺 NBDPSY_WECHAT_API_KEY——管理员生成"
+                     "「凭据配置包」时勾选微信服务号权限即带此凭据；不配则公众号排版发文/群发/"
+                     "菜单/统计都用不了。")
     if not strategy_ready:
         notes.append("战略规划报告发布不可用（可选）：本机一把 key 都没有——它默认复用发文凭据 "
                      "NBDPSY_BLOG_API_KEY，配好那一把即可，无需单配 NBDPSY_STRATEGY_API_KEY。")
@@ -175,6 +180,7 @@ def doctor():
     notes.append(_toolkit_version_note(marker))
     return {"ok": ok, "required_missing": required_missing,
             "doubao_ready": doubao_ready, "xhs_ready": xhs_ready,
+            "wechat_ready": wechat_ready,
             "strategy_ready": strategy_ready, "install_marker": marker,
             "notes": notes}, (0 if ok else 1)
 
@@ -483,6 +489,7 @@ def main(argv):
         if report["ok"]:
             tail = "；豆包语音已配置" if report["doubao_ready"] else "；豆包语音未配置（可选，视频用免费 edge 旁白）"
             tail += "；小红书自动发布已配置" if report["xhs_ready"] else "；小红书自动发布未配置（可选）"
+            tail += "；微信服务号已配置" if report["wechat_ready"] else "；微信服务号未配置（可选）"
             print("✓ 发文凭据已就绪" + tail, file=sys.stderr)
         else:
             print("✗ 缺少必需凭据，暂时无法发文。", file=sys.stderr)
