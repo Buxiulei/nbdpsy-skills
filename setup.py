@@ -43,6 +43,9 @@ CREDENTIALS = [  # (KEY, 是否必需, 说明)
      "nbdpsy-server apikey（运营专属，接入包同一把）—— 同一把 key 既用于小红书自动发布，"
      "也用于 YouTube 视频搬运/再制作（nbdpsy-server 视频管线）；管理员在后台「小红书运营接入」生成的"
      "接入包会带上（secret import 一并导入）；可跳过，跳过后小红书笔记只能人工发布、无法搬运视频"),
+    ("NBDPSY_WECHAT_API_KEY", False,
+     "微信服务号运营 API Key——管理员在 manage.nbdpsy.com → 博客 → API Keys 生成凭据配置包"
+     "（勾选微信服务号权限）后 secret import 导入；可跳过，跳过后无法操作服务号"),
 ]
 
 _OS_DEFAULT_PKG = {"linux": "apt", "darwin": "brew", "windows": "winget"}

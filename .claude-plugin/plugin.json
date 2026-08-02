@@ -12,6 +12,8 @@
     "video",
     "nbdpsy-text-to-video",
     "youtube-transport",
+    "wechat",
+    "fuwuhao",
     "content-review",
     "pipeline",
     "psychology",
@@ -22,6 +24,7 @@
     "./nbdpsy-xiaohongshu-creator",
     "./nbdpsy-text-to-video",
     "./nbdpsy-youtube-transport",
+    "./nbdpsy-fuwuhao-operator",
     "./nbdpsy-content-reviewer",
     "./nbdpsy-content-pipeline",
     "./nbdpsy-guide"

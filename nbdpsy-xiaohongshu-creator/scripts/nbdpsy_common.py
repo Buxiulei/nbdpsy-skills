@@ -77,6 +77,12 @@ DEFAULT_XHS_API_BASE = "https://mcp.nbdpsy.com"
 # （NBDPSY_XHS_API_KEY）。故默认基址与 xhs_api_base 同指 mcp.nbdpsy.com；单列 base 键仅为可覆盖。
 VIDEO_API_BASE_KEY = "NBDPSY_VIDEO_API_BASE"
 DEFAULT_VIDEO_API_BASE = "https://mcp.nbdpsy.com"
+WECHAT_API_KEY = "NBDPSY_WECHAT_API_KEY"  # 微信服务号运营 API 个人 key（scope wechat:operate），可选
+# 服务号基址指 database.nbdpsy.com（NBDpsy 生产后端），**不是** nbdpsy-server：微信换 token 有 IP
+# 白名单、只认生产服务器的固定出口 IP，而 nbdpsy-server 出站走本机 VPN，IP 不固定会被微信拦。
+# AppSecret 只存生产服务器 .env，永不下发到运营电脑。
+WECHAT_API_BASE_KEY = "NBDPSY_WECHAT_API_BASE"
+DEFAULT_WECHAT_API_BASE = "https://database.nbdpsy.com"
 
 def get_base(key: str):
     """服务基址解析：只认 环境变量 > 用户级 secrets，**跳过 workspace/.env**。
@@ -99,6 +105,9 @@ def xhs_api_base() -> str:
 
 def video_api_base() -> str:
     return get_base(VIDEO_API_BASE_KEY) or DEFAULT_VIDEO_API_BASE
+
+def wechat_api_base() -> str:
+    return get_base(WECHAT_API_BASE_KEY) or DEFAULT_WECHAT_API_BASE
 
 # ── 安装版本标记（install.sh / install.ps1 落盘，doctor 只读、不联网）──
 # 装完本机曾经没有任何版本痕迹（版本号只住在仓库根 .claude-plugin/plugin.json，从没被拷到安装目的地），

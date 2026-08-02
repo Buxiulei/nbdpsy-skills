@@ -2,7 +2,7 @@
 
 **当前版本 v1.22.0** · 每版改了什么见 [CHANGELOG.md](CHANGELOG.md)
 
-NBDpsy 心理科普内容创作的六个 Agent Skill（外加一个上手向导 **nbdpsy-guide**，共 7 个），覆盖「话题 → 官网 SEO 长文 → 小红书图文笔记 → 配图 → 竖屏短视频」全产线（另含 YouTube 视频搬运），每级产物都有对抗审查闸门。支持 **Claude Code** 与 **Codex** 一键安装。
+NBDpsy 心理科普内容创作的七个 Agent Skill（外加一个上手向导 **nbdpsy-guide**，共 8 个），覆盖「话题 → 官网 SEO 长文 → 小红书图文笔记 → 配图 → 竖屏短视频」全产线（另含 YouTube 视频搬运与微信服务号运营），每级产物都有对抗审查闸门。支持 **Claude Code** 与 **Codex** 一键安装。
 
 > **先选客户端**（本工具包跑在你自己的电脑上，不是云端）：
 > - **Claude Desktop 桌面版**（推荐给不熟终端的运营）：装好后点顶部 **「Code」标签页**即可。它内置 Claude Code，与终端版**同一套引擎、同一套 `~/.claude/skills`**，本工具包全部功能（含视频链）照常可用，只是多了图形界面。Windows 需先装 Git for Windows。
@@ -16,6 +16,7 @@ NBDpsy 心理科普内容创作的六个 Agent Skill（外加一个上手向导 
 | **nbdpsy-xiaohongshu-creator** | 承接上面的长文，拆成多篇可直接发小红书的图文笔记：每篇 ~300 字正文 + 一套 6–9 页「PPT 式」竖版（2:3）轮播插图。**正文强制三段式**——痛点场景开头 + 科普干货主体 + 结尾轻引导（解决「纯科普难转化 / 硬广难曝光」，且更易过投流审核）。内容页不只是「列要点」——会按内容形态挑最出干货的**信息图版式**（对比图 / 流程步骤图 / 象限图 / 隐喻图 / 数据图 / 拆解结构图 / 要点卡等 17 种），图文一体、信息密度更高。**封面按「背景层 + 文字层 + 元素层」三层组件**产出，换篇只改后两层。每页给出页面文字 + 可喂给 Gemini/GPT 的中文绘图提示词，并生成带一键复制按钮的预览页（`{笔记目录名}-preview.html`）——预览页顶部可**一键切换「小红书 2:3 / Instagram 1:1」**，切完复制即得对应比例版本，一套素材跨平台。 |
 | **nbdpsy-text-to-video** | 把长文 / 小红书笔记转成带中文字幕的竖屏短视频：即梦 Seedance 2.0 生成画面（走会员积分）+ 豆包 TTS 旁白 + 纯 ffmpeg 合成。可衔接 nbdpsy-xiaohongshu-creator，给每篇笔记按「文生」或「图生」生成视频。**需另配** dreamina CLI 登录 + 豆包 TTS key（可选，见下）+ ffmpeg（首次跑 `nbdpsy-text-to-video/scripts/check_env.py --install` 自检自装）。 |
 | **nbdpsy-youtube-transport** | 把一条 YouTube 视频「搬运」成带中文字幕/配音、可直接发布的成片。所有重活在服务端（nbdpsy-server，`mcp.nbdpsy.com`）全自动完成：下载 → 转写 → qwen-mt 翻译 → 豆包配音 → 音画同步 → 烧中文字幕 → 出成片，并自动打 NBDpsy 品牌 logo + 片头版权声明。另支持 **remake**（分镜级再制作，画面全自产，仅「平面图形类」原片）与 **revise**（对成片提自然语言修订、可链式）。经 nbdpsy-server 视频管线 REST API 建任务/轮询/取产物（成片 + 中英字幕 + 中英双语逐字稿 + 分镜脚本的免鉴权公网链接）。**复用小红书运营接入的 `NBDPSY_XHS_API_KEY`，无需另配凭据。** |
+| **nbdpsy-fuwuhao-operator** | 微信服务号（公众号）运营接入包：把长文/分发稿排版成微信白名单内联样式 HTML（`md2wechat.py`，图片自动上传换 mmbiz 链接）、建草稿、发布与**定时发布**、**定时群发**（高危，每自然月仅 4 次）、装修自定义菜单、查台账与数据统计。**微信凭据（AppSecret）只存生产服务器**、出站走生产固定出口 IP（微信换 token 有 IP 白名单），运营电脑只拿个人 key 走 REST。**需配 `NBDPSY_WECHAT_API_KEY`**（凭据配置包勾选微信服务号权限时带上）。 |
 | **nbdpsy-content-reviewer** | 内容产线的对抗审查员：对长文 / 笔记 / 配图 / 视频四类产物先跑确定性检查脚本、再逐条「找茬」核对合规清单，产出 PASS/FAIL 审查报告。必须由独立子代理执行（生产者不自审），是发布前最后一道闸门。 |
 | **nbdpsy-content-pipeline** | 内容产线总导演：运营只给一个话题，说一句「做一期 XX 的全套内容」，就自动把长文创作→审查→拆笔记→审查→出图→审查→出视频→审查整条流水线串完，每级产物过审才进下一级。适合非专业兼职运营的傻瓜式入口；各生产 skill 也可单独使用。 |
 
@@ -25,7 +26,7 @@ NBDpsy 心理科普内容创作的六个 Agent Skill（外加一个上手向导 
 
 ## 一键安装
 
-**一条命令自动搞定**——装好 6 个 skill 到你的 AI 工具，同时自动装好全部依赖（ffmpeg、中文字幕字体、Python 包、即梦 dreamina CLI）、跑一遍凭据向导，不用你分步操作。
+**一条命令自动搞定**——装好 8 个 skill 到你的 AI 工具，同时自动装好全部依赖（ffmpeg、中文字幕字体、Python 包、即梦 dreamina CLI）、跑一遍凭据向导，不用你分步操作。
 
 ### Linux / macOS
 
@@ -101,7 +102,7 @@ py setup.py                     # Windows
 
 跑一遍：探测系统 → 装 ffmpeg / 中文字幕字体 → 装 Python 依赖 → 自动装 dreamina CLI（视频生成用，可选；装完还需你自己终端扫码登录，见下）→ **凭据向导** → 每个 skill 冒烟测试（`--help` 级别）→ 打印终检报告。幂等，可反复跑。参数：`--yes`（非交互：能装的都装，含 dreamina CLI 自动安装，凭据只报缺不问）、`--skip-credentials`（跳过凭据向导）。
 
-**凭据向导会问 5 个 key（最省事的方式是找管理员要「凭据配置包/接入包」一键导入，见「凭据手册」；下表是手动逐项配置的备用说明）：**
+**凭据向导会问 6 个 key（最省事的方式是找管理员要「凭据配置包/接入包」一键导入，见「凭据手册」；下表是手动逐项配置的备用说明）：**
 
 | 变量 | 是否必需 | 用途 | 缺失怎么办 |
 |------|---------|------|-----------|
@@ -109,6 +110,7 @@ py setup.py                     # Windows
 | `VOLC_TTS_API_KEY` | 可选 | nbdpsy-text-to-video 豆包高音质旁白（新版单一凭据，**优先于**下面两项） | 找管理员要（凭据配置包会一并带上）；或去火山控制台 `speech/new/setting/apikeys` 自建；留空跳过也行，旁白改用免费引擎 `tts_gen.py --engine edge` |
 | `VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` | 可选 | nbdpsy-text-to-video 豆包高音质旁白（旧版双凭据，已有 `VOLC_TTS_API_KEY` 可不填） | 找管理员要（凭据配置包会一并带上）；留空跳过也行，旁白改用免费引擎 `tts_gen.py --engine edge` |
 | `NBDPSY_XHS_API_KEY` | 可选 | nbdpsy-xiaohongshu-creator 经 nbdpsy-api（`mcp.nbdpsy.com`，自建 REST 服务）自动发布小红书图文笔记 | 找管理员在后台「小红书运营接入」生成「运营接入配置包」一键导入；留空跳过也行，小红书笔记改人工发布 |
+| `NBDPSY_WECHAT_API_KEY` | 可选 | nbdpsy-fuwuhao-operator 经 NBDpsy 生产后端（`database.nbdpsy.com`）操作微信服务号：排版发文/定时发布/群发/菜单/统计 | 找管理员在后台「博客 → API Keys → 生成凭据配置包」时**勾选微信服务号权限**，一键导入；留空跳过也行，跳过后无法操作服务号 |
 
 答案存进**用户级凭据文件**（`~/.config/nbdpsy/secrets.env`，Windows 为 `%APPDATA%\nbdpsy\secrets.env`，可用 `NBDPSY_SECRETS` 环境变量覆盖路径）——**在任何仓库之外，绝不会被 git 跟踪或提交**；向导只报「已配置」，不会读取或回显已存在凭据的真实值。`NBDPSY_BLOG_API_KEY` 由三个生产 skill 通过 `shared/nbdpsy_common.py` 的 `get_secret()` 统一读取（优先级：环境变量 > 内容工作区 `.env` > 用户级凭据文件）。想跳过逐项问答，直接运行 `python3 <任一 skill>/scripts/nbdpsy_common.py secret import <凭据包文件>` 即可一键导入管理员给的整包凭据；`... doctor` 可随时自检还缺哪些。**凭据导入一次就永久存本机，新开对话自动读取——接入包只需发一次，不用每次会话重发；管理员重发新包时再导一次即可覆盖旧凭据。**
 
@@ -286,6 +288,7 @@ py setup.py                     # Windows
 | `VOLC_TTS_API_KEY` | 让视频旁白用火山引擎「豆包」大模型配音，音质更自然（场景 D 用，**新版单一凭据，推荐**） | 可选 | 火山引擎控制台 → `speech/new/setting/apikeys` 自建 API Key | 同上，告诉 AI 这个值即可自动存好；**不申请也没关系**，AI 会自动改用免费的 edge 引擎配音，只是听感稍逊一筹 |
 | `VOLC_TTS_APPID` + `VOLC_TTS_ACCESS_TOKEN`（旧版，已有上面的 API Key 可不填） | 同上（场景 D 用） | 可选 | 火山引擎控制台 → 语音技术 → 语音合成大模型，开通音色后拿 APPID / Access Token | 同上，告诉 AI 这两个值即可自动存好；**不申请也没关系**，AI 会自动改用免费的 edge 引擎配音，只是听感稍逊一筹 |
 | `NBDPSY_XHS_API_KEY` | 授权 AI 把小红书图文笔记自动发布出去（场景 B 用，经自建 nbdpsy-api 服务） | 可选 | 找管理员在管理后台「博客 → 小红书运营接入」给你生成「运营接入配置包」（含此凭据与你被授权的账号） | 把接入包整段发给 AI 一键导入即可；**不配也没关系**，小红书笔记改成 AI 备好文案与图、你手动粘贴上传 |
+| `NBDPSY_WECHAT_API_KEY` | 授权 AI 操作微信服务号：排版发文、定时发布、群发、装修菜单、看数据（经 NBDpsy 生产后端 `database.nbdpsy.com`；微信的 AppSecret 只在服务器上，不会下发到你电脑） | 可选 | 找管理员在管理后台「博客 → API Keys → 生成凭据配置包」时**勾选微信服务号权限** | 把配置包整段发给 AI 一键导入即可；**不配也没关系**，只是无法操作服务号 |
 | 即梦（dreamina）登录 | 让 AI 能调用即梦 Seedance 生成视频画面，消耗你的即梦会员积分（场景 D 用） | 仅"出视频"时需要 | 用你已有的抖音 App 账号，不需要单独申请 key | AI 需要时会自动帮你打开浏览器登录页（无屏服务器上给你一张二维码图片），你只需用抖音 App 扫码或点确认一次；登录状态只存在你这台电脑本地 |
 
 **存放位置与安全性**：以上凭据只会存进你电脑本地的用户级文件（Linux/macOS 是 `~/.config/nbdpsy/secrets.env`，Windows 是 `%APPDATA%\nbdpsy\secrets.env`），这个文件**在所有代码仓库之外，绝不会被提交进 Git**。AI 只会告诉你某项"已配置"，**永远不会把你填过的真实值念出来或回显给你或任何人**。
