@@ -1058,8 +1058,12 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
      发，或让运营在小红书 App 内核实该账号状态**——不要重扫码（cookie 是好的）、不要改脚本重发
      （重发也发不出，反而是更强的高频封号信号）。
    - `error` 提示 cookie 失效/登录 → 按「小红书账号接入与管理」一节走：`--check-cookie` 验活、
-     `--extension-info` + 无痕窗扫码 + `--wait-login` 重登（五态中 `error` 是基础设施失败
+     `--extension-info` + 无痕窗扫码 + `--wait-login` 重登（六态中 `error` 是基础设施失败
      ≠ cookie 失效，别急着让人重登）。
+   - 账号 `cookie_status=restricted` → **被小红书挂了风控验证墙，不是登录态失效**（cookie 好好的，
+     重扫码治不好），也不同于上一条的「禁发笔记处罚」。让运营**用手机小红书 App 扫码验证身份**后
+     重新检测；提示「请求太频繁」就先晾一阵别再操作该号。`--self-check` 会把这类号单列在
+     `restricted` 字段里。
 4. 发布成功后把每篇的 `note_url` 汇总回报运营。
 5. **发错了 / 要改时间**：`--list-jobs` 查到 pending 任务后，用 `--reschedule <id> --schedule <新时间|now>`
    改定时（`now`=转立即发）或 `--cancel <id>` 撤稿——**仅 pending 任务有效**，已在发/已终态改不动。
@@ -1170,8 +1174,10 @@ python3 {SKILL_DIR}/scripts/publish_note.py --self-check
    （重登旧号加 `--account-id <id>`）。`done=true` 即完成；新号记得让系统管理员（管理后台）授权给这位运营
    （首次导入者自动有权）。
 4. 验活兜底：`python3 {SKILL_DIR}/scripts/publish_note.py --check-cookie <账号名或id>`——
-   五态里 `valid` 才算好；`invalid` 重新扫码；`captcha` 要人工过验证码；
-   **`error` 是服务端基础设施失败 ≠ cookie 失效，别让运营白扫一遍，稍后重测**。
+   六态里 `valid` 才算好；`invalid` 重新扫码；`captcha` 要人工过验证码；
+   **`error` 是服务端基础设施失败 ≠ cookie 失效，别让运营白扫一遍，稍后重测**；
+   **`restricted` 是账号被挂了风控验证墙**（cookie 好好的，重扫码没用）——要运营用手机小红书 App
+   扫码验证身份后重新检测。
 
 ### 用某个账号打开小红书（人工运营场景）
 

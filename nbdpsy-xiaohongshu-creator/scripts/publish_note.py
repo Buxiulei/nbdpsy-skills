@@ -276,7 +276,9 @@ def list_accounts(api_base: str, key: str):
 
 
 def resolve_account(api_base: str, key: str, account: str):
-    """--account 支持数字 id 或 名称/昵称 精确匹配；歧义/未命中时列出可选项。"""
+    """--account 支持数字 id 或 名称/昵称 精确匹配；歧义/未命中时列出可选项。
+    restricted 与 invalid 不是一回事：前者 cookie 好好的，是账号被小红书挂了风控验证墙，
+    催人重新扫码登录没用（也治不好），得用手机小红书 App 扫码验证身份。"""
     if account.isdigit():
         return int(account), account, None
     accounts = list_accounts(api_base, key)
@@ -286,6 +288,10 @@ def resolve_account(api_base: str, key: str, account: str):
         warn = None
         if a.get("cookie_status") == "invalid":
             warn = f"账号「{account}」cookie 已失效，发布大概率失败，先用 chrome 插件重新扫码登录"
+        elif a.get("cookie_status") == "restricted":
+            warn = (f"账号「{account}」被小红书挂了风控验证墙（cookie 没失效，重新扫码登录也没用），"
+                    "发布会失败：让运营用手机小红书 App 扫码验证身份后重新检测；"
+                    "若提示『请求太频繁』先晾一阵别再操作该号")
         return a["id"], a["name"] or account, warn
     avail = "、".join(f'{a["name"]}(id={a["id"]})' for a in accounts) or "（无可用账号）"
     raise ValueError(f"账号「{account}」{'匹配到多个' if hits else '不存在或未授权'}；可用：{avail}")
@@ -322,7 +328,9 @@ def wait_login(api_base: str, key: str, since: str, account_id=None,
 def check_cookie(api_base: str, key: str, account_id: int,
                  timeout: float = 120, interval: float = 4.0) -> dict:
     """触发 cookie 活性检测（202 拿 check_id）并轮询到结果。
-    五态：checking/valid/invalid/captcha/error——error 是基础设施失败≠cookie 失效。"""
+    六态：checking/valid/invalid/captcha/error/restricted——error 是基础设施失败≠cookie 失效；
+    restricted 是账号被小红书挂了风控验证墙（cookie 好好的），重新扫码登录治不好，
+    要运营用手机小红书 App 扫码验证身份后重新检测。"""
     resp = send_request("POST", f"{api_base}/api/accounts/{account_id}/cookie-checks", key)
     if resp.status_code >= 400:
         raise ValueError(api_error(resp))
@@ -360,21 +368,30 @@ def self_check(api_base: str, key: str) -> dict:
                 "identity": {"name": identity.get("name"), "role": identity.get("role")},
                 "hint": "身份验证通过但拉账号列表失败，多半是瞬时故障，稍后重跑 --self-check"}
     # cookie_status: valid=可发；unknown=没验过（不算失败，发布前 --check-cookie 一下）；
-    # invalid/captcha=需重新扫码；error=检测本身失败≠cookie 失效，稍后复验（不催重扫）
+    # invalid/captcha=需重新扫码；error=检测本身失败≠cookie 失效，稍后复验（不催重扫）；
+    # restricted=cookie 好好的但账号被小红书挂了风控验证墙——催重扫没用，得手机 App 扫码验人
     usable = [a for a in accounts if a.get("cookie_status") in ("valid", "unknown")]
     need_login = [a for a in accounts if a.get("cookie_status") in ("invalid", "captcha")]
+    restricted = [a for a in accounts if a.get("cookie_status") == "restricted"]
     ready = bool(accounts) and bool(usable)
+    verdict = (
+        "接入正常，可以开始发布" if ready
+        else "已连上但没有被授权任何账号（找管理员在后台『调配账号』补授）" if not accounts
+        else "没有可用账号：登录态失效的重新扫码，cookie 检测异常的稍后 --check-cookie 复验"
+    )
+    if restricted:
+        # 单列一句，否则这些号既不在 usable 也不在 need_relogin，运营只会看到"号少了"却查不出原因
+        verdict += (f"；另有 {len(restricted)} 个号被小红书挂了风控验证墙（cookie 没失效，"
+                    "重新扫码登录治不好）：让运营用手机小红书 App 扫码验证身份后重新检测，"
+                    "提示『请求太频繁』就先晾一阵别再操作该号")
     return {
         "ok": True, "ready": ready,
         "identity": {"name": identity.get("name"), "role": identity.get("role")},
         "account_count": len(accounts),
         "accounts": accounts,
         "need_relogin": [a.get("name") or a.get("id") for a in need_login],
-        "verdict": (
-            "接入正常，可以开始发布" if ready
-            else "已连上但没有被授权任何账号（找管理员在后台『调配账号』补授）" if not accounts
-            else "没有可用账号：登录态失效的重新扫码，cookie 检测异常的稍后 --check-cookie 复验"
-        ),
+        "restricted": [a.get("name") or a.get("id") for a in restricted],
+        "verdict": verdict,
     }
 
 

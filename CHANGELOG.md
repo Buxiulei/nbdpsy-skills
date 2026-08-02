@@ -9,6 +9,26 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.52.1] — 2026-08-02
+
+### 补上 `cookie_status=restricted`：发布链路此前完全不认它
+
+对着 server 侧的端点变更清单逐条回核 v1.52.0，发现 D 段的枚举新增只接了一半——`note_ops.py`
+认 `restricted`，**`publish_note.py` 不认**。后果是：
+
+- `resolve_account` 只对 `invalid` 给警示，被挂验证墙的号照发不误，failed 了也不知道为什么；
+- `self_check` 里 `restricted` 既不在 `usable` 也不在 `need_relogin`，**从判定里静默消失**——
+  运营只看到"可用号少了"，查不出原因，或者被别的分支文案误导去重新扫码（治不好）。
+
+现在：`resolve_account` 单独给 restricted 警示；`self_check` 新增 `restricted` 字段并在
+`verdict` 里点名。文案统一强调**这不是登录态失效**——cookie 好好的，重新扫码登录治不好，
+得让运营用手机小红书 App 扫码验证身份；提示「请求太频繁」就先晾着。
+
+顺带把四处写死的「五态」全部改成六态（`publish_note.py` docstring、xhs SKILL.md 两处、
+guide SKILL.md 验活一节）——同一个枚举散在多处平行文案里，改一处等于没改。
+
+---
+
 ## [1.52.0] — 2026-08-02
 
 ### 接上 nbdpsy-server 的笔记全量能力：发布之后的那一半

@@ -850,3 +850,32 @@ def test_extras_warnings_flag_precedence_and_activity_side_effect():
     w2 = publish_note.extras_warnings({"activity_id": "43561"})
     assert any("正文" in x and "话题" in x for x in w2)
     assert publish_note.extras_warnings({"collection_id": "c1"}) == []
+
+
+# ---- cookie_status=restricted：风控验证墙，与 cookie 失效不是一回事 ----
+
+def test_resolve_account_restricted_warns_about_app_verification(monkeypatch):
+    """restricted = cookie 好好的但账号被挂了验证墙，催运营重新扫码登录治不好。"""
+    import publish_note
+    monkeypatch.setattr(publish_note, "list_accounts", lambda *a: [
+        {"id": 5, "name": "聊创伤", "nickname": "聊创伤", "cookie_status": "restricted"}])
+    _, _, warn = publish_note.resolve_account("https://x", "k", "聊创伤")
+    assert "验证墙" in warn and "手机" in warn and "重新扫码登录也没用" in warn
+
+
+def test_self_check_lists_restricted_separately(monkeypatch):
+    """restricted 既不在 usable 也不在 need_relogin——不单列的话运营只看到号少了、查不出原因。"""
+    import publish_note
+    accounts = [{"id": 1, "name": "主号", "cookie_status": "valid"},
+                {"id": 5, "name": "聊创伤", "cookie_status": "restricted"}]
+
+    def fake(method, url, key, payload=None, timeout=60, files=None):
+        return _Resp(200, {"name": "运营", "role": "operator"} if url.endswith("/whoami")
+                     else {"accounts": accounts})
+
+    monkeypatch.setattr(publish_note, "send_request", fake)
+    report = publish_note.self_check("https://x", "k")
+    assert report["ready"] is True                      # 还有一个可用号
+    assert report["restricted"] == ["聊创伤"]
+    assert report["need_relogin"] == []                 # 别把它算成"要重新扫码"
+    assert "验证墙" in report["verdict"] and "手机" in report["verdict"]
