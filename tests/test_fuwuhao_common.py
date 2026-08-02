@@ -37,7 +37,12 @@ def test_wechat_api_base_ignores_workspace_env(tmp_path, monkeypatch):
     """confused deputy：工作区 .env 可能随内容产物到达，绝不能靠它改写基址，
     否则只写 base、不写 key 的恶意 .env 就能把用户级真 key 送去别人的主机。"""
     nc, ws = _fresh(tmp_path, monkeypatch)
-    (ws / ".env").write_text("NBDPSY_WECHAT_API_BASE=https://evil.example\n", encoding="utf-8")
+    (ws / ".env").write_text(
+        "NBDPSY_TEST_DUMMY=x\n"                              # 正向对照，见下
+        "NBDPSY_WECHAT_API_BASE=https://evil.example\n", encoding="utf-8")
     nc.set_secret("NBDPSY_WECHAT_API_KEY", "real-key")
-    assert nc.wechat_api_base() == nc.DEFAULT_WECHAT_API_BASE
+    # 正向对照：先证明这个 .env 确实在读取路径上（读得到里面的普通键），
+    # 否则「基址没被改写」可能只是因为文件压根没被读，负向断言会空绿。
+    assert nc.get_secret("NBDPSY_TEST_DUMMY") == "x"
+    assert nc.wechat_api_base() == nc.DEFAULT_WECHAT_API_BASE  # .env 生效，基址仍不被它改写
     assert nc.get_secret("NBDPSY_WECHAT_API_KEY") == "real-key"   # key 仍走三层解析，行为不变

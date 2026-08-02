@@ -54,7 +54,17 @@ description: 运营 NBDpsy 微信服务号（公众号）：把长文/分发稿�
 ### ⑤ 群发 / 删除**失败不自动重试**——先查台账核实
 
 这两个动作**非幂等**：重试可能变成"发了两次"（白烧一次配额）或"删了不该删的"。
-脚本失败时会回 `outcome: unknown`（而不是 failed），意思是**结果未确认**。此时：
+所以脚本按**请求到底有没有发出去**分成两种败相，**处置完全不同**（这也是脚本侧的实现契约）：
+
+| 败相 | 什么情况 | 信封 / 退出码 | 怎么处置 |
+|---|---|---|---|
+| **结果未确认** | **请求已发出**之后出的岔子：读响应超时、连接被断、服务端 5xx、响应解析不了 | `outcome: unknown`，**exit 0** | **先查台账核实**，见下面三步 |
+| **确定没发出去** | **请求根本没发出**：鉴权 401/403、参数校验没过、连接就没建立、缺凭据 | `outcome: failed`，**exit 1** | 按错误提示**改配置/改参数**再来。配置错误**绝不静默通过** |
+
+**为什么要分**：请求发出去了才有"可能已生效"的风险，这时重试是危险的；请求压根没发出去则一定没生效，
+含糊成 unknown 只会让运营去查一个必然为空的台账，还把 401 这种明摆着的配置错误变成"可能成功了"。
+
+`outcome: unknown` 时（**只有这一种**要查台账）：
 
 1. **先** `article_ops.py --ledger` / `schedule_ops.py --list` 查真实状态；
 2. 确认**确实没生效**，再问过运营、手动重发一次；
@@ -77,11 +87,14 @@ description: 运营 NBDpsy 微信服务号（公众号）：把长文/分发稿�
 ## 凭据（`NBDPSY_WECHAT_API_KEY`，与博客发文那把是两把独立的 key）
 
 ```bash
-python3 COMMON secret get NBDPSY_WECHAT_API_KEY     # 有值即就绪（只回是否存在，不回显真值）
+python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；输出键名 = 缺
 ```
 
-- 报 `MISSING:` → 找管理员要「凭据配置包」，生成时**勾选微信服务号权限**（管理员入口：
-  `manage.nbdpsy.com` → 博客 → API Keys → 生成凭据配置包）。拿到后
+⛔ **绝不用 `secret get` 探测凭据**——它命中时会把**密钥原值打进 stdout 与对话转录**。
+探测在不在，一律用 `secret ensure`（只回缺哪些键、永不回显值）。
+
+- 输出了 `NBDPSY_WECHAT_API_KEY`（= 缺）→ 找管理员要「凭据配置包」，生成时**勾选微信服务号权限**
+  （管理员入口：`manage.nbdpsy.com` → 博客 → API Keys → 生成凭据配置包）。拿到后
   `python3 COMMON secret import <配置包文件>` 一键导入。
 - `403` / 提示缺 scope → key 有效但**没勾微信服务号权限**（`wechat:operate`），请管理员补勾，别换 key。
 - `401` → key 失效或已轮换，请管理员重发配置包。
@@ -95,7 +108,7 @@ python3 COMMON secret get NBDPSY_WECHAT_API_KEY     # 有值即就绪（只回�
 ## 完整流程（发一篇文章的主线，每步都有验证闸门）
 
 ```
-0. 环境与凭据自检          → 验证：secret get NBDPSY_WECHAT_API_KEY 有值；网络不通先 sandbox allow
+0. 环境与凭据自检          → 验证：secret ensure NBDPSY_WECHAT_API_KEY 无输出（有输出=缺，先去配）；网络不通先 sandbox allow
 1. 判子场景                → 验证：五个子场景已对号入座；涉及群发/删除的，红线①/②已当面复述并拿到确认
 2. 取内容                  → 验证：拿到本地 md 路径（优先 nbdpsy-seo-artical-creator 的长文/公众号分发稿）
 3. 排版编译（MD2WX）       → 验证：产物 HTML 无 class/<style>/<script>/iframe/position；图片全是 mmbiz 域名；封面拿到 thumb media_id
@@ -187,7 +200,8 @@ python3 ART --mass-send --ledger-id <台账 id> --confirm --note "运营 XX 确�
 - `--note` 是**问责留痕**（谁拍板），必填，写清是谁在什么场景下拍的板。
 - 定时群发同理走 `SCHED --add --job-type mass_send ... --confirm --note "..."`，入队时校验一次配额、
   执行时再校验一次。
-- 失败一律按红线⑤处理：**先查台账，绝不直接重试**。
+- 失败按红线⑤分两种处置：`outcome: unknown`（请求已发出、结果未确认）→ **先查台账，绝不直接重试**；
+  `outcome: failed`（请求根本没发出，如 401/403/参数不合法）→ 改完配置或参数再来，不用查台账。
 - 若服务号开了「API 群发保护」，微信会回 `45028`——需要管理员在手机上 30 分钟内确认，**这不是失败**，
   告诉运营去确认即可。
 
@@ -249,7 +263,9 @@ python3 ART --delete-published --article-id <article_id> --confirm
 | `53501` | 发布过于频繁 | 隔开时间再发，别改成定时任务硬怼 |
 | `45028` | 群发保护，需管理员手机确认 | **不是失败**：让管理员 30 分钟内在手机上确认 |
 
-⛔ 看到错误码**不要自己猜着改参数重试**——非幂等动作（群发/删除/发布）一律先查台账。
+⛔ 看到错误码**不要自己猜着改参数连着重试**——先按上表处置（`45028` 尤其不是失败）。
+非幂等动作（发布/群发/删除）**只有回 `outcome: unknown` 时才去查台账**（红线⑤），
+`failed` 是请求压根没发出去，改配置/参数即可。
 
 ---
 
