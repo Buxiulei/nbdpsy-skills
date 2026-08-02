@@ -311,7 +311,12 @@ def main(argv=None):
 
     def action():
         api_base, key = wechat_api.credentials(args.api_base)
-        return chosen[0](args, api_base, key)
+        payload, code = chosen[0](args, api_base, key)
+        # warnings 同时打 stderr（与 stats_ops 一致）：时间类提醒（如「离现在只有 30 秒，
+        # 队列每分钟扫一次可能错过这轮」）埋在 JSON 里最容易被略过，而它正是要当面说的那句
+        for w in payload.get("warnings") or []:
+            wechat_api.warn(f"⚠ {w}")
+        return payload, code
 
     return wechat_api.run(action)
 

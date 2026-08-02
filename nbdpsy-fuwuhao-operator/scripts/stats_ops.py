@@ -9,9 +9,15 @@
     如实说「明天才有数据」，⛔ 别拿别的指标凑数糊弄过去。
   · **新口径数据只有 2025-11-01 起**的，更早的区间根本没有快照，不是故障。
 
+口径：全部走**新版「发表内容」系列**接口的快照（getbizsummary / getarticleread /
+getarticleshare / getarticletotaldetail，2025-11-01 起）。它与旧的「图文」系列
+（getuserread / getusershare / getarticletotal）**字段名完全不同**，别拿旧字段表来读新数据。
+新口径**有**阅读完成率 `read_finish_rate`（微信直接给的小数），单篇还有在看/点赞/评论/
+平均阅读时长等；单篇明细只追踪**发布后 30 天**。
+
 用法:
     python3 stats_ops.py --overview --from 2026-07-01 --to 2026-07-31   # 涨粉 + 全号阅读概况
-    python3 stats_ops.py --article <msgid> [--from ... --to ...]        # 单篇逐日序列 + 转化率
+    python3 stats_ops.py --article <msgid> [--from ... --to ...]        # 单篇逐日 + 完成率 + 转化率
     python3 stats_ops.py --export --from ... --to ... [--stat-type ...] [--out 文件.json]
 
 输出: stdout 纯 JSON（查询类不带 outcome，exit 0；`--export` 是写文件，回 done 信封）。
@@ -38,13 +44,15 @@ CN_TZ = timezone(timedelta(hours=8))     # 北京时间固定 +08:00（1991 年�
 DATA_START = date(2025, 11, 1)           # 新口径数据起点，更早的区间没有快照
 SNAPSHOT_AT = "08:30"                    # 服务端每日快照时刻（抓前一天）
 
-# 快照 stat_type（与服务端每日快照任务落库的取值一致）
+# 快照 stat_type：全部取**新口径「发表内容」系列**（2025-11-01 起，与 DATA_START 同源）。
+# ⚠️ 别和旧的「图文」系列（getuserread / getusershare / getarticlesummary / getarticletotal）
+# 搞混——两套接口的字段名完全不同，拿旧字段表去解析新数据会整篇算成空。
 TYPE_USER = "getusersummary"             # 用户增减：new_user / cancel_user
 TYPE_CUMULATE = "getusercumulate"        # 累计关注
-TYPE_BIZ = "getbizsummary"               # 全号图文阅读/分享汇总
-TYPE_ARTICLE_READ = "getarticleread"
-TYPE_ARTICLE_SHARE = "getarticleshare"
-TYPE_ARTICLE_DETAIL = "getarticletotaldetail"   # 单篇逐日明细
+TYPE_BIZ = "getbizsummary"               # 发表内容概况总数据
+TYPE_ARTICLE_READ = "getarticleread"     # 发表内容每日阅读
+TYPE_ARTICLE_SHARE = "getarticleshare"   # 发表内容每日分享
+TYPE_ARTICLE_DETAIL = "getarticletotaldetail"   # 发表内容发表详细数据（单篇逐日 detail_list）
 ALL_TYPES = (TYPE_USER, TYPE_CUMULATE, TYPE_BIZ,
              TYPE_ARTICLE_READ, TYPE_ARTICLE_SHARE, TYPE_ARTICLE_DETAIL)
 
@@ -52,37 +60,66 @@ ALL_TYPES = (TYPE_USER, TYPE_CUMULATE, TYPE_BIZ,
 # 微信加字段时不至于静默漏掉，只是没有中文名。
 FIELD_LABELS = {
     "new_user": "新增关注人数", "cancel_user": "取消关注人数", "cumulate_user": "累计关注人数",
-    "int_page_read_user": "图文页阅读人数", "int_page_read_count": "图文页阅读次数",
-    "ori_page_read_user": "原文页阅读人数", "ori_page_read_count": "原文页阅读次数",
-    "share_user": "分享转发人数", "share_count": "分享转发次数",
-    "add_to_fav_user": "收藏人数", "add_to_fav_count": "收藏次数",
-    "target_user": "送达人数",
+    # 新口径「发表内容」系列
+    "read_user": "阅读人数", "share_user": "分享转发人数", "collection_user": "收藏人数",
+    "zaikan_user": "在看人数", "like_user": "点赞人数", "comment_count": "评论条数",
+    "read_subscribe_user": "阅读后关注人数",
+    "read_finish_rate": "阅读完成率", "read_delivery_rate": "送达率",
+    "read_avg_activetime": "平均阅读时长", "read_jump_position": "平均跳出位置",
 }
-# 维度/标识字段：它们不可加，求和出来是垃圾数（user_source 尤其典型——它是来源枚举值不是人数）
+# 维度/标识字段：不可加，求和出来是垃圾数（user_source 尤其典型——它是来源枚举值不是人数）
 NON_METRIC = {"ref_date", "stat_date", "msgid", "user_source", "title", "stat_type",
               "publish_date", "is_delay", "index", "id"}
 
+# 单篇（getarticletotaldetail 的 detail_list）字段，分两类：
+# **可加的计数**——逐日相加得区间合计。
+ARTICLE_COUNT_FIELDS = ("read_user", "share_user", "collection_user", "zaikan_user",
+                        "like_user", "comment_count", "read_subscribe_user")
+# **不可加的费率与均值**——率没有可加性、平均值相加更没有意义，逐日相加出来的数
+# 和「把 user_source 加起来」是同一类垃圾。这类字段走加权均值路径，绝不进 add_metrics。
+ARTICLE_RATE_FIELDS = ("read_finish_rate", "read_delivery_rate")
+ARTICLE_AVG_FIELDS = ("read_avg_activetime", "read_jump_position")
+NON_ADDITIVE = set(ARTICLE_RATE_FIELDS) | set(ARTICLE_AVG_FIELDS)
+NON_METRIC |= NON_ADDITIVE               # 求和路径上一律挡住，不只是 --article 这一条线
+
 # 概况关心的字段（缺了要点名，不能当 0）
 FOLLOWER_FIELDS = ("new_user", "cancel_user")
-ENGAGEMENT_FIELDS = ("int_page_read_user", "int_page_read_count", "ori_page_read_user",
-                     "ori_page_read_count", "share_user", "share_count",
-                     "add_to_fav_user", "add_to_fav_count")
+ENGAGEMENT_FIELDS = ("read_user", "share_user", "collection_user",
+                     "zaikan_user", "like_user", "comment_count")
 
 MAX_DAILY_ROWS = 62      # 逐日明细超过这个天数就省略：糊满几百行对判断没有帮助
 
-# 微信 datacube **没有**「读完率/完读率」这个字段。公众平台后台那个数取不到，
-# 这里只给数据算得出来的转化率，并且明说它不是读完率——冒充一个不存在的指标是最坏的糊弄。
-NO_FINISH_RATE = ("微信 datacube 接口**不提供**「读完率/完读率」（公众平台后台看到的那个数取不到）。"
-                  "下面 rates 给的是能算出来的转化率：送达→阅读、阅读→点开原文、阅读→分享。"
-                  "⛔ 别把它们当读完率报给运营。")
+# 新口径**有**阅读完成率（read_finish_rate），是微信直接给的小数，不是这里算出来的。
+# 它与下面 rates 里的转化率是两回事，输出时分开放，别混着念。
+FINISH_RATE_NOTE = ("`read_finish_rate`（阅读完成率）是**微信直接给的**字段，逐日在 daily 里、"
+                    "区间值在 averages 里（**按阅读人数加权，不是求和**——费率相加没有意义）。"
+                    "rates 里那几个是另一回事：由人数字段现算的转化率。两者别混着念。")
+# 新口径的单篇明细只追踪发布后 30 天，老文章查空是**合法结果**，不是 msgid 写错。
+TRACK_WINDOW_NOTE = ("这个接口每篇只追踪**发布后 30 天**：更早发的文章查不到数据属正常，"
+                     "不是故障、也不是 msgid 写错——别让运营以为数据丢了。")
 
 
 # ── 纯计算（不碰网络，单测直接喂 rows） ──────────────────────────────────
+# 嵌套明细的键名：`detail_list` 是新口径 getarticletotaldetail 官方钉死的那层
+# （形状 `{"list":[{"msgid":..,"title":..,"detail_list":[逐日...]}]}`）；`details` 是旧接口的叫法，一并收。
+NESTED_KEYS = ("detail_list", "details")
+
+
+def unwrap(item):
+    """一条记录里若嵌着逐日明细数组，摊平成它的子条目；否则原样单条返回。"""
+    for key in NESTED_KEYS:
+        nested = item.get(key)
+        if isinstance(nested, list):
+            return [x for x in nested if isinstance(x, dict)]
+    return [item]
+
+
 def iter_records(rows):
     """快照行 → 逐条记录 `(快照日期, 记录 dict)`。
 
     payload 的形状以服务端快照任务落库为准，这里把几种都收下：
-    `{"list":[...]}`（datacube 原始响应）/ `{"details":[...]}`（单篇总数据）/ 裸数组 / 单条 dict。
+    `{"list":[{...,"detail_list":[逐日]}]}`（新口径原始响应，**两层**）/ `{"detail_list":[...]}` /
+    `{"details":[...]}` / 裸数组 / 单条 dict。
     真出现认不出来的形状时，结果是「有快照行但一个字段都没汇总到」——调用方据此报
     「有 N 行快照却找不到字段」的警告，**不会静默变成 0**。
     """
@@ -91,16 +128,16 @@ def iter_records(rows):
             continue
         payload = row.get("payload")
         if isinstance(payload, dict):
-            items = payload.get("list") or payload.get("details") or [payload]
+            outer = payload["list"] if isinstance(payload.get("list"), list) else [payload]
         elif isinstance(payload, list):
-            items = payload
+            outer = payload
         else:
             continue
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if isinstance(item, dict):
-                yield row.get("ref_date"), item
+        for item in outer:
+            if not isinstance(item, dict):
+                continue
+            for record in unwrap(item):
+                yield row.get("ref_date"), record
 
 
 def add_metrics(bucket: dict, item: dict):
@@ -154,6 +191,32 @@ def pick(totals: dict, fields):
             picked[f] = None
             missing.append(f)
     return picked, missing
+
+
+def weighted_mean(records, field, weight_field="read_user"):
+    """费率/均值字段的区间汇总：**按阅读人数加权，绝不求和**。
+
+    「三天的完成率 40%/50%/60%」加起来是 150%——这类字段求和出来的数看着像个指标、
+    其实是垃圾。而简单平均也会让一篇只有 3 个人读的日子和上万人的日子等权，所以按当天
+    阅读人数加权。返回 `{"value","days","how"}`；该字段一天都没出现过时回 None。
+    没有可用权重时退回简单平均，并在 `how` 里**如实写明用的是哪种算法**——
+    换了算法不吭声，运营看到的就是一个来路不明的数。
+    """
+    pairs = [(r[field], r.get(weight_field)) for r in records
+             if isinstance(r.get(field), (int, float)) and not isinstance(r.get(field), bool)]
+    if not pairs:
+        return None
+    weights = [w if isinstance(w, (int, float)) and not isinstance(w, bool) and w > 0 else 0
+               for _, w in pairs]
+    total = sum(weights)
+    weight_label = FIELD_LABELS.get(weight_field, weight_field)
+    if total:
+        value = sum(v * w for (v, _), w in zip(pairs, weights)) / total
+        how = f"按{weight_label}加权"
+    else:
+        value = sum(v for v, _ in pairs) / len(pairs)
+        how = f"简单平均（这段区间没有可用的{weight_label}做权重）"
+    return {"value": round(value, 4), "days": len(pairs), "how": how}
 
 
 def ratio(numerator, denominator):
@@ -211,14 +274,24 @@ def require_range(args, who):
 
 
 def range_warnings(d_from, d_to):
-    """把「查不到不是故障」的两种情形提前说清楚。"""
+    """把「查不到不是故障」的两种情形提前说清楚。
+
+    **区间给不给都要说**：不给区间时同样可能撞上数据起点与 T+1，不提前讲，
+    「查不到」就会被当成「没人看」。
+    """
     out = []
     now = datetime.now(CN_TZ)
     today = now.date()
-    if d_from < DATA_START:
+    if d_from is None:
+        out.append(f"没给 --from：查的是全部快照，而新口径数据**只有 {DATA_START} 起**的，"
+                   "更早的根本没有，查不到不是故障。")
+    elif d_from < DATA_START:
         out.append(f"新口径数据只有 {DATA_START} 起的：{d_from} 到 {DATA_START} 这段**根本没有快照**，"
                    "查不到不是故障。")
-    if d_to >= today:
+    if d_to is None:
+        out.append(f"没给 --to：微信数据 **T+1**，今天的要等明天 {SNAPSHOT_AT} 快照抓完才有。"
+                   "运营问「今天发的怎么样」→ 如实说明天才有数据，⛔ 别拿别的指标凑数。")
+    elif d_to >= today:
         out.append(f"区间含今天（{today}）：微信数据 **T+1**，今天的要等明天 {SNAPSHOT_AT} 快照抓完才有。"
                    "运营问「今天发的怎么样」→ 如实说明天才有数据，⛔ 别拿别的指标凑数。")
     elif d_to == today - timedelta(days=1) and now.strftime("%H:%M") < SNAPSHOT_AT:
@@ -302,10 +375,16 @@ def do_overview(args, api_base, key):
 
 # ── --article ──────────────────────────────────────────────────────────
 def article_title(rows):
+    """标题挂在 detail_list 的**外层**（`{"list":[{"title":..,"detail_list":[...]}]}`），
+    所以这里不能只看 payload 顶层。"""
     for row in rows:
         payload = row.get("payload") if isinstance(row, dict) else None
-        if isinstance(payload, dict) and payload.get("title"):
-            return payload["title"]
+        if not isinstance(payload, dict):
+            continue
+        outer = payload["list"] if isinstance(payload.get("list"), list) else [payload]
+        for item in outer:
+            if isinstance(item, dict) and item.get("title"):
+                return item["title"]
     return None
 
 
@@ -317,42 +396,52 @@ def do_article(args, api_base, key):
     d_to = parse_date(args.date_to, "--to") if args.date_to else None
     if d_from and d_to and d_from > d_to:
         raise OpFailed(f"--from（{d_from}）比 --to（{d_to}）还晚，是不是写反了？")
-    warnings = range_warnings(d_from, d_to) if (d_from and d_to) else []
+    # 不给区间时**照样**要说数据起点与 T+1：不说的话「查不到」就会被当成「没人看」
+    warnings = range_warnings(d_from, d_to)
+    warnings.append(TRACK_WINDOW_NOTE)
 
     rows = fetch_stats(api_base, key, TYPE_ARTICLE_DETAIL, args.timeout, d_from, d_to, msgid)
     series = latest_series(rows)
     totals = {}
     for item in series:
-        add_metrics(totals, item)
+        add_metrics(totals, item)          # 费率/均值在 NON_METRIC 里，不会被加进来
 
     if not rows:
-        warnings.append(f"msgid={msgid} 一行快照都没有：可能这篇**没有群发过**（只发布不群发的文章"
-                        "没有单篇群发数据）、msgid 写错了、或者才发出去不到一天（微信 T+1）。"
-                        "⛔ 别把「查不到」说成「没人看」。")
+        warnings.append(f"msgid={msgid} 一行快照都没有。四种可能，**先别下结论**："
+                        "①这篇**发布超过 30 天**了（接口只追踪发布后 30 天，属正常）；"
+                        "②这篇**没有群发过**（只发布不群发的文章没有单篇数据）；"
+                        "③才发出去不到一天（微信 T+1）；④msgid 写错了"
+                        "（台账里那条的 msg_id 才是）。⛔ 别把「查不到」说成「没人看」。")
 
-    known = ("target_user", "int_page_read_user", "int_page_read_count",
-             "ori_page_read_user", "ori_page_read_count", "share_user", "share_count",
-             "add_to_fav_user", "add_to_fav_count")
-    picked, missing = pick(totals, known)
+    picked, missing = pick(totals, ARTICLE_COUNT_FIELDS)
+    # 费率与均值单列：它们是微信直接给的，按阅读人数加权汇总，**不求和**
+    averages = {f: weighted_mean(series, f)
+                for f in ARTICLE_RATE_FIELDS + ARTICLE_AVG_FIELDS}
+    # 现算的转化率，与上面的 read_finish_rate 是两回事。新口径不给送达数与原文页阅读数，
+    # 那两项**置 null 而不是硬凑**——送达情况直接看微信给的 read_delivery_rate。
     rates = {
-        "送达→阅读（人数）": ratio(picked["int_page_read_user"], picked["target_user"]),
-        "阅读→点开原文（人数）": ratio(picked["ori_page_read_user"], picked["int_page_read_user"]),
-        "阅读→分享（人数）": ratio(picked["share_user"], picked["int_page_read_user"]),
+        "阅读→分享（人数）": ratio(picked["share_user"], picked["read_user"]),
+        "阅读→点开原文（人数）": None,
+        "送达→阅读（人数）": None,
     }
-    warnings.append(NO_FINISH_RATE)
+    warnings.append(FINISH_RATE_NOTE)
     if rows and missing:
         warnings.append(missing_warning(missing, TYPE_ARTICLE_DETAIL, len(rows)))
 
     payload = {
         "msgid": msgid, "title": article_title(rows),
         "range": {"from": str(d_from) if d_from else None, "to": str(d_to) if d_to else None},
-        "totals": picked, "rates": rates,
-        "other_fields": other_fields(totals, known),
-        "labels": labels_for(picked),
+        "totals": picked, "averages": averages, "rates": rates,
+        "rates_note": "新口径 detail_list 不给送达数，也没有原文页阅读——「送达→阅读」「阅读→点开原文」"
+                      "**算不出来，故为 null**（没有硬凑）。送达情况看 averages 里的 "
+                      "read_delivery_rate（微信已算好）。",
+        "other_fields": other_fields(totals, ARTICLE_COUNT_FIELDS),
+        "labels": labels_for(picked, averages),
         "daily": series, "days_covered": len(series), "snapshot_rows": len(rows),
         "warnings": warnings,
         "hint": "daily 是这篇的逐日序列（同一天以最新一次快照为准——微信每天回的是整段历史，"
-                "照单累加会把同一天算好几遍）。totals 是逐日相加的区间合计。",
+                "照单累加会把同一天算好几遍）。totals 是逐日相加的区间合计（只含可加的计数）；"
+                "averages 是费率与均值的区间值（加权，见每项的 how）。",
     }
     return payload, 0
 

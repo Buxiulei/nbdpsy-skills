@@ -863,21 +863,52 @@ class Test快照聚合:
         assert picked == {"new_user": 5, "cancel_user": None} and missing == ["cancel_user"]
 
     def test_单篇同一天以最新快照为准(self):
-        """getarticletotal 每天回的是整段历史：照单累加会把同一天算好几遍。"""
+        """getarticletotaldetail 每天回的是整段历史：照单累加会把同一天算好几遍。"""
         rows = [
-            {"ref_date": "2026-07-02", "payload": {"msgid": "1", "title": "标题", "details": [
-                {"stat_date": "2026-07-01", "int_page_read_user": 100}]}},
-            {"ref_date": "2026-07-03", "payload": {"msgid": "1", "title": "标题", "details": [
-                {"stat_date": "2026-07-01", "int_page_read_user": 130},
-                {"stat_date": "2026-07-02", "int_page_read_user": 40}]}},
+            {"ref_date": "2026-07-02", "payload": {"msgid": "1", "title": "标题", "detail_list": [
+                {"stat_date": "2026-07-01", "read_user": 100}]}},
+            {"ref_date": "2026-07-03", "payload": {"msgid": "1", "title": "标题", "detail_list": [
+                {"stat_date": "2026-07-01", "read_user": 130},
+                {"stat_date": "2026-07-02", "read_user": 40}]}},
         ]
         series = ST.latest_series(rows)
         assert [r["stat_date"] for r in series] == ["2026-07-01", "2026-07-02"]
-        assert series[0]["int_page_read_user"] == 130         # 修订后的值，不是 100 也不是 230
+        assert series[0]["read_user"] == 130                  # 修订后的值，不是 100 也不是 230
         totals = {}
         for item in series:
             ST.add_metrics(totals, item)
-        assert totals["int_page_read_user"] == 170
+        assert totals["read_user"] == 170
+
+    def test_新口径两层嵌套list里的detail_list也摊得开(self):
+        """官方形状是 {"list":[{msgid,title,detail_list:[逐日]}]}——只认一层会把整篇算成空。"""
+        rows = [{"ref_date": "2026-07-03", "payload": {"list": [
+            {"msgid": "2247", "title": "CPTSD 是什么", "detail_list": [
+                {"stat_date": "2026-07-01", "read_user": 200},
+                {"stat_date": "2026-07-02", "read_user": 50}]}]}}]
+        assert [r["read_user"] for r in ST.latest_series(rows)] == [200, 50]
+        assert ST.article_title(rows) == "CPTSD 是什么"        # 标题挂在 detail_list 外层
+
+    def test_费率与均值绝不进求和(self):
+        """40%+50%+60%=150% 这种数看着像指标、其实和把 user_source 加起来是同一类垃圾。"""
+        totals = {}
+        for day in ({"read_user": 100, "read_finish_rate": 0.4, "read_avg_activetime": 30},
+                    {"read_user": 300, "read_finish_rate": 0.6, "read_avg_activetime": 50}):
+            ST.add_metrics(totals, day)
+        assert totals == {"read_user": 400}
+        assert "read_finish_rate" in ST.NON_METRIC and "read_avg_activetime" in ST.NON_METRIC
+
+    def test_完成率按阅读人数加权而不是简单平均(self):
+        series = [{"read_user": 100, "read_finish_rate": 0.4},
+                  {"read_user": 300, "read_finish_rate": 0.6}]
+        got = ST.weighted_mean(series, "read_finish_rate")
+        assert got["value"] == 0.55 and got["days"] == 2      # 简单平均会算成 0.5
+        assert "加权" in got["how"]
+
+    def test_没有权重时退回简单平均但如实说明(self):
+        got = ST.weighted_mean([{"read_finish_rate": 0.4}, {"read_finish_rate": 0.6}],
+                               "read_finish_rate")
+        assert got["value"] == 0.5 and "简单平均" in got["how"]
+        assert ST.weighted_mean([{"read_user": 5}], "read_finish_rate") is None
 
     def test_转化率分母缺失或为零时回null(self):
         assert ST.ratio(5, 0) is None and ST.ratio(5, None) is None and ST.ratio(None, 5) is None
@@ -893,13 +924,14 @@ class Test统计CLI:
          "payload": {"list": [{"ref_date": "2026-07-02", "user_source": 0,
                                "new_user": 6, "cancel_user": 4}]}},
     ]}
+    # getbizsummary 同属新口径「发表内容」系列，字段名跟着单篇那套走
     BIZ_ROWS = {"success": True, "items": [
         {"ref_date": "2026-07-01", "stat_type": "getbizsummary",
-         "payload": {"int_page_read_user": 120, "int_page_read_count": 150,
-                     "share_user": 8, "share_count": 11}},
+         "payload": {"read_user": 120, "share_user": 8, "zaikan_user": 14,
+                     "like_user": 11, "comment_count": 2}},
         {"ref_date": "2026-07-02", "stat_type": "getbizsummary",
-         "payload": {"int_page_read_user": 80, "int_page_read_count": 90,
-                     "share_user": 2, "share_count": 3}},
+         "payload": {"read_user": 80, "share_user": 2, "zaikan_user": 6,
+                     "like_user": 4, "comment_count": 1}},
     ]}
 
     def test_overview逐日相加涨粉与阅读(self, net, capsys):
@@ -911,9 +943,9 @@ class Test统计CLI:
         assert "from=2026-07-01" in net.calls[0]["url"] and "to=2026-07-02" in net.calls[0]["url"]
         assert "stat_type=getbizsummary" in net.calls[1]["url"]
         assert data["followers"] == {"new_user": 16, "cancel_user": 6, "net_user": 10}
-        assert data["engagement"]["int_page_read_user"] == 200
-        assert data["engagement"]["share_count"] == 14
-        assert data["engagement"]["add_to_fav_user"] is None          # 没这个字段就是 null
+        assert data["engagement"]["read_user"] == 200
+        assert data["engagement"]["zaikan_user"] == 20
+        assert data["engagement"]["collection_user"] is None          # 没这个字段就是 null
         assert data["range"] == {"from": "2026-07-01", "to": "2026-07-02", "days": 2}
         assert [r["ref_date"] for r in data["daily"]] == ["2026-07-01", "2026-07-02"]
         assert data["daily"][0]["net_user"] == 8
@@ -972,29 +1004,66 @@ class Test统计CLI:
         code, data, _ = run_cli(ST, ["--overview"], capsys)
         assert code == 1 and net.calls == [] and "跨任意区间" in data["error"]
 
-    def test_单篇逐日序列与转化率且不冒充读完率(self, net, capsys):
-        net.serve(FakeResp(200, {"success": True, "items": [
-            {"ref_date": "2026-07-03", "msgid": "2247483647",
-             "payload": {"msgid": "2247483647", "title": "CPTSD 是什么", "details": [
-                 {"stat_date": "2026-07-01", "target_user": 1000, "int_page_read_user": 200,
-                  "int_page_read_count": 260, "ori_page_read_user": 40, "share_user": 20},
-                 {"stat_date": "2026-07-02", "target_user": 0, "int_page_read_user": 50,
-                  "int_page_read_count": 60, "ori_page_read_user": 10, "share_user": 5}]}}]}))
+    # 新口径 getarticletotaldetail 的真实形状：list[] 外层挂 msgid/title，detail_list[] 是逐日
+    ARTICLE_ROWS = {"success": True, "items": [
+        {"ref_date": "2026-07-03", "msgid": "2247483647", "payload": {"list": [
+            {"msgid": "2247483647", "title": "CPTSD 是什么", "detail_list": [
+                {"stat_date": "2026-07-01", "read_user": 200, "share_user": 20,
+                 "collection_user": 12, "zaikan_user": 30, "like_user": 25,
+                 "comment_count": 4, "read_subscribe_user": 7,
+                 "read_finish_rate": 0.4, "read_delivery_rate": 0.82,
+                 "read_avg_activetime": 63.5, "read_jump_position": 0.55},
+                {"stat_date": "2026-07-02", "read_user": 600, "share_user": 5,
+                 "collection_user": 3, "zaikan_user": 8, "like_user": 6,
+                 "comment_count": 1, "read_subscribe_user": 2,
+                 "read_finish_rate": 0.6, "read_delivery_rate": 0.9,
+                 "read_avg_activetime": 71.0, "read_jump_position": 0.6}]}]}}]}
+
+    def test_单篇出新口径计数与完成率(self, net, capsys):
+        net.serve(FakeResp(200, self.ARTICLE_ROWS))
         code, data, err = run_cli(ST, ["--article", "2247483647"], capsys)
         assert code == 0 and "msgid=2247483647" in net.calls[0]["url"]
         assert "stat_type=getarticletotaldetail" in net.calls[0]["url"]
         assert data["title"] == "CPTSD 是什么" and data["days_covered"] == 2
-        assert data["totals"]["int_page_read_user"] == 250
-        assert data["rates"]["送达→阅读（人数）"] == 0.25          # 250/1000
-        assert data["rates"]["阅读→分享（人数）"] == 0.1           # 25/250
-        assert any("不提供" in w and "读完率" in w for w in data["warnings"])
-        assert "读完率" in err
+        assert data["totals"]["read_user"] == 800
+        assert data["totals"]["zaikan_user"] == 38 and data["totals"]["like_user"] == 31
+        assert data["totals"]["comment_count"] == 5
+        # 完成率是微信直接给的字段，按阅读人数加权（简单平均会算成 0.5）
+        assert data["averages"]["read_finish_rate"]["value"] == 0.55
+        assert "加权" in data["averages"]["read_finish_rate"]["how"]
+        assert data["averages"]["read_avg_activetime"]["value"] == round(
+            (63.5 * 200 + 71.0 * 600) / 800, 4)
+        # ⛔ 费率不许出现在求和口径里
+        assert "read_finish_rate" not in data["totals"]
+        assert "read_finish_rate" not in data["other_fields"]
+        assert data["labels"]["read_finish_rate"] == "阅读完成率"
+        assert data["daily"][0]["read_finish_rate"] == 0.4     # 逐日照样看得到
+        assert any("阅读完成率" in w and "不是求和" in w for w in data["warnings"])
+        assert "阅读完成率" in err
 
-    def test_单篇查不到时不许说成没人看(self, net, capsys):
+    def test_算不出来的转化率置null而不是硬凑(self, net, capsys):
+        net.serve(FakeResp(200, self.ARTICLE_ROWS))
+        code, data, _ = run_cli(ST, ["--article", "2247483647"], capsys)
+        assert data["rates"]["阅读→分享（人数）"] == round(25 / 800, 4)
+        assert data["rates"]["送达→阅读（人数）"] is None       # 新口径不给送达数
+        assert data["rates"]["阅读→点开原文（人数）"] is None   # 新口径没有原文页
+        assert "read_delivery_rate" in data["rates_note"]
+
+    def test_没给区间也要说清数据起点与T加一(self, net, capsys):
+        net.serve(FakeResp(200, self.ARTICLE_ROWS))
+        code, data, _ = run_cli(ST, ["--article", "2247483647"], capsys)
+        assert any("2025-11-01" in w for w in data["warnings"])
+        assert any("T+1" in w for w in data["warnings"])
+
+    def test_单篇查不到时先说三十天窗口再说msgid写错(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "items": []}))
         code, data, _ = run_cli(ST, ["--article", "999"], capsys)
-        assert code == 0 and data["totals"]["int_page_read_user"] is None
-        assert any("没有群发过" in w and "别把「查不到」说成「没人看」" in w for w in data["warnings"])
+        assert code == 0 and data["totals"]["read_user"] is None
+        joined = "｜".join(data["warnings"])
+        assert "30 天" in joined and "没有群发过" in joined and "msgid 写错" in joined
+        assert "别把「查不到」说成「没人看」" in joined
+        # 老文章查空是合法结果这句，任何时候都在（不只是查空的时候）
+        assert any("发布后 30 天" in w and "属正常" in w for w in data["warnings"])
 
     def test_单篇缺msgid不发请求(self, net, capsys):
         code, data, _ = run_cli(ST, ["--article", "  "], capsys)
