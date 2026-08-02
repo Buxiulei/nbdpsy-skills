@@ -20,9 +20,11 @@
     python3 article_ops.py --ledger [--limit 20] [--offset 0] [--status published]
     python3 article_ops.py --status --id <台账 id>                   # 单篇终态
 
-    # 群发（高危：不可逆 + 每自然月仅 4 次）
-    python3 article_ops.py --mass-send --ledger-id <台账 id>                 # 只查配额，不发
-    python3 article_ops.py --mass-send --ledger-id <台账 id> --confirm --note "运营XX确认，8月第2条"
+    # 群发（高危：不可逆 + 每自然月仅 4 次）。受众必须明说：--to-all 或 --tag-id 二选一
+    python3 article_ops.py --mass-send --ledger-id <台账 id> --to-all        # 只查配额，不发
+    python3 article_ops.py --mass-send --ledger-id <台账 id> --to-all --confirm \\
+        --note "运营XX确认，8月第2条"
+    python3 article_ops.py --mass-send --ledger-id <台账 id> --tag-id 102 --confirm --note "..."
 
     # 删除已发布（高危：链接立刻失效、阅读数据清零、不可逆）
     python3 article_ops.py --delete-published --article-id <article_id>            # 只打警示
@@ -36,8 +38,9 @@
 
 三条红线在本脚本里的落点:
   · **红线①** 群发不可逆、每自然月仅 4 次：`--mass-send` 不带 `--confirm` 只查配额不发；
-    真发必须带 `--note`（谁拍板的问责留痕）。配额的月计数**只统计经本系统发的**，
-    运营在公众平台后台手动群发过的不计入——复述配额时必须把这句一并说出来。
+    真发必须带 `--note`（谁拍板的问责留痕）。**受众也必须明说**（`--to-all` / `--tag-id` 二选一，
+    没有默认值——默认成全员群发，一次漏填就把不该收到的人全推了）。配额的月计数
+    **只统计经本系统发的**，运营在公众平台后台手动群发过的不计入——复述配额时必须一并说出来。
   · **红线②** 已发布文章微信**不能改**：改 = 删 + 重发 = 原链接立刻失效 + 阅读/在看/分享清零。
     `--delete-published` 不带 `--confirm` 时**一个请求都不发**，只打警示。
   · **红线③** 正文只收 md2wechat.py 编译的产物：`--draft-add/--draft-update` 会扫一遍
@@ -313,9 +316,8 @@ def do_status(args, api_base, key):
 
 
 # ── 群发（高危，红线①）────────────────────────────────────────────────────
-QUOTA_CAVEAT = ("台账的月计数**只统计经本系统发的**：运营若在公众平台后台手动群发过，"
-                "实际剩余次数可能更少——复述配额时必须把这句一并说出来，"
-                "别让运营以为 4 次是精确保证。")
+# 配额话术与受众闸门在 wechat_api 里（定时群发共用同一份，两处抄必分叉）
+QUOTA_CAVEAT = wechat_api.QUOTA_CAVEAT
 
 
 def do_mass_send(args, api_base, key):
@@ -326,20 +328,26 @@ def do_mass_send(args, api_base, key):
         target["media_id"] = args.media_id.strip()
     else:
         raise OpFailed("--mass-send 需要 --ledger-id <台账 id>（推荐）或 --media-id。")
+    # 受众也在本地先过闸：服务端 filter 必填，漏填连配额预检都过不去
+    filter_ = wechat_api.mass_filter(args.to_all, args.tag_id)
+    audience = ("**全部粉丝**" if filter_["is_to_all"]
+                else f"标签分组 tag_id={filter_['tag_id']} 里的粉丝")
 
     if not args.confirm:
-        # 红线警示**先打**：下面那次配额查询万一失败，这两条也照样得让运营看见
+        # 红线警示**先打**：下面那次配额查询万一失败，这几条也照样得让运营看见
         wechat_api.warn("⚠ 这次**没有群发**（缺 --confirm），只查了本月配额。")
-        wechat_api.warn("  · 群发**不可逆**、直接推到每个粉丝的对话框，**每自然月只有 4 次**。")
+        wechat_api.warn(f"  · 收件人是{audience}，群发**不可逆**、直接推到对话框，"
+                        "**每自然月只有 4 次**。")
         wechat_api.warn(f"  · {QUOTA_CAVEAT}")
-        # 服务端约定：confirm≠true 时**不发**，只回本月配额现状
+        # 服务端约定：confirm≠true 时**不发**，只回本月配额现状（filter 仍必填，先于预检校验）
         data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/mass-send", key,
-                                       {**target, "confirm": False}, args.timeout)
+                                       {**target, "filter": filter_, "confirm": False}, args.timeout)
         return {"outcome": "failed",
                 "error": "未带 --confirm：本次只查了本月配额，**没有群发**（这是安全闸门，不是故障）。",
                 "server": {k: v for k, v in data.items() if k != "success"},
-                **target,
-                "hint": "把本月配额现状复述给运营（「本月已用 X/4 次，这条发出去就是第 X+1 次」）"
+                **target, "filter": filter_, "audience": audience,
+                "hint": f"把本月配额现状与收件人（{audience}）复述给运营"
+                        "（「本月已用 X/4 次，这条发出去就是第 X+1 次」）"
                         f"并拿到明确确认，再带 `--confirm --note \"谁在什么场景下拍的板\"` 重跑。{QUOTA_CAVEAT}"}, 1
 
     note = (args.note or "").strip()
@@ -347,11 +355,12 @@ def do_mass_send(args, api_base, key):
         raise OpFailed("--mass-send --confirm 必须带 --note：这是**问责留痕**——"
                        "写清是谁在什么场景下拍的板（如 \"运营张三确认，8月推送第2条\"）。")
     data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/mass-send", key,
-                                   {**target, "confirm": True, "note": note},
+                                   {**target, "filter": filter_, "confirm": True, "note": note},
                                    args.timeout, irreversible=True)
     return {"outcome": "done", "msg_id": data.get("msg_id"), **target, "note": note,
+            "filter": filter_, "audience": audience,
             "server": {k: v for k, v in data.items() if k != "success"},
-            "hint": f"已群发。本月配额少了一次。{QUOTA_CAVEAT}"}, 0
+            "hint": f"已群发给{audience}。本月配额少了一次。{QUOTA_CAVEAT}"}, 0
 
 
 # ── 删除已发布（高危，红线②）──────────────────────────────────────────────
@@ -417,6 +426,10 @@ def main(argv=None):
     ap.add_argument("--source-url", dest="source_url", help="原文链接（阅读原文）")
     ap.add_argument("--limit", type=int, help="--ledger 每页条数（默认 20，上限 100）")
     ap.add_argument("--offset", type=int, help="--ledger 分页偏移")
+    ap.add_argument("--to-all", dest="to_all", action="store_true",
+                    help="群发受众：**全部粉丝**（与 --tag-id 二选一，没有默认值）")
+    ap.add_argument("--tag-id", dest="tag_id", type=int, metavar="标签id",
+                    help="群发受众：只推给该标签分组（与 --to-all 二选一）")
     ap.add_argument("--note", help="--mass-send --confirm 的问责留痕：谁在什么场景下拍的板")
     ap.add_argument("--confirm", action="store_true",
                     help="真正执行高危动作（群发 / 删除已发布）；不带它只做检查与警示")

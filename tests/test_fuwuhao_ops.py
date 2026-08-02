@@ -559,30 +559,35 @@ class Test发布与台账:
 class Test群发红线一:
     def test_不带confirm只查配额且绝不带confirm出门(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "month_used": 2, "month_quota": 4}))
-        code, data, err = run_cli(A, ["--mass-send", "--ledger-id", "7"], capsys)
+        code, data, err = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all"], capsys)
         assert code == 1 and data["outcome"] == "failed"
-        assert net.calls[0]["body"] == {"article_ledger_id": 7, "confirm": False}
+        # 预检也必须带 filter：服务端参数校验先于配额预检，漏了连配额都查不到
+        assert net.calls[0]["body"] == {"article_ledger_id": 7, "filter": {"is_to_all": True},
+                                        "confirm": False}
         assert data["server"]["month_used"] == 2
         assert "本月已用 X/4" in data["hint"] and "后台手动群发" in data["hint"]
-        assert "每自然月只有 4 次" in err
+        assert "每自然月只有 4 次" in err and "全部粉丝" in err
 
     def test_带confirm但没写谁拍板的直接拒发(self, net, capsys):
-        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--confirm"], capsys)
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm"],
+                                capsys)
         assert code == 1 and "问责留痕" in data["error"] and net.calls == []
 
     def test_带confirm和note才真发(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "msg_id": "2247483647"}))
-        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--confirm",
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm",
                                     "--note", "运营张三确认，8月第2条"], capsys)
         assert code == 0 and data["outcome"] == "done" and data["msg_id"] == "2247483647"
         assert net.calls[0]["body"]["confirm"] is True
+        assert net.calls[0]["body"]["filter"] == {"is_to_all": True}
         assert net.calls[0]["body"]["note"] == "运营张三确认，8月第2条"
+        assert "全部粉丝" in data["hint"]
 
     def test_群发保护落unknown而不是失败(self, net, capsys):
         """看到报错就重发正是白烧一次月配额的典型场景。"""
         net.serve(FakeResp(200, {"success": False, "wechat_errcode": 45028,
                                  "wechat_errmsg": "mass send protect"}))
-        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--confirm",
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm",
                                     "--note", "运营张三确认"], capsys)
         assert code == 0 and data["outcome"] == "unknown"
         assert data["hint"] == W.MASS_PROTECT_HINT
@@ -590,6 +595,36 @@ class Test群发红线一:
     def test_没给对象时不发请求(self, net, capsys):
         code, data, _ = run_cli(A, ["--mass-send"], capsys)
         assert code == 1 and net.calls == []
+
+
+class Test群发受众闸门:
+    """`filter` 是服务端必填，而这条约束的**意义**是不让「漏填」等于「悄悄推给全部粉丝」。
+    所以本地就要选一个，且两个都给时不替运营猜。"""
+
+    def test_没说发给谁时零请求并要求二选一(self, net, capsys):
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7"], capsys)
+        assert code == 1 and net.calls == []
+        assert "--to-all" in data["error"] and "--tag-id" in data["error"]
+        assert "默认成全员群发" in data["error"]
+
+    def test_两个受众都给了不替运营猜(self, net, capsys):
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all",
+                                    "--tag-id", "102"], capsys)
+        assert code == 1 and net.calls == [] and "只能给一个" in data["error"]
+
+    def test_标签分组映射成is_to_all为假(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "msg_id": "M"}))
+        code, data, _ = run_cli(A, ["--mass-send", "--media-id", "MID", "--tag-id", "102",
+                                    "--confirm", "--note", "运营张三确认"], capsys)
+        assert code == 0
+        assert net.calls[0]["body"]["filter"] == {"is_to_all": False, "tag_id": 102}
+        assert net.calls[0]["body"]["media_id"] == "MID"
+        assert "tag_id=102" in data["audience"]
+
+    def test_受众闸门是即时群发与定时群发共用的一份(self):
+        """两处各抄一份，迟早一边漏掉闸门变成「悄悄全员群发」。"""
+        assert A.wechat_api.mass_filter is S.wechat_api.mass_filter
+        assert A.QUOTA_CAVEAT == S.QUOTA_CAVEAT == W.QUOTA_CAVEAT
 
 
 class Test删除已发布红线二:
@@ -622,7 +657,7 @@ class Test删除已发布红线二:
     def test_配额查询失败时红线警示照样得说出来(self, net, capsys):
         """警示写在请求之前：查配额这一步挂了，「不可逆 + 每月 4 次」也不能跟着一起消失。"""
         net.serve(FakeResp(502, {"success": False, "error": "服务端炸了"}))
-        code, data, err = run_cli(A, ["--mass-send", "--ledger-id", "7"], capsys)
+        code, data, err = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all"], capsys)
         assert code == 1 and "每自然月只有 4 次" in err and "后台手动群发" in err
 
 
@@ -701,43 +736,53 @@ class Test定时提交:
     def test_定时群发不带confirm一条都不入队只查配额(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "confirmed": False,
                                  "quota_used": 2, "quota_total": 4}))
-        code, data, err = run_cli(S, ["--submit-mass", "M1", "--at", _future()], capsys)
+        code, data, err = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all"], capsys)
         assert code == 1 and data["outcome"] == "failed"
         assert len(net.calls) == 1                                   # ⛔ 只查配额
         assert net.calls[0]["url"].endswith("/api/external/wechat/mass-send")
-        assert net.calls[0]["body"] == {"media_id": "M1", "confirm": False}
+        # 预检同样要带 filter：服务端参数校验先于预检
+        assert net.calls[0]["body"] == {"media_id": "M1", "filter": {"is_to_all": True},
+                                        "confirm": False}
         assert "schedule" not in net.calls[0]["url"]                 # ⛔ 一条队列都没入
         assert data["server"]["quota_used"] == 2
-        assert "每自然月只有 4 次" in err and "推送到每个粉丝" in err
+        assert "每自然月只有 4 次" in err and "全部粉丝" in err
         assert data["run_at_label"] in err                           # 到点几号几点也要当面说
         assert "本月已用 X/4" in data["hint"] and "后台手动群发" in data["hint"]
 
     def test_定时群发时间不合法时连配额都不查(self, net, capsys):
-        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", "2026-08-03 09:00"], capsys)
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", "2026-08-03 09:00",
+                                    "--to-all"], capsys)
         assert code == 1 and net.calls == []
 
+    def test_定时群发没说发给谁时零请求(self, net, capsys):
+        """到点自动执行的任务尤其不能让受众靠默认值兜底——真发的时候人不在场。"""
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future()], capsys)
+        assert code == 1 and net.calls == [] and "--to-all" in data["error"]
+
     def test_定时群发带confirm但没写谁拍板的直接拒发(self, net, capsys):
-        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--confirm"], capsys)
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all",
+                                    "--confirm"], capsys)
         assert code == 1 and "问责留痕" in data["error"] and net.calls == []
 
-    def test_定时群发带confirm和note才入队(self, net, capsys):
+    def test_定时群发带confirm和note才入队且受众跟着进队列(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "job_id": 31}))
         at = _future()
-        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", at, "--confirm",
-                                    "--note", "运营张三确认，8月第2条"], capsys)
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", at, "--tag-id", "102",
+                                    "--confirm", "--note", "运营张三确认，8月第2条"], capsys)
         assert code == 0 and data["outcome"] == "done" and data["job_id"] == 31
-        assert net.calls[0]["body"] == {"job_type": "mass_send", "run_at": at,
-                                        "payload": {"media_id": "M1"}, "confirm": True,
-                                        "note": "运营张三确认，8月第2条"}
-        assert "推送给全部粉丝" in data["hint"] and "后台手动群发" in data["hint"]
+        assert net.calls[0]["body"] == {
+            "job_type": "mass_send", "run_at": at,
+            "payload": {"media_id": "M1", "filter": {"is_to_all": False, "tag_id": 102}},
+            "confirm": True, "note": "运营张三确认，8月第2条"}
+        assert "tag_id=102" in data["hint"] and "后台手动群发" in data["hint"]
         assert data["note"] == "运营张三确认，8月第2条"
 
     def test_群发保护的钉死hint不被队列提示顶掉(self, net, capsys):
         """45028 的处置是「等管理员手机确认」，换成「去查队列」就把话说反了。"""
         net.serve(FakeResp(200, {"success": False, "wechat_errcode": 45028,
                                  "wechat_errmsg": "mass send protect"}))
-        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--confirm",
-                                    "--note", "运营张三确认"], capsys)
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all",
+                                    "--confirm", "--note", "运营张三确认"], capsys)
         assert code == 0 and data["outcome"] == "unknown"
         assert data["hint"] == W.MASS_PROTECT_HINT
 

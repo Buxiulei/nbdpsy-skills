@@ -215,16 +215,23 @@ python3 ART --status --id <台账 id>       # 单篇终态
 ### 第 7 步 · 群发（**高危，先回头看红线①**）
 
 ```bash
-# 第一步：不带 --confirm 跑一次，拿本月配额现状（此时不会真发）
-python3 ART --mass-send --ledger-id <台账 id>
+# 第一步：不带 --confirm 跑一次，拿本月配额现状（此时不会真发）。受众必须明说
+python3 ART --mass-send --ledger-id <台账 id> --to-all
 
-# 第二步：把配额复述给运营、拿到明确确认后，才带 confirm 与 note 真发
-python3 ART --mass-send --ledger-id <台账 id> --confirm --note "运营 XX 确认，8月推送第2条"
+# 第二步：把配额+收件人复述给运营、拿到明确确认后，才带 confirm 与 note 真发
+python3 ART --mass-send --ledger-id <台账 id> --to-all --confirm --note "运营 XX 确认，8月推送第2条"
+
+# 只推给某个标签分组时用 --tag-id 代替 --to-all
+python3 ART --mass-send --ledger-id <台账 id> --tag-id 102 --confirm --note "..."
 ```
 
 - `--note` 是**问责留痕**（谁拍板），必填，写清是谁在什么场景下拍的板。
-- 定时群发同理两步走：先 `SCHED --submit-mass <media_id> --at "..."`（**零入队**，只查配额），
-  复述配额与执行时间、拿到确认后再 `--confirm --note "..."` 重跑。入队时校验一次配额、执行时再校验一次。
+- **受众必填**：`--to-all`（全部粉丝）与 `--tag-id <标签id>`（某个标签分组）**二选一，没有默认值**。
+  两个都不给时脚本本地就 failed、**一个请求都不发**。⛔ 不设默认值是有意的——默认成全员群发，
+  一次漏填就把不该收到的人全推了，且不可逆。发之前先问清运营「这条发给谁」。
+- 定时群发同理两步走：先 `SCHED --submit-mass <media_id> --at "..." --to-all`（**零入队**，只查配额），
+  复述配额、收件人与执行时间、拿到确认后再 `--confirm --note "..."` 重跑。受众同样必填
+  （`--to-all` / `--tag-id` 二选一）。入队时校验一次配额、执行时再校验一次。
 - 失败按红线⑤分两种处置：`outcome: unknown`（结果未确认）→ **先查台账，绝不直接重试**；
   `outcome: failed`（结果已确定失败，如 401/403、参数不合法、微信明确回了拒绝码）→ 改完配置或参数再来，
   **不用查台账**。

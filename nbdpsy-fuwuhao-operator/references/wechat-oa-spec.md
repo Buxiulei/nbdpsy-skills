@@ -37,10 +37,10 @@
 | `POST /api/external/wechat/publish` | `{media_id, title?}` → 提交发布，台账插 `publishing` 行，返回台账 id |
 | `POST /api/external/wechat/upload-image` | multipart，转发 `media/uploadimg`，返回 **mmbiz URL**（正文配图用；jpg/png ≤1MB） |
 | `POST /api/external/wechat/upload-material` | multipart，`type=image\|thumb`，返回**永久 media_id**（封面用） |
-| `POST /api/external/wechat/mass-send` | **高危**：`{article_ledger_id 或 media_id, filter, confirm, note}`。`confirm≠true` 时**不发**，只回本月配额现状；台账记 `msg_id` / `mass_sent_at` |
+| `POST /api/external/wechat/mass-send` | **高危**：`{article_ledger_id 或 media_id（二选一）, filter（**必填**）, confirm, note}`。`filter` = `{"is_to_all":true}` 或 `{"is_to_all":false,"tag_id":N}`——**服务端不给默认值**，漏填直接拒（防的就是「漏填 = 悄悄全员群发」），且**参数校验先于配额预检**，所以 `confirm:false` 的预检调用也必须带 filter。`confirm≠true` 时**不发**，只回本月配额现状；台账记 `msg_id` / `mass_sent_at` |
 | `POST /api/external/wechat/article-delete` | **高危**：`{article_id, index?, confirm}`。`confirm≠true` 只回警示；执行后台账标 `deleted` |
 | `GET /api/external/wechat/ledger` | `?status&limit&offset` 台账分页——**"线上有什么"的唯一权威** |
-| `POST /api/external/wechat/schedule` | `{job_type: publish\|mass_send, run_at, payload}` 入定时队列；`mass_send` 型同样要 `confirm`+`note`，入队即校验配额、执行时二次校验 |
+| `POST /api/external/wechat/schedule` | `{job_type: publish\|mass_send, run_at(RFC3339 带时区), payload}` 入定时队列；`mass_send` 型同样要 `confirm`+`note`，`payload` 里带 `media_id` 与 `filter`（受众跟着任务进队列，到点原样用），入队即校验配额、执行时二次校验 |
 | `GET /api/external/wechat/schedule` | `?status` 队列查询 |
 | `POST /api/external/wechat/schedule/cancel` | `{id}`，**仅 pending 可取消** |
 | `GET /api/external/wechat/stats` | `?type&from&to&msgid` 查每日快照（本地聚合，**支持跨任意区间**） |

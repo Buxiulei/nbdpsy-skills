@@ -42,6 +42,13 @@ MASS_PROTECT_ERRCODE = 45028
 MASS_PROTECT_HINT = ("群发保护已触发：请管理员在 30 分钟内于手机微信确认本次群发；"
                      "超时未确认则本次失败。之后以台账/后台核实为准")
 
+# 群发受众与配额话术：**即时群发（article_ops）与定时群发（schedule_ops）共用这一份**。
+# 两处各抄一份的下场是「其中一处漏了受众闸门 = 悄悄全员群发」，或配额话术只在一边说全。
+QUOTA_CAVEAT = ("台账的月计数**只统计经本系统发的**：运营若在公众平台后台手动群发过，"
+                "实际剩余次数可能更少——复述配额时必须把这句一并说出来，"
+                "别让运营以为 4 次是精确保证。")
+
+
 # 结果未确认时的通用处置（红线⑤的三步）。
 UNKNOWN_HINT = ("结果未确认：请求已经发出去了，拿不准到底生效没有。① **先查台账/线上现状**"
                 "（`article_ops.py --ledger`、`menu_ops.py --get`）；② 确认**确实没生效**"
@@ -114,6 +121,26 @@ def run(action) -> int:
 def warn(msg: str):
     """人话提示/警示走 stderr，不污染 stdout 的纯 JSON。"""
     print(msg, file=sys.stderr)
+
+
+def mass_filter(to_all: bool, tag_id):
+    """群发受众 → 微信 `filter`。**不设默认值是有意的。**
+
+    `filter` 在服务端是必填（漏填直接拒），而这条约束的意义就是不让「漏填」等于
+    「推给全部粉丝」——群发不可逆，一次手滑就把不该收到的人全推了。
+    所以本地要求运营在「全部粉丝」和「某个标签分组」之间明确选一个，且只能选一个。
+    """
+    if to_all and tag_id is not None:
+        raise OpFailed("`--to-all` 和 `--tag-id` 只能给一个：推给**全部粉丝**与只推给**某个标签分组**"
+                       "是互斥的受众，同时给了脚本不替你猜。")
+    if to_all:
+        return {"is_to_all": True}
+    if tag_id is not None:
+        return {"is_to_all": False, "tag_id": tag_id}
+    raise OpFailed("群发必须明确受众，二选一：`--to-all`（推给**全部粉丝**）或 "
+                   "`--tag-id <标签id>`（只推给该标签分组）。"
+                   "⛔ 不设默认值是有意的——默认成全员群发，一次漏填就把不该收到的人全推了，"
+                   "且**不可逆**。先问清运营这条要发给谁。")
 
 
 def credentials(api_base=None):

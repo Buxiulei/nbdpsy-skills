@@ -8,9 +8,9 @@
     # 定时发布（到点发布：文章上线可搜到，但**不推送粉丝、不占群发次数**）
     python3 schedule_ops.py --submit-publish <media_id> --at "2026-08-03T09:00:00+08:00"
 
-    # 定时群发（高危：不可逆 + 每自然月仅 4 次；到点直接推送给全部粉丝）
-    python3 schedule_ops.py --submit-mass <media_id> --at "..."            # 只查配额，**零入队**
-    python3 schedule_ops.py --submit-mass <media_id> --at "..." --confirm \\
+    # 定时群发（高危：不可逆 + 每自然月仅 4 次）。受众必须明说：--to-all 或 --tag-id 二选一
+    python3 schedule_ops.py --submit-mass <media_id> --at "..." --to-all   # 只查配额，**零入队**
+    python3 schedule_ops.py --submit-mass <media_id> --at "..." --to-all --confirm \\
         --note "运营张三确认，8月推送第2条"
 
     # 队列
@@ -26,8 +26,9 @@
 
 两条红线在本脚本里的落点:
   · **红线①**（群发不可逆 + 每自然月仅 4 次）：定时群发**同样占配额**。不带 `--confirm` 时
-    **一条队列都不入**，只查本月配额现状；真入队必须带 `--note`（谁拍板的问责留痕）。
-    服务端入队时校验一次配额，到点执行前再校验一次。
+    **一条队列都不入**，只查本月配额现状；真入队必须带 `--note`（谁拍板的问责留痕）与
+    **受众**（`--to-all` / `--tag-id` 二选一，没有默认值——到点自动执行的任务如果受众靠默认值
+    兜底，漏填就是到点悄悄全员群发，人还不在场）。服务端入队时校验一次配额，到点执行前再校验一次。
   · **run_at 必须带时区**：不带时区的时间串服务端按 UTC 解析，会比运营想的**早 8 小时**发出去。
     所以本脚本在本地就拒收无时区输入，并把补好 `+08:00` 的完整串给出来。
     提交成功后回执里的 `run_at_label` 是「几月几号周几几点（北京时间）」——
@@ -63,10 +64,9 @@ JOB_TYPE_LABELS = {
     "mass_send": "定时群发（到点**推送给全部粉丝**，占用当月 4 次配额之一，不可逆）",
 }
 
-# 与 article_ops.py 同源的配额话术：复述配额时**必须**把这句一并说出来
-QUOTA_CAVEAT = ("台账的月计数**只统计经本系统发的**：运营若在公众平台后台手动群发过，"
-                "实际剩余次数可能更少——复述配额时必须把这句一并说出来，"
-                "别让运营以为 4 次是精确保证。")
+# 配额话术与受众闸门在 wechat_api 里，与即时群发（article_ops）共用同一份：
+# 两处各抄一份，迟早一边漏掉受众闸门变成「悄悄全员群发」
+QUOTA_CAVEAT = wechat_api.QUOTA_CAVEAT
 
 SUBMIT_UNKNOWN_HINT = ("结果未确认：这条定时任务**可能已经入队了**。① 先 `schedule_ops.py --list` "
                        "看队列里有没有它（对一遍 run_at 与 media_id）；② 确认**确实没有**再重提交；"
@@ -185,25 +185,32 @@ def do_submit_mass(args, api_base, key):
     if not media_id:
         raise OpFailed("--submit-mass 需要 media_id（`article_ops.py --draft-add` 回的那个）。")
     run_at, warnings = resolve_run_at(args.at)      # 时间先过闸：坏时间连一次请求都不该发
+    # 受众同样必须明说：filter 跟着任务进队列，到点由服务端原样用。**不留默认值**——
+    # 一条到点自动执行的任务如果受众靠默认值兜底，漏填就是到点悄悄全员群发，人还不在场。
+    filter_ = wechat_api.mass_filter(args.to_all, args.tag_id)
+    audience = ("**全部粉丝**" if filter_["is_to_all"]
+                else f"标签分组 tag_id={filter_['tag_id']} 里的粉丝")
 
     if not args.confirm:
         # 红线警示**先打**：下面那次配额查询万一失败，这几条也照样得让运营看见
         wechat_api.warn("⚠ 这次**没有入队任何定时任务**（缺 --confirm），只查了本月配额。")
-        wechat_api.warn(f"  · 到点（{label(run_at)}）会**直接推送到每个粉丝的对话框**，且**不可逆**。")
+        wechat_api.warn(f"  · 到点（{label(run_at)}）会**直接推送到{audience}的对话框**，且**不可逆**。")
         wechat_api.warn("  · 群发**每自然月只有 4 次**，定时群发同样占配额。")
         wechat_api.warn(f"  · {QUOTA_CAVEAT}")
-        # 配额现状走 mass-send 的预检（confirm≠true 时服务端**不发**，只回配额），本身是只读的
+        # 配额现状走 mass-send 的预检（confirm≠true 时服务端**不发**，只回配额），本身是只读的。
+        # filter 照样要带：服务端参数校验先于预检，漏了连配额都查不到。
         data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/mass-send", key,
-                                       {"media_id": media_id, "confirm": False}, args.timeout)
+                                       {"media_id": media_id, "filter": filter_, "confirm": False},
+                                       args.timeout)
         return {"outcome": "failed",
                 "error": "未带 --confirm：本次**没有入队**，只查了本月配额"
                          "（这是安全闸门，不是故障）。",
                 "media_id": media_id, "run_at": run_at.isoformat(), "run_at_label": label(run_at),
-                "warnings": warnings,
+                "filter": filter_, "audience": audience, "warnings": warnings,
                 "server": {k: v for k, v in data.items() if k != "success"},
-                "hint": "把本月配额现状复述给运营（「本月已用 X/4 次，这条到点发出去就是第 X+1 次」）"
-                        f"、把执行时间 {label(run_at)} 一并念一遍，拿到明确确认后，再带 "
-                        f"`--confirm --note \"谁在什么场景下拍的板\"` 重跑。{QUOTA_CAVEAT}"}, 1
+                "hint": f"把本月配额现状、收件人（{audience}）与执行时间（{label(run_at)}）一并"
+                        "复述给运营（「本月已用 X/4 次，这条到点发出去就是第 X+1 次」），"
+                        f"拿到明确确认后，再带 `--confirm --note \"谁在什么场景下拍的板\"` 重跑。{QUOTA_CAVEAT}"}, 1
 
     note = (args.note or "").strip()
     if not note:
@@ -211,12 +218,15 @@ def do_submit_mass(args, api_base, key):
                        "写清是谁在什么场景下拍的板（如 \"运营张三确认，8月推送第2条\"）。")
     data = submit_job(api_base, key,
                       {"job_type": "mass_send", "run_at": run_at.isoformat(),
-                       "payload": {"media_id": media_id}, "confirm": True, "note": note},
+                       "payload": {"media_id": media_id, "filter": filter_},
+                       "confirm": True, "note": note},
                       args.timeout)
     payload, code = submitted(data, "mass_send", media_id, run_at, warnings,
-                              "本次是**群发**：到点直接推送给全部粉丝、不可逆，"
+                              f"本次是**群发**：到点直接推送给{audience}、不可逆，"
                               f"当月 4 次配额到点时扣一次（服务端执行前会再校验一次配额）。{QUOTA_CAVEAT}")
     payload["note"] = note
+    payload["filter"] = filter_
+    payload["audience"] = audience
     return payload, code
 
 
@@ -281,6 +291,10 @@ def main(argv=None):
     ap.add_argument("--at", "--run-at", dest="at", metavar="时间",
                     help='执行时刻，**必须带时区**，如 "2026-08-03T09:00:00+08:00"')
     ap.add_argument("--status", help="--list 的过滤：pending/running/done/failed/cancelled")
+    ap.add_argument("--to-all", dest="to_all", action="store_true",
+                    help="定时群发受众：**全部粉丝**（与 --tag-id 二选一，没有默认值）")
+    ap.add_argument("--tag-id", dest="tag_id", type=int, metavar="标签id",
+                    help="定时群发受众：只推给该标签分组（与 --to-all 二选一）")
     ap.add_argument("--note", help="--submit-mass --confirm 的问责留痕：谁在什么场景下拍的板")
     ap.add_argument("--confirm", action="store_true",
                     help="真正入队定时群发；不带它只查配额、一条都不入")
