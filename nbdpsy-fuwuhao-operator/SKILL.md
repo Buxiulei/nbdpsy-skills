@@ -191,13 +191,14 @@ python3 ART --draft-add --content {workspace}/wechat/{slug}/content.html \
 # 立即发布（不推送粉丝、不占群发次数）
 python3 ART --publish --media-id <media_id>
 
-# 定时发布：run_at 用本地时间（Asia/Shanghai）
-python3 SCHED --add --job-type publish --run-at "2026-08-03 09:00" --media-id <media_id>
+# 定时发布：--at **必须带时区**（不带的话服务端按 UTC 解析，会早发 8 小时；脚本本地就拦下）
+python3 SCHED --submit-publish <media_id> --at "2026-08-03T09:00:00+08:00"
 ```
 
 - 发布是**异步**的：立即发布返回 `status=publishing`，服务端每 5 分钟轮询一次微信，几分钟内转 `published`。
   **拿不到 url 不等于失败**，去第 6 步查台账。
 - 定时任务提交后**把时间按「8 月 3 日上午 9 点」复述给运营**——`run_at` 写错一天是最常见的事故。
+  回执里的 `run_at_label` 就是这句人话（含星期），原样念即可。
 - 定时任务可查可撤：`python3 SCHED --list` / `python3 SCHED --cancel <id>`（**只有 pending 能撤**，
   已到点执行的撤不了，这时候按红线②处理）。
 
@@ -222,8 +223,8 @@ python3 ART --mass-send --ledger-id <台账 id> --confirm --note "运营 XX 确�
 ```
 
 - `--note` 是**问责留痕**（谁拍板），必填，写清是谁在什么场景下拍的板。
-- 定时群发同理走 `SCHED --add --job-type mass_send ... --confirm --note "..."`，入队时校验一次配额、
-  执行时再校验一次。
+- 定时群发同理两步走：先 `SCHED --submit-mass <media_id> --at "..."`（**零入队**，只查配额），
+  复述配额与执行时间、拿到确认后再 `--confirm --note "..."` 重跑。入队时校验一次配额、执行时再校验一次。
 - 失败按红线⑤分两种处置：`outcome: unknown`（结果未确认）→ **先查台账，绝不直接重试**；
   `outcome: failed`（结果已确定失败，如 401/403、参数不合法、微信明确回了拒绝码）→ 改完配置或参数再来，
   **不用查台账**。
@@ -235,8 +236,8 @@ python3 ART --mass-send --ledger-id <台账 id> --confirm --note "运营 XX 确�
 
 ```bash
 python3 STATS --overview --from 2026-07-01 --to 2026-07-31    # 涨粉/阅读概况
-python3 STATS --article <msgid>                                # 单篇曲线 + 读完率
-python3 STATS --export --from ... --to ...                     # 导出
+python3 STATS --article <msgid>                                # 单篇逐日曲线 + 转化率
+python3 STATS --export --from ... --to ...                     # 原始快照落 JSON 文件
 ```
 
 - 数据查的是**服务端每日快照**（每天 08:30 抓前一天），所以**可以跨任意区间**（微信原生接口跨度上限
@@ -244,6 +245,10 @@ python3 STATS --export --from ... --to ...                     # 导出
 - **当天数据查不到是正常的**：微信 T+1 次日 8 点后才稳定。运营问"今天发的怎么样"→ 如实说"明天才有数据"，
   ⛔ 别拿别的指标凑数糊弄过去。
 - 新口径数据**只有 2025-11-01 起**的，更早的区间查不到。
+- 输出里的 `null` 表示**这段区间的快照里没有这个字段**，**不是 0**——⛔ 别把「查不到」念成「0 涨粉」。
+  脚本已把原因写进 `warnings`，逐条念给运营。
+- 微信 API **不提供「读完率/完读率」**（后台看到的那个数取不到）。`--article` 的 `rates` 给的是
+  送达→阅读、阅读→点开原文、阅读→分享三个转化率，⛔ 别当成读完率报。
 
 ---
 

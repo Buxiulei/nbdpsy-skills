@@ -143,7 +143,9 @@ FORBIDDEN_STYLE = [
     (re.compile(r"animation|@keyframes", re.I), "CSS 动画"),
 ]
 _HARMFUL_PROTO = re.compile(r"^\s*javascript\s*:", re.I)
-_ATTR_VALUE = re.compile(r'"[^"]*"')
+# 只清「= 后面那段带引号的值」，单双引号都认（article_ops 的精简副本同款）。刻意锚在 `=` 上：
+# 裸扫引号会被正文里的撇号带偏，`it's ... don't` 之间整段被抹掉，真的 class= 就漏判了。
+_ATTR_VALUE = re.compile(r"""=\s*"[^"]*"|=\s*'[^']*'""")
 _STYLE_ATTR = re.compile(r'\sstyle="([^"]*)"', re.I)
 _URL_ATTR = re.compile(r'\s(?:href|src)="([^"]*)"', re.I)
 
@@ -154,7 +156,7 @@ class CompileError(Exception):
 
 def scan_forbidden(html: str):
     """扫产物里的微信白名单外构件，返回人话违规项列表（空列表 = 干净）。"""
-    stripped = _ATTR_VALUE.sub('""', html)          # 属性值清空，只留结构
+    stripped = _ATTR_VALUE.sub('=""', html)         # 属性值清空，只留结构
     hits = [label for pattern, label in FORBIDDEN_STRUCTURE if pattern.search(stripped)]
     styles = " ".join(_STYLE_ATTR.findall(html))
     hits += [label for pattern, label in FORBIDDEN_STYLE if pattern.search(styles)]

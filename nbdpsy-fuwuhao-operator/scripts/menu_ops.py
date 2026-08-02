@@ -36,8 +36,7 @@ import json
 import sys
 from pathlib import Path
 
-# 同目录 vendored 副本
-import nbdpsy_common  # noqa: F401  —— wechat_api 经它解析凭据与基址
+# 同目录 vendored 副本（凭据与基址由 wechat_api 经 nbdpsy_common 解析，这里不直接用它）
 import wechat_api
 from wechat_api import OpFailed
 

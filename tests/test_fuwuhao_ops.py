@@ -1,16 +1,19 @@
-"""menu_ops.py / article_ops.py / wechat_api.py：服务号运营脚本。
+"""menu_ops / article_ops / schedule_ops / stats_ops / wechat_api：服务号运营脚本。
 
-钉四类东西——都是「说错一句话就赔上不可逆代价」的地方：
+钉六类东西——都是「说错一句话就赔上不可逆代价」的地方：
 ① **两桶口径**（红线⑤）：请求没发出/微信明确拒绝 = failed exit 1；已发出但结果不明
    （超时/断连/5xx **含 502**/响应读不懂）= unknown exit 0。publish 的 502 报 failed 会
    诱导二次发布，45028 报 failed 会诱导白烧一次月配额。
 ② **高危动作的 confirm 闸门**：`--delete-published` 无 confirm **一个请求都不发**（假 session
-   断言零调用），`--mass-send` 无 confirm 只查配额、绝不带 confirm:true 出门。
-③ **红线③**：外部 HTML（class/style/script/iframe）不许灌进正文，且不能误杀属性值里的文案。
+   断言零调用），`--mass-send` / `--submit-mass` 无 confirm 只查配额、绝不带 confirm:true 出门。
+③ **红线③**：外部 HTML（class/style/script/iframe/on* 事件）不许灌进正文，且不能误杀属性值里的文案。
 ④ **draft/update 是整篇替换**：漏给的字段会被清空，所以必须先读回原文再覆盖。
+⑤ **定时时间必须带时区**：裸 `2026-08-03 09:00` 会被服务端当 UTC，早发 8 小时——本地就得拦。
+⑥ **统计缺字段给 null 不给 0**：把「查不到」说成「0 涨粉」是这条线上最容易造成误判的错。
 """
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -19,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-fuwuhao-operator" 
 
 import article_ops as A          # noqa: E402
 import menu_ops as M             # noqa: E402
+import schedule_ops as S         # noqa: E402
+import stats_ops as ST           # noqa: E402
 import wechat_api as W           # noqa: E402
 
 
@@ -178,6 +183,9 @@ class Test两桶口径:
     @pytest.mark.parametrize("marker", [
         "Host not allowed", "NewConnectionError(...): Connection refused",
         "Max retries exceeded ... ConnectTimeoutError", "ProxyError('Cannot connect')",
+        # --api-base 打错（少了 https:// 之类）：requests 在建连之前就抛，这次一定没发出去
+        "Invalid URL 'database.nbdpsy.com': No scheme supplied",
+        "MissingSchema: Invalid URL", "InvalidSchema: No connection adapters were found",
     ])
     def test_连接没建起来即使不可逆也是确定失败(self, net, marker):
         """连接都没建立 = 请求没发出去 = 一定没生效，含糊成 unknown 只会让运营白查台账。"""
@@ -396,6 +404,28 @@ class Test红线三正文闸门:
     def test_残留星号要警告(self):
         assert any("星号" in x for x in A.content_warnings("<p>叫**复杂性创伤**的东西</p>"))
 
+    def test_代码块里的星号是字面量不算残留(self):
+        """md2wechat 刻意不动 code/pre 里的星号（改了就是篡改代码），这里当然也不能拿它警告
+        ——一句「回源稿改掉」会让运营真的去改代码。"""
+        assert A.content_warnings('<pre style="x"><code>a = b ** 2</code></pre>') == []
+        # 代码块外仍有残留时照样要报
+        assert any("星号" in x for x in A.content_warnings(
+            '<pre><code>b ** 2</code></pre><p>叫**创伤**的东西</p>'))
+
+    def test_内联事件属性也拒收(self, tmp_path):
+        """红线③的精简副本要和 md2wechat.scan_forbidden 对齐：onclick 溜过去就等于放 JS 进正文。"""
+        with pytest.raises(A.OpFailed) as e:
+            A.read_content(_html(tmp_path, '<p style="m" onclick="alert(1)">正文</p>', "on.html"))
+        assert "事件属性" in e.value.error
+        assert M.OpFailed is A.OpFailed        # 两脚本共用 wechat_api 的异常，不是各抄一份
+
+    def test_单引号属性值同样不误杀且撇号不吞掉真违规(self, tmp_path):
+        ok = "<p style='m'><img src='https://mmbiz.qpic.cn/a.png' alt='这段讲 class= 怎么用' /></p>"
+        assert A.read_content(_html(tmp_path, ok, "sq.html")) == ok
+        # 正文里的英文撇号不能把后面真正的 class= 一起抹掉（裸扫引号的经典漏判）
+        with pytest.raises(A.OpFailed):
+            A.read_content(_html(tmp_path, "<p>it's</p><p class=\"xiumi\">don't</p>", "apos.html"))
+
 
 class Test草稿:
     def test_建草稿必须有标题(self, net, tmp_path, capsys):
@@ -512,7 +542,8 @@ class Test发布与台账:
         net.serve(FakeResp(200, {"success": True, "total": 1,
                                  "items": [{"id": 9, "status": "published"}]}))
         code, data, _ = run_cli(A, ["--status", "--id", "999"], capsys)
-        assert code == 1 and "media_id" in data["error"]
+        # 两种可能都要点出来：认错了 id，或者这行太旧翻不到（翻页找的固有边界）
+        assert code == 1 and "media_id" in data["error"] and "翻页范围" in data["error"]
 
     def test_把ledger的过滤条件写成单篇查询时给纠正(self, net, capsys):
         code, data, _ = run_cli(A, ["--status", "published"], capsys)
@@ -587,3 +618,367 @@ class Test删除已发布红线二:
     def test_缺article_id时不发请求(self, net, capsys):
         code, data, _ = run_cli(A, ["--delete-published", "--confirm"], capsys)
         assert code == 1 and net.calls == []
+
+    def test_配额查询失败时红线警示照样得说出来(self, net, capsys):
+        """警示写在请求之前：查配额这一步挂了，「不可逆 + 每月 4 次」也不能跟着一起消失。"""
+        net.serve(FakeResp(502, {"success": False, "error": "服务端炸了"}))
+        code, data, err = run_cli(A, ["--mass-send", "--ledger-id", "7"], capsys)
+        assert code == 1 and "每自然月只有 4 次" in err and "后台手动群发" in err
+
+
+# ══════════════ ④ 定时任务（schedule_ops） ══════════════
+
+def _future(hours=24):
+    """一个必定在未来、且带 +08:00 的时间串。"""
+    return (datetime.now(S.CN_TZ) + timedelta(hours=hours)).replace(microsecond=0).isoformat()
+
+
+class Test定时时间闸门:
+    """run_at 写错的两种事故：忘了时区（早发 8 小时）、写错日期（发早了/发晚了一天）。"""
+
+    def test_没带时区直接拒收并把补好的完整串给出来(self, net, capsys):
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", "2026-08-03 09:00"], capsys)
+        assert code == 1 and net.calls == []           # 坏时间连一次请求都不发
+        assert "没带时区" in data["error"] and "早 8 小时" in data["error"]
+        assert '--at "2026-08-03T09:00:00+08:00"' in data["error"]
+
+    def test_看不懂的时间也不发请求(self, net, capsys):
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", "明早九点"], capsys)
+        assert code == 1 and net.calls == [] and "RFC3339" in data["error"]
+
+    def test_压根没给时间时点名要什么(self, net, capsys):
+        code, data, _ = run_cli(S, ["--submit-publish", "M1"], capsys)
+        assert code == 1 and net.calls == [] and "+08:00" in data["error"]
+
+    def test_过去时刻本地就拒并提示立即发布走别处(self, net, capsys):
+        past = (datetime.now(S.CN_TZ) - timedelta(days=1)).replace(microsecond=0).isoformat()
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", past], capsys)
+        assert code == 1 and net.calls == []
+        assert "已经过去了" in data["error"] and "--publish" in data["error"]
+
+    def test_Z后缀与空格分隔都认(self):
+        assert S.parse_run_at("2026-08-03T01:00:00Z").utcoffset() == timedelta(0)
+        assert S.parse_run_at("2026-08-03 09:00:00+08:00").utcoffset() == timedelta(hours=8)
+
+    def test_人话时间带年月日星期(self):
+        text = S.label(datetime(2026, 8, 3, 9, 0, tzinfo=S.CN_TZ))
+        assert "2026年8月3日" in text and "周一" in text and "09:00" in text and "北京时间" in text
+
+    def test_UTC时刻按北京时间念(self):
+        """服务端存的是 UTC，念给运营时必须换算——差 8 小时就是差一天早上还是前一天晚上。"""
+        assert "8月3日" in S.label(datetime(2026, 8, 3, 1, 0, tzinfo=timezone.utc))
+        assert "09:00" in S.label(datetime(2026, 8, 3, 1, 0, tzinfo=timezone.utc))
+
+    def test_离现在太近要提醒可能错过这一轮(self):
+        _, warnings = S.resolve_run_at((datetime.now(S.CN_TZ) + timedelta(seconds=30)).isoformat())
+        assert any("每分钟扫一次" in w for w in warnings)
+
+
+class Test定时提交:
+    def test_定时发布的body形状与念给运营的时间(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "job_id": 12}))
+        at = _future()
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", at], capsys)
+        assert code == 0 and data["outcome"] == "done" and data["job_id"] == 12
+        assert net.calls[0]["url"].endswith("/api/external/wechat/schedule")
+        assert net.calls[0]["body"] == {"job_type": "publish", "run_at": at,
+                                        "payload": {"media_id": "M1"}}
+        assert "北京时间" in data["run_at_label"] and data["run_at_label"] in data["hint"]
+        assert "不占群发次数" in data["hint"] and "--cancel 12" in data["hint"]
+
+    def test_入队结果未确认时叫人查队列而不是查台账(self, net, capsys):
+        """重复入队 = 到点发两次。通用那句「查台账」在这条线上是错的处置。"""
+        net.serve(RuntimeError("HTTPSConnectionPool(host='svc'): Read timed out."))
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future()], capsys)
+        assert code == 0 and data["outcome"] == "unknown"
+        assert "--list" in data["hint"] and "重复入队" in data["hint"]
+
+    def test_服务端没回id时不拼出跑不通的取消命令(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True}))
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future()], capsys)
+        assert code == 0 and data["job_id"] is None and "--cancel <id>" in data["hint"]
+
+    def test_定时群发不带confirm一条都不入队只查配额(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "confirmed": False,
+                                 "quota_used": 2, "quota_total": 4}))
+        code, data, err = run_cli(S, ["--submit-mass", "M1", "--at", _future()], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert len(net.calls) == 1                                   # ⛔ 只查配额
+        assert net.calls[0]["url"].endswith("/api/external/wechat/mass-send")
+        assert net.calls[0]["body"] == {"media_id": "M1", "confirm": False}
+        assert "schedule" not in net.calls[0]["url"]                 # ⛔ 一条队列都没入
+        assert data["server"]["quota_used"] == 2
+        assert "每自然月只有 4 次" in err and "推送到每个粉丝" in err
+        assert data["run_at_label"] in err                           # 到点几号几点也要当面说
+        assert "本月已用 X/4" in data["hint"] and "后台手动群发" in data["hint"]
+
+    def test_定时群发时间不合法时连配额都不查(self, net, capsys):
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", "2026-08-03 09:00"], capsys)
+        assert code == 1 and net.calls == []
+
+    def test_定时群发带confirm但没写谁拍板的直接拒发(self, net, capsys):
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--confirm"], capsys)
+        assert code == 1 and "问责留痕" in data["error"] and net.calls == []
+
+    def test_定时群发带confirm和note才入队(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "job_id": 31}))
+        at = _future()
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", at, "--confirm",
+                                    "--note", "运营张三确认，8月第2条"], capsys)
+        assert code == 0 and data["outcome"] == "done" and data["job_id"] == 31
+        assert net.calls[0]["body"] == {"job_type": "mass_send", "run_at": at,
+                                        "payload": {"media_id": "M1"}, "confirm": True,
+                                        "note": "运营张三确认，8月第2条"}
+        assert "推送给全部粉丝" in data["hint"] and "后台手动群发" in data["hint"]
+        assert data["note"] == "运营张三确认，8月第2条"
+
+    def test_群发保护的钉死hint不被队列提示顶掉(self, net, capsys):
+        """45028 的处置是「等管理员手机确认」，换成「去查队列」就把话说反了。"""
+        net.serve(FakeResp(200, {"success": False, "wechat_errcode": 45028,
+                                 "wechat_errmsg": "mass send protect"}))
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--confirm",
+                                    "--note", "运营张三确认"], capsys)
+        assert code == 0 and data["outcome"] == "unknown"
+        assert data["hint"] == W.MASS_PROTECT_HINT
+
+
+class Test队列查询与撤销:
+    QUEUE = {"success": True, "total": 2, "items": [
+        {"id": 12, "job_type": "publish", "status": "pending",
+         "run_at": "2026-08-03T09:00:00+08:00", "payload": {"media_id": "M1"}},
+        {"id": 11, "job_type": "mass_send", "status": "done",
+         "run_at": "2026-07-30T10:00:00+08:00", "payload": {"media_id": "M0"}},
+    ]}
+
+    def test_list补人话状态与能不能撤(self, net, capsys):
+        net.serve(FakeResp(200, self.QUEUE))
+        code, data, _ = run_cli(S, ["--list", "--status", "pending"], capsys)
+        assert code == 0 and "status=pending" in net.calls[0]["url"]
+        assert data["items"][0]["can_cancel"] is True
+        assert data["items"][1]["can_cancel"] is False
+        assert "2026年8月3日" in data["items"][0]["run_at_label"] and "周一" in data["items"][0]["run_at_label"]
+        assert "推送给全部粉丝" in data["items"][1]["job_type_label"]
+        assert data["counts"] == {"in_page": 2, "by_status": {"pending": 1, "done": 1},
+                                  "mass_send": 1}
+        assert data["total"] == 2                     # 顶层字段不被本页统计覆盖
+
+    def test_服务端时间读不懂时如实给null而不是瞎猜(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"id": 5, "job_type": "publish", "status": "pending", "run_at": "谁知道呢"}]}))
+        code, data, _ = run_cli(S, ["--list"], capsys)
+        assert code == 0 and data["items"][0]["run_at_label"] is None
+
+    def test_cancel成功(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "cancelled": True}))
+        code, data, _ = run_cli(S, ["--cancel", "12"], capsys)
+        assert code == 0 and data["outcome"] == "done"
+        assert net.calls[0]["url"].endswith("/api/external/wechat/schedule/cancel")
+        assert net.calls[0]["body"] == {"id": 12}
+
+    def test_撤不掉时把三种可能和代价都讲清楚(self, net, capsys):
+        net.serve(FakeResp(409, {"success": False, "error": "任务已不是 pending"}))
+        code, data, _ = run_cli(S, ["--cancel", "12"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "只有还没到点" in data["error"] and "--list" in data["error"]
+        assert "上一次取消其实已经成功了" in data["error"]
+
+    def test_四个动作互斥(self, net, capsys):
+        with pytest.raises(SystemExit):
+            S.main([])
+
+
+# ══════════════ ⑤ 数据统计（stats_ops） ══════════════
+
+class Test快照聚合:
+    """纯函数，不碰网络。快照 payload 的形状由服务端落库决定，这里钉住三件事：
+    形状变了不静默算空、维度字段不当指标加、单篇不重复累加。"""
+
+    def test_payload三种形状都收得下(self):
+        rows = [{"ref_date": "2026-07-01", "payload": {"list": [{"new_user": 3}, {"new_user": 2}]}},
+                {"ref_date": "2026-07-02", "payload": [{"new_user": 4}]},
+                {"ref_date": "2026-07-03", "payload": {"new_user": 1}}]
+        assert ST.sum_all(ST.daily_totals(rows))["new_user"] == 10
+
+    def test_维度字段不进合计(self):
+        """user_source 是来源枚举（0=其他/1=公众号搜索…），相加出来是个看着像人数的垃圾数。"""
+        rows = [{"ref_date": "2026-07-01", "payload": {"list": [
+            {"user_source": 0, "new_user": 3, "cancel_user": 1},
+            {"user_source": 17, "new_user": 2, "cancel_user": 0}]}}]
+        total = ST.sum_all(ST.daily_totals(rows))
+        assert total == {"new_user": 5, "cancel_user": 1}
+
+    def test_读不懂的payload计不进来也不炸(self):
+        rows = [{"ref_date": "2026-07-01", "payload": None},
+                {"ref_date": "2026-07-02", "payload": "坏了"},
+                {"ref_date": "2026-07-03", "payload": {"new_user": 2}}]
+        assert ST.sum_all(ST.daily_totals(rows)) == {"new_user": 2}
+
+    def test_缺字段给null不给零(self):
+        picked, missing = ST.pick({"new_user": 5}, ("new_user", "cancel_user"))
+        assert picked == {"new_user": 5, "cancel_user": None} and missing == ["cancel_user"]
+
+    def test_单篇同一天以最新快照为准(self):
+        """getarticletotal 每天回的是整段历史：照单累加会把同一天算好几遍。"""
+        rows = [
+            {"ref_date": "2026-07-02", "payload": {"msgid": "1", "title": "标题", "details": [
+                {"stat_date": "2026-07-01", "int_page_read_user": 100}]}},
+            {"ref_date": "2026-07-03", "payload": {"msgid": "1", "title": "标题", "details": [
+                {"stat_date": "2026-07-01", "int_page_read_user": 130},
+                {"stat_date": "2026-07-02", "int_page_read_user": 40}]}},
+        ]
+        series = ST.latest_series(rows)
+        assert [r["stat_date"] for r in series] == ["2026-07-01", "2026-07-02"]
+        assert series[0]["int_page_read_user"] == 130         # 修订后的值，不是 100 也不是 230
+        totals = {}
+        for item in series:
+            ST.add_metrics(totals, item)
+        assert totals["int_page_read_user"] == 170
+
+    def test_转化率分母缺失或为零时回null(self):
+        assert ST.ratio(5, 0) is None and ST.ratio(5, None) is None and ST.ratio(None, 5) is None
+        assert ST.ratio(3, 4) == 0.75
+
+
+class Test统计CLI:
+    USER_ROWS = {"success": True, "items": [
+        {"ref_date": "2026-07-01", "stat_type": "getusersummary",
+         "payload": {"list": [{"ref_date": "2026-07-01", "user_source": 0,
+                               "new_user": 10, "cancel_user": 2}]}},
+        {"ref_date": "2026-07-02", "stat_type": "getusersummary",
+         "payload": {"list": [{"ref_date": "2026-07-02", "user_source": 0,
+                               "new_user": 6, "cancel_user": 4}]}},
+    ]}
+    BIZ_ROWS = {"success": True, "items": [
+        {"ref_date": "2026-07-01", "stat_type": "getbizsummary",
+         "payload": {"int_page_read_user": 120, "int_page_read_count": 150,
+                     "share_user": 8, "share_count": 11}},
+        {"ref_date": "2026-07-02", "stat_type": "getbizsummary",
+         "payload": {"int_page_read_user": 80, "int_page_read_count": 90,
+                     "share_user": 2, "share_count": 3}},
+    ]}
+
+    def test_overview逐日相加涨粉与阅读(self, net, capsys):
+        net.serve(FakeResp(200, self.USER_ROWS), FakeResp(200, self.BIZ_ROWS))
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026-07-01",
+                                     "--to", "2026-07-02"], capsys)
+        assert code == 0
+        assert "stat_type=getusersummary" in net.calls[0]["url"]
+        assert "from=2026-07-01" in net.calls[0]["url"] and "to=2026-07-02" in net.calls[0]["url"]
+        assert "stat_type=getbizsummary" in net.calls[1]["url"]
+        assert data["followers"] == {"new_user": 16, "cancel_user": 6, "net_user": 10}
+        assert data["engagement"]["int_page_read_user"] == 200
+        assert data["engagement"]["share_count"] == 14
+        assert data["engagement"]["add_to_fav_user"] is None          # 没这个字段就是 null
+        assert data["range"] == {"from": "2026-07-01", "to": "2026-07-02", "days": 2}
+        assert [r["ref_date"] for r in data["daily"]] == ["2026-07-01", "2026-07-02"]
+        assert data["daily"][0]["net_user"] == 8
+        assert data["labels"]["new_user"] == "新增关注人数"
+
+    def test_一行快照都没有时给null并明说别当成零(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "items": []}),
+                  FakeResp(200, {"success": True, "items": []}))
+        code, data, err = run_cli(ST, ["--overview", "--from", "2026-07-01",
+                                       "--to", "2026-07-02"], capsys)
+        assert code == 0
+        assert data["followers"] == {"new_user": None, "cancel_user": None, "net_user": None}
+        assert any("一行快照都没有" in w and "别当成" in w for w in data["warnings"])
+        assert "别当成" in err                       # warnings 同时也吼到 stderr
+
+    def test_服务端换了字段名时点名而不是悄悄算零(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"ref_date": "2026-07-01", "payload": {"新增": 5}}]}),
+            FakeResp(200, {"success": True, "items": []}))
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026-07-01",
+                                     "--to", "2026-07-02"], capsys)
+        assert data["followers"]["new_user"] is None
+        assert any("换了字段名" in w for w in data["warnings"])
+        assert data["other_fields"]["getusersummary"] == {"新增": 5}   # 不认识的字段也不丢
+
+    def test_区间早于数据起点要说清那段根本没有(self, net, capsys):
+        net.serve(FakeResp(200, self.USER_ROWS), FakeResp(200, self.BIZ_ROWS))
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2025-06-01",
+                                     "--to", "2025-07-01"], capsys)
+        assert any("2025-11-01" in w and "不是故障" in w for w in data["warnings"])
+
+    def test_区间含今天要说明天才有数据(self, net, capsys):
+        today = datetime.now(ST.CN_TZ).date()
+        net.serve(FakeResp(200, self.USER_ROWS), FakeResp(200, self.BIZ_ROWS))
+        code, data, _ = run_cli(ST, ["--overview", "--from", str(today), "--to", str(today)],
+                                capsys)
+        assert any("T+1" in w and "别拿别的指标凑数" in w for w in data["warnings"])
+
+    def test_长区间省略逐日明细但仍给合计(self, net, capsys):
+        net.serve(FakeResp(200, self.USER_ROWS), FakeResp(200, self.BIZ_ROWS))
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026-01-01",
+                                     "--to", "2026-07-02"], capsys)
+        assert data["daily"] is None and "--export" in data["daily_note"]
+        assert data["followers"]["new_user"] == 16
+
+    def test_日期形状不对或写反时不发请求(self, net, capsys):
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026/07/01",
+                                     "--to", "2026-07-02"], capsys)
+        assert code == 1 and net.calls == [] and "YYYY-MM-DD" in data["error"]
+
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026-07-09",
+                                     "--to", "2026-07-02"], capsys)
+        assert code == 1 and net.calls == [] and "写反" in data["error"]
+
+    def test_没给区间时说清跨任意区间都行(self, net, capsys):
+        code, data, _ = run_cli(ST, ["--overview"], capsys)
+        assert code == 1 and net.calls == [] and "跨任意区间" in data["error"]
+
+    def test_单篇逐日序列与转化率且不冒充读完率(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"ref_date": "2026-07-03", "msgid": "2247483647",
+             "payload": {"msgid": "2247483647", "title": "CPTSD 是什么", "details": [
+                 {"stat_date": "2026-07-01", "target_user": 1000, "int_page_read_user": 200,
+                  "int_page_read_count": 260, "ori_page_read_user": 40, "share_user": 20},
+                 {"stat_date": "2026-07-02", "target_user": 0, "int_page_read_user": 50,
+                  "int_page_read_count": 60, "ori_page_read_user": 10, "share_user": 5}]}}]}))
+        code, data, err = run_cli(ST, ["--article", "2247483647"], capsys)
+        assert code == 0 and "msgid=2247483647" in net.calls[0]["url"]
+        assert "stat_type=getarticletotaldetail" in net.calls[0]["url"]
+        assert data["title"] == "CPTSD 是什么" and data["days_covered"] == 2
+        assert data["totals"]["int_page_read_user"] == 250
+        assert data["rates"]["送达→阅读（人数）"] == 0.25          # 250/1000
+        assert data["rates"]["阅读→分享（人数）"] == 0.1           # 25/250
+        assert any("不提供" in w and "读完率" in w for w in data["warnings"])
+        assert "读完率" in err
+
+    def test_单篇查不到时不许说成没人看(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "items": []}))
+        code, data, _ = run_cli(ST, ["--article", "999"], capsys)
+        assert code == 0 and data["totals"]["int_page_read_user"] is None
+        assert any("没有群发过" in w and "别把「查不到」说成「没人看」" in w for w in data["warnings"])
+
+    def test_单篇缺msgid不发请求(self, net, capsys):
+        code, data, _ = run_cli(ST, ["--article", "  "], capsys)
+        assert code == 1 and net.calls == []
+
+    def test_导出落文件并回条数(self, net, tmp_path, capsys):
+        out = tmp_path / "sub" / "stats.json"
+        net.serve(FakeResp(200, self.USER_ROWS))
+        code, data, _ = run_cli(ST, ["--export", "--from", "2026-07-01", "--to", "2026-07-02",
+                                     "--stat-type", "getusersummary", "--out", str(out)], capsys)
+        assert code == 0 and data["outcome"] == "done" and data["path"] == str(out)
+        assert data["counts"] == {"getusersummary": 2}
+        saved = json.loads(out.read_text(encoding="utf-8"))
+        assert saved["stats"]["getusersummary"][0]["payload"]["list"][0]["new_user"] == 10
+
+    def test_导出为空时说清是没快照不是导错(self, net, tmp_path, capsys):
+        out = tmp_path / "empty.json"
+        net.serve(FakeResp(200, {"success": True, "items": []}))
+        code, data, _ = run_cli(ST, ["--export", "--from", "2026-07-01", "--to", "2026-07-02",
+                                     "--stat-type", "getusersummary", "--out", str(out)], capsys)
+        assert code == 0 and any("空的" in w for w in data["warnings"])
+
+    def test_统计的5xx照常算失败让人直接重试(self, net, capsys):
+        """查询没有「可能已生效」的风险，含糊成 unknown 只会让运营白等。"""
+        net.serve(FakeResp(502, {"success": False, "error": "服务端炸了"}))
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026-07-01",
+                                     "--to", "2026-07-02"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+
+    def test_三个动作互斥(self, net, capsys):
+        with pytest.raises(SystemExit):
+            ST.main([])

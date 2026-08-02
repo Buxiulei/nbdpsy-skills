@@ -53,8 +53,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlencode
 
-# 同目录 vendored 副本
-import nbdpsy_common  # noqa: F401  —— wechat_api 经它解析凭据与基址
+# 同目录 vendored 副本（凭据与基址由 wechat_api 经 nbdpsy_common 解析，这里不直接用它）
 import wechat_api
 from wechat_api import OpFailed
 
@@ -75,13 +74,19 @@ ARTICLE_FIELDS = ("title", "author", "digest", "content", "content_source_url",
 # 微信正文白名单外构件的扫描规则。**权威实现是 md2wechat.scan_forbidden()**，这里是它的
 # 精简副本——刻意不 import md2wechat：那个模块在缺 mistune 时会在 import 期直接打 JSON 并
 # sys.exit(1)，被本脚本 import 就成了「跑 --ledger 也要装 mistune」。改这里时同步改那边。
-_ATTR_VALUE = re.compile(r'"[^"]*"')
+# 只清「= 后面那段带引号的值」，单双引号都认。刻意锚在 `=` 上：裸扫引号会被正文里的
+# 撇号/引号带偏（`it's ... don't` 之间的整段会被抹掉，把真正的 class= 一起吞掉漏判）。
+_ATTR_VALUE = re.compile(r"""=\s*"[^"]*"|=\s*'[^']*'""")
 _FORBIDDEN_HTML = [
     (re.compile(r"<\s*script\b", re.I), "<script> 标签"),
     (re.compile(r"<\s*style\b", re.I), "<style> 标签"),
     (re.compile(r"<\s*iframe\b", re.I), "<iframe> 标签"),
     (re.compile(r"<[^>]*\s(?:class|id)\s*=", re.I), "class/id 属性"),
+    (re.compile(r"<[^>]*\son[a-z]+\s*=", re.I), "内联事件属性（JS 会被剔除）"),
 ]
+# 代码块里的星号是作者要展示的字面量（md2wechat 的 fix_cjk_strong 也刻意跳过它们），
+# 拿去当「残留 **」警告，运营会真的回源稿去改代码。
+_CODE_BLOCK = re.compile(r"<(pre|code)\b[^>]*>.*?</\1\s*>", re.I | re.S)
 MAX_CONTENT_CHARS = 20000
 
 
@@ -107,7 +112,7 @@ def read_content(path) -> str:
                        "微信正文收的是 HTML，直接灌 Markdown 会把 `## 标题` 原样显示给读者。"
                        "先跑 `md2wechat.py <稿子>.md --html-out <这个文件>` 编译。")
     # 属性值清空后再扫结构：`alt="讲 class= 的用法"` 这种文案不该被误杀（与 md2wechat 同款做法）
-    stripped = _ATTR_VALUE.sub('""', html)
+    stripped = _ATTR_VALUE.sub('=""', html)
     hits = [label for pattern, label in _FORBIDDEN_HTML if pattern.search(stripped)]
     if hits:
         raise OpFailed(
@@ -121,9 +126,10 @@ def content_warnings(html: str):
     w = []
     if len(html) >= MAX_CONTENT_CHARS:
         w.append(f"正文 {len(html)} 字符，达到/超过微信 2万字符上限——微信会拒收，请拆成上下篇。")
-    if "**" in html:
+    if "**" in _CODE_BLOCK.sub("", html):
         w.append("正文里有残留的 `**` 星号——微信里会原样显示，**发布前先回源稿改掉**："
-                 "已发布文章不能改，改一个星号要付删+重发、换链接、阅读清零的代价。")
+                 "已发布文章不能改，改一个星号要付删+重发、换链接、阅读清零的代价。"
+                 "（代码块 `<pre>/<code>` 里的星号是字面量，不算在内。）")
     if not re.search(r"https?://[\w.-]*mmbiz\.qpic\.cn/", html) and "<img" in html:
         w.append("正文里有图片但没看到 mmbiz.qpic.cn 域名——外链图微信一律不显示（读者看到空白）。"
                  "这份 HTML 多半是 md2wechat.py `--dry-run` 出来的，重新编译一次再发。")
@@ -285,7 +291,9 @@ def find_ledger_row(api_base, key, ledger_id, timeout, page=100, max_pages=20):
         if isinstance(last, int) and last < ledger_id:
             break
     raise OpFailed(f"台账里没有 id={ledger_id} 这一行。是不是把 media_id / publish_id 当成台账 id 了？"
-                   "台账 id 是 `--publish` 回的那个 `ledger_id`，用 `--ledger` 看一眼。")
+                   "台账 id 是 `--publish` 回的那个 `ledger_id`，用 `--ledger` 看一眼；"
+                   f"**或者这一行太旧、超出了本命令翻页范围**（最多往回翻 {page * max_pages} 条），"
+                   "这种情况用 `--ledger --offset N` 自己往后翻。")
 
 
 def do_status(args, api_base, key):
@@ -320,12 +328,13 @@ def do_mass_send(args, api_base, key):
         raise OpFailed("--mass-send 需要 --ledger-id <台账 id>（推荐）或 --media-id。")
 
     if not args.confirm:
-        # 服务端约定：confirm≠true 时**不发**，只回本月配额现状
-        data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/mass-send", key,
-                                       {**target, "confirm": False}, args.timeout)
+        # 红线警示**先打**：下面那次配额查询万一失败，这两条也照样得让运营看见
         wechat_api.warn("⚠ 这次**没有群发**（缺 --confirm），只查了本月配额。")
         wechat_api.warn("  · 群发**不可逆**、直接推到每个粉丝的对话框，**每自然月只有 4 次**。")
         wechat_api.warn(f"  · {QUOTA_CAVEAT}")
+        # 服务端约定：confirm≠true 时**不发**，只回本月配额现状
+        data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/mass-send", key,
+                                       {**target, "confirm": False}, args.timeout)
         return {"outcome": "failed",
                 "error": "未带 --confirm：本次只查了本月配额，**没有群发**（这是安全闸门，不是故障）。",
                 "server": {k: v for k, v in data.items() if k != "success"},

@@ -55,6 +55,9 @@ NOT_SENT_MARKERS = (
     "Connection refused", "Name or service not known", "NameResolutionError",
     "Temporary failure in name resolution", "nodename nor servname",
     "No route to host", "Network is unreachable",
+    # URL 本身就不合法（--api-base 打错、少了 https://）：requests 在**建连之前**就抛，
+    # 这次一定没发出去。归 unknown 只会让运营白查一次必然为空的台账。
+    "Invalid URL", "No scheme supplied", "InvalidSchema", "MissingSchema",
 )
 
 
