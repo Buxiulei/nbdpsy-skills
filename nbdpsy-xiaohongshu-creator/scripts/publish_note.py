@@ -28,6 +28,8 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
     python3 publish_note.py --wait-login --since <server_time> [--account-id N]
                                                 # 等运营扫码登录完成（新号不传 account-id）
     python3 publish_note.py --check-cookie 账号名或ID   # 触发 cookie 验活并轮询到结果
+    python3 publish_note.py --artifacts <job_id> [--out 目录] [--artifact-name 文件名]
+                                                # 取该次发布的现场截图（排障；空清单不是异常）
 
 凭据：NBDPSY_XHS_API_KEY（必需）、NBDPSY_XHS_API_BASE（可选，默认 https://mcp.nbdpsy.com），
 由 nbdpsy_common 三层解析（环境变量 > workspace/.env > 用户级 secrets.env），
@@ -524,6 +526,43 @@ def refresh_notes(api_base: str, key: str, account_id: int, timeout: float = 300
     raise ValueError(f"导出轮询超时（export_id={export_id}），稍后重跑 --notes <账号> --refresh")
 
 
+def list_artifacts(api_base: str, key: str, job_id: int) -> dict:
+    """列某次发布留下的现场截图（按发布流程真实时序，如 12_before_publish / 16_timeout）。
+    **空清单不是异常**：本功能上线前的 job 没打截图标记，服务端会连 hint 一起说明原因。"""
+    resp = send_request("GET", f"{api_base}/api/publish-jobs/{job_id}/artifacts", key)
+    if resp.status_code == 404:
+        return {"available": False, "job_id": job_id,
+                "hint": "查不到这个 job（id 敲错，或该 job 不属于你被授权的账号）"}
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    view = resp.json()
+    view["available"] = True
+    return view
+
+
+def _artifact_name(item):
+    """清单元素兼容字符串与 {"name": ...} 两种形态。"""
+    return item if isinstance(item, str) else (item.get("name") or item.get("filename"))
+
+
+def download_artifacts(api_base: str, key: str, job_id: int, files, out_dir: Path, only=None):
+    """把现场截图下载到 out_dir，返回落盘路径列表。only 非空时只下那一张。"""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+    for item in files:
+        name = _artifact_name(item)
+        if not name or (only and name != only):
+            continue
+        resp = send_request("GET", f"{api_base}/api/publish-jobs/{job_id}/artifacts/{quote(name)}",
+                            key, timeout=120)
+        if resp.status_code >= 400:
+            raise ValueError(f"{name}: {api_error(resp)}")
+        dest = out_dir / name
+        dest.write_bytes(resp.content)
+        saved.append(str(dest))
+    return saved
+
+
 def job_brief(view: dict) -> dict:
     return {"outcome": view.get("status"), "job_id": view.get("job_id"),
             "note_url": view.get("note_url"), "error": view.get("error")}
@@ -701,6 +740,10 @@ def main():
     ap.add_argument("--upload-images", nargs="+", metavar="路径",
                     help="上传图片得图床直链：目录（按名排序）或多个文件路径（1–18 张）")
     ap.add_argument("--list-uploads", action="store_true", help="列自己未过期的图床上传批次")
+    ap.add_argument("--artifacts", type=int, metavar="JOB_ID",
+                    help="列该次发布留下的现场截图（排障用；空清单不是异常）")
+    ap.add_argument("--out", metavar="DIR", help="--artifacts 配它则把截图下载到该目录")
+    ap.add_argument("--artifact-name", help="--artifacts --out 时只下这一张")
     ap.add_argument("--collection-id", help="发布时把笔记加入该合集（合集 id 用 note_ops.py --collections 查）")
     ap.add_argument("--quoted-note-id", help="发布时引用该笔记（显式指定，优先级高于 --related-counselor）")
     ap.add_argument("--activity-id", help="发布时关联该活动（会往正文末尾追加活动话题；用 note_ops.py --activities 查）")
@@ -784,6 +827,16 @@ def main():
             out, code = delete_note_result(view, args.delete_status)
             print(json.dumps(out, ensure_ascii=False))
             sys.exit(code)
+        if args.artifacts is not None:
+            view = list_artifacts(api_base, key, args.artifacts)
+            files = view.get("files") or []
+            if args.out and files:
+                view["saved"] = download_artifacts(api_base, key, args.artifacts, files,
+                                                   Path(args.out), args.artifact_name)
+            elif args.out:
+                view["saved"] = []
+            print(json.dumps(view, ensure_ascii=False))
+            return
         if args.notes:
             aid, label, _ = resolve_account(api_base, key, args.notes)
             if args.refresh:

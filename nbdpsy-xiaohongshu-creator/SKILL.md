@@ -1060,6 +1060,11 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
    - `error` 提示 cookie 失效/登录 → 按「小红书账号接入与管理」一节走：`--check-cookie` 验活、
      `--extension-info` + 无痕窗扫码 + `--wait-login` 重登（六态中 `error` 是基础设施失败
      ≠ cookie 失效，别急着让人重登）。
+   - **发布 failed / 超时但看不出原因** → 取现场截图：
+     `python3 {SKILL_DIR}/scripts/publish_note.py --artifacts <job_id> --out <目录>`，
+     清单按发布流程真实时序排（`12_before_publish` = 点发布前那刻，`16_timeout` = 超时那刻），
+     下载后直接 Read 图片看。**空清单不是异常**——本功能上线前的 job 没打截图标记，服务端会
+     在 hint 里说明原因，别把它当故障。
    - 账号 `cookie_status=restricted` → **被小红书挂了风控验证墙，不是登录态失效**（cookie 好好的，
      重扫码治不好），也不同于上一条的「禁发笔记处罚」。让运营**用手机小红书 App 扫码验证身份**后
      重新检测；提示「请求太频繁」就先晾一阵别再操作该号。`--self-check` 会把这类号单列在
@@ -1115,9 +1120,15 @@ python3 {SKILL_DIR}/scripts/note_ops.py --backfill-purpose <账号>  # 幂等，
 
 **两条业务规则（是绩效归属，不是技术偏好）**：
 
-- **只引用本账号的推介笔记**。每个账号背后是不同运营、各自算 KPI，跨账号引用等于把客户导到
-  别人名下。本账号没有就留空——服务端已按此实现，你也别手动传别号的 `quoted_note_id`。
-  唯一例外「接待员联系方式」笔记由服务端配置指定，不用管。
+- **默认只引用本账号的推介笔记**。每个账号背后是不同运营、各自算 KPI，跨账号引用等于把客户导到
+  别人名下。`related_counselor` 的自动推导只在本账号内找，找不到就留空——这条业务规则没变。
+  唯一正当的跨账号引用是**主号那篇「接待员联系方式」**（含二维码有违规风险，故集中在主号统一
+  管理），服务端有配置指定、常规路径不用你管。
+  > 2026-08-02 起**技术上**跨账号引用已可用：照原样传 `quoted_note_id`，服务端自己判断——本账号
+  > 的走「我的笔记」，不在本账号里的自动切「他人笔记」按 note_id 检索。**但能传不等于该传**：
+  > 除了上面那篇接待员笔记，别手动把别号的 note_id 传进去。服务端三种情况会拒绝（检索到的
+  > note_id 与目标不符 / 候选卡不是恰好一张 / 确认后引用区没变化），**拒绝不阻断发布**——
+  > 笔记照发，只是引用那一项报未设上。
 - **矩阵号评论零引流指向**。转化引导只由笔记所属账号本人发。给别号的笔记评论时，写专业视角，
   不写"想预约找我"。评论区也不能放链接（`#` 是死字符、URL 只存成不可点纯文本，且本身即违规导流特征）。
 
@@ -1142,6 +1153,20 @@ python3 {SKILL_DIR}/scripts/note_ops.py --backfill-status <job_id>
 > 问题：集中给老笔记互动是平台眼里最典型的补量特征，撞墙的代价是账号被置 `restricted`、
 > 要人工用手机扫码解开，**期间该号所有任务全部失败**。撞墙时服务端会立刻中止本轮，
 > 但**已完成部分照常记账不回滚**，别当成白跑了。本操作非幂等。
+
+**服务端每 30 分钟自动续跑一轮**，六天那轮不需要人守着，**也别排「每天调一次」的定时逻辑**。
+这个命令的用途是运营带着意图临时发起某一范围的补量。
+
+看进度时怎么读失败行（`detail` 格式是 `<原因> | forensics={...}`，按前缀或 `|` 切分匹配，
+`forensics` 只是排查信息不做业务分支）：
+
+- **`点赞/收藏_not_effective`——绝不要重试**。点了但图标不翻、赞与藏成对失败（约 4%）。点赞是
+  开关：若首次点击其实已在服务端生效、只是图标没刷新，**再点一次就是取消点赞**。它会自愈
+  ——失败的篇进 24 小时冷却后自动重试，通常就过了，**是延后一天，不是数据丢失**。
+  ⚠ 这个现象截至 2026-08-02 **仍未定性**（服务端一度说"根因是页面上有两个互动栏"，后来自己
+  收回了——修复后仍复现）。别按已解决对待，也别自己去归因重试。
+- **`note_not_found`**——找笔记已会滚动加载，现在这个错基本只在笔记真被删或转私密时出现。
+  先 `--note <note_id>` 查笔记状态，别当系统抽风。
 
 **另有一个自动行为要知道**（不用调用）：每日台账同步发现平台上有、库里没有的笔记（即手工发的），
 会自动给矩阵内其余账号派点赞收藏任务，同时登记「抓正文 + 分类核心目的」的回填。所以新发现的
@@ -1306,8 +1331,8 @@ python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9
 | **路线② 文字版渲染**（markdown → HTML/CSS → Chromium → 按行边界切页 → 1080×1920 PNG；**`--style <json>` 吃运营「文字版」那套风格档案**（`style_profile.py --get --kind typeset` 落盘的那份，**每批必传**，没有那套才不传）/ `--theme clean\|paper`（⛔ 别每批写死，它会盖掉档案里的主题）/ `--no-meta` / `--max-pages` / `--html-only` 降级 / **`--counselor EMP…` 末页追加咨询师推介卡**） | `scripts/typeset_longimage.py` |
 | **路线② 系列篇拆分**（>3500 字用；按 H2 边界 + 动态规划均衡分组，出 body-01…NN.md 并埋承接段/预告段 TODO；`--target` 目标字数 / `--parts` 强制篇数） | `scripts/split_longform.py` |
 | 后端一致性出图（gpt-image 锚点法，异步 + 轮询；--cover-only 过闸门 / --anchor-url 批量 / --pages 重出失败页 / --job 复查 / --dry-run） | `scripts/gen_images.py` |
-| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads；发布可选带 --collection-id / --quoted-note-id / --activity-id / --related-counselor / --note-purpose） | `scripts/publish_note.py` |
-| **已发布笔记**的台账与操作（--ledger 台账 / --note 单条含正文 / --collections / --activities / --set-components / --set-visibility / --comment / --sync-ledger / --backfill-purpose；四条硬规矩见「笔记发出去之后」一节） | `scripts/note_ops.py` |
+| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads / --artifacts 取发布现场截图排障；发布可选带 --collection-id / --quoted-note-id / --activity-id / --related-counselor / --note-purpose） | `scripts/publish_note.py` |
+| **已发布笔记**的台账与操作（--ledger 台账 / --note 单条含正文 / --collections / --activities / --set-components / --set-visibility / --comment / --sync-ledger / --backfill-purpose / --backfill-interactions 历史笔记补赞藏 / --backfill-status；四条硬规矩见「笔记发出去之后」一节） | `scripts/note_ops.py` |
 | 每用户风格档案读写（**一人多套**：`--list-profiles` 有几套 / `--get --kind carousel\|typeset` 取该形态那套（一套都没有 → `profile: null`，按内置默认继续）/ `--get --profile <套名>` 取点名那套 / `--new-profile <名> --kind <k> [--from <套名>\|--file <json>]` 新建 / `--set-active <名>` 切默认；开跑前 `--get` 三层降级 / `--versions` 历史 / `--version N [--profile <套名>]` 某套的某一版 / `--put <json> --base-version N [--profile <套名>\|--kind <k>]` **整份覆盖点名那一套**（`--put`/`--rollback`/`--versions` 都能点名，⛔ 不点名就落到默认那套——读哪套就把同样的 `--profile` 带到写命令上） / `--rollback N --base-version M`；`--put`/`--rollback` 必带 `--base-version`，值**直接取 `--get` 响应里的 `base_version`**（无条件下发，不用自己推）；**`--put`/`--rollback` 返回的 `dropped_keys` 必读**，非空 = 这次覆盖冲掉了别的字段，回读运营确认后再往下；exit 2 = 没连上服务走内置兜底、exit 3 = 409 别重试） | `scripts/style_profile.py` |
 | 工作区路径查询 / 凭据工具 / 沙盒放行（sandbox allow） | `scripts/nbdpsy_common.py` |
 | 源长文（输入，第 0 步拉取产物） | `{workspace}/drafts/{slug}.md` |

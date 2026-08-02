@@ -879,3 +879,42 @@ def test_self_check_lists_restricted_separately(monkeypatch):
     assert report["restricted"] == ["聊创伤"]
     assert report["need_relogin"] == []                 # 别把它算成"要重新扫码"
     assert "验证墙" in report["verdict"] and "手机" in report["verdict"]
+
+
+# ---- 发布现场截图（排障）：空清单不是异常 ----
+
+def test_list_artifacts_empty_is_not_a_failure(monkeypatch):
+    """本功能上线前的 job 没打截图标记，服务端返回空清单 + hint——别当故障。"""
+    import publish_note
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: _Resp(
+        200, {"job_id": 135, "count": 0, "files": [], "hint": "空清单 = 该 job 没留截图"}))
+    view = publish_note.list_artifacts("https://x", "k", 135)
+    assert view["available"] is True and view["files"] == [] and view["count"] == 0
+
+
+def test_list_artifacts_404(monkeypatch):
+    import publish_note
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: _Resp(404, {}))
+    assert publish_note.list_artifacts("https://x", "k", 999)["available"] is False
+
+
+def test_artifact_name_accepts_both_shapes():
+    import publish_note
+    assert publish_note._artifact_name("16_timeout.png") == "16_timeout.png"
+    assert publish_note._artifact_name({"name": "12_before_publish.png"}) == "12_before_publish.png"
+
+
+def test_download_artifacts_writes_files_and_filters(tmp_path, monkeypatch):
+    import publish_note
+
+    class _Bin:
+        status_code, content, text = 200, b"\x89PNG data", "x"
+        def json(self): return {}
+
+    monkeypatch.setattr(publish_note, "send_request", lambda *a, **k: _Bin())
+    files = [{"name": "12_before_publish.png"}, {"name": "16_timeout.png"}]
+    saved = publish_note.download_artifacts("https://x", "k", 135, files, tmp_path)
+    assert len(saved) == 2 and (tmp_path / "16_timeout.png").read_bytes().startswith(b"\x89PNG")
+    only = publish_note.download_artifacts("https://x", "k", 135, files, tmp_path,
+                                           only="16_timeout.png")
+    assert [Path(p).name for p in only] == ["16_timeout.png"]

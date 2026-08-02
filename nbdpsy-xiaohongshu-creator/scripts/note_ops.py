@@ -412,7 +412,10 @@ def start_interaction_backfill(api_base: str, key: str, scope: str,
     ⚠ **慢是设计意图，不是性能问题。** 集中对老笔记互动是平台眼里最典型的补量特征；
     撞墙的代价是账号被置 restricted、要人工用手机扫码解开，期间该号所有任务全部失败。
     所以：不要调高上限、不要反复重试、不要拆成多次小任务高频调用。本操作**非幂等**，
-    重跑会重复处理、白开浏览器、消耗当日配额、增加风控暴露。"""
+    重跑会重复处理、白开浏览器、消耗当日配额、增加风控暴露。
+
+    **服务端已自动续跑**（每 30 分钟自己续一轮，无需人工介入）——**别再排「每天调一次」的
+    定时逻辑**。本命令的用途变成：运营带着意图临时发起某一范围的补量。"""
     if scope not in BACKFILL_SCOPES:
         raise ValueError(f"scope 只能是 {'/'.join(BACKFILL_SCOPES)}，收到 {scope!r}")
     payload = {"scope": scope}
@@ -428,7 +431,19 @@ def start_interaction_backfill(api_base: str, key: str, scope: str,
 
 def interaction_backfill_status(api_base: str, key: str, job_id: str) -> dict:
     """查补量任务进度。撞验证墙时服务端会立刻中止本轮并把该号置 restricted，
-    **已完成的部分照常记账不回滚**——所以看到中止别当"全白跑了"。"""
+    **已完成的部分照常记账不回滚**——所以看到中止别当"全白跑了"。
+
+    读失败行的 `detail` 要注意格式是 `<失败原因> | forensics={...}`（2026-08-02 起变长）：
+    **按前缀匹配或按 `|` 切分**，别全等匹配；`forensics` 是排查用附加信息，不要拿它做业务分支。
+    成功（done）与跳过（skipped）行的 detail 一个字没变。
+
+    两类失败原因的正确反应：
+    - `点赞/收藏_not_effective`（点了但图标不翻，赞与藏总是成对失败）——**绝不要重试**。
+      点赞是开关：若首次点击其实已在服务端生效、只是图标没刷新，再点一次就是**取消点赞**。
+      服务端同样刻意没加重试。它会自愈：失败的篇进 24 小时冷却后自动重试，通常就过了，
+      **是延后一天，不是数据丢失**。截至 2026-08-02 此现象仍未定性，别按已解决对待。
+    - `note_not_found`——补量找笔记已会滚动加载，现在这个错基本只在笔记真被删或转私密时出现。
+      **先查笔记状态**（`--note <note_id>`），别当系统抽风去重试。"""
     resp = send_request("GET", f"{api_base}/api/interaction-backfills/{job_id}", key)
     if resp.status_code == 404:
         return {"available": False, "job_id": job_id, "hint": "查不到这个 job_id（敲错或从未发起）"}
@@ -436,6 +451,11 @@ def interaction_backfill_status(api_base: str, key: str, job_id: str) -> dict:
         raise ValueError(api_error(resp))
     view = resp.json()
     view["available"] = True
+    view["reading_detail"] = ("失败行 detail 格式为 `<原因> | forensics={...}`：按前缀匹配或按 | 切分，"
+                              "别全等匹配；forensics 只是排查信息不做业务分支。"
+                              "`点赞/收藏_not_effective` **绝不要重试**（点赞是开关，重试可能变成取消），"
+                              "它会在 24 小时冷却后自动重试、是延后不是丢失；`note_not_found` 先查笔记"
+                              "是不是被删或转私密了")
     if view.get("status") == "error":
         view["hint"] = ("失败**不要盲目重试**：重跑会重复处理、消耗当日配额、增加风控暴露。"
                         "先看该账号 cookie_status 是不是 restricted（撞了验证墙，要人工手机扫码解开）")
