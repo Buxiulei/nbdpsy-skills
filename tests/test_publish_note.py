@@ -810,3 +810,43 @@ def test_delete_note_result_server_unknown_is_manual_check():
         {"status": "unknown", "reason": "restart_interrupted"}, "d-7")
     assert code == 0 and out["outcome"] == "unknown" and out["reason"] == "restart_interrupted"
     assert "人工" in out["hint"] and "重发" in out["hint"] and "不可逆" in out["hint"]
+
+
+# ---- 发布可选字段（合集/引用/活动/咨询师/核心目的）----
+
+class _Args:
+    """collect_extras 只读这五个属性，构造个最小替身即可。"""
+    def __init__(self, **kw):
+        for k in ("collection_id", "quoted_note_id", "activity_id",
+                  "related_counselor", "note_purpose"):
+            setattr(self, k, kw.get(k))
+
+
+def test_collect_extras_cli_overrides_frontmatter():
+    import publish_note
+    meta = {"note_purpose": "概念解读", "related_counselor": "李宇"}
+    extras = publish_note.collect_extras(meta, _Args(note_purpose="推介咨询师"))
+    assert extras == {"note_purpose": "推介咨询师", "related_counselor": "李宇"}
+
+
+def test_collect_extras_omits_unset_keys():
+    """不传与传 null 服务端语义不同——没给值的键绝不能出现在 payload 里。"""
+    import publish_note
+    assert publish_note.collect_extras({}, _Args()) == {}
+    assert publish_note.collect_extras({"note_purpose": ""}, _Args()) == {}
+
+
+def test_collect_extras_takes_cli_only_fields():
+    import publish_note
+    extras = publish_note.collect_extras(
+        {}, _Args(collection_id="c1", quoted_note_id="n1", activity_id="43561"))
+    assert extras == {"collection_id": "c1", "quoted_note_id": "n1", "activity_id": "43561"}
+
+
+def test_extras_warnings_flag_precedence_and_activity_side_effect():
+    import publish_note
+    w = publish_note.extras_warnings({"quoted_note_id": "n1", "related_counselor": "李宇"})
+    assert any("quoted_note_id 为准" in x for x in w)
+    w2 = publish_note.extras_warnings({"activity_id": "43561"})
+    assert any("正文" in x and "话题" in x for x in w2)
+    assert publish_note.extras_warnings({"collection_id": "c1"}) == []

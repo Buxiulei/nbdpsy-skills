@@ -9,6 +9,50 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.52.0] — 2026-08-02
+
+### 接上 nbdpsy-server 的笔记全量能力：发布之后的那一半
+
+服务端 2026-08-01 交接文档《笔记能力全量对接》落地到 skill 侧。此前 skill 只会「把笔记发出去」，
+发出去之后的一切（平台上现存哪些笔记、改合集/引用/活动、切公开或私密、发评论）一概够不着。
+没有破坏性变更，既有调用照常工作。
+
+**新增 `nbdpsy-xiaohongshu-creator/scripts/note_ops.py`**：
+
+- 查询：`--ledger`（台账，平台上**现存**哪些笔记）/ `--note <note_id>`（单条，**只有这里给正文**）/
+  `--collections` / `--activities [--keyword]`；
+- 操作：`--set-components`（合集/引用/活动）/ `--set-visibility --privacy 0|1` / `--comment`；
+- 幂等维护：`--sync-ledger` / `--backfill-purpose`（这两个失败可放心重跑）。
+
+**`publish_note.py` 发布时可选带五个字段**：`--collection-id` / `--quoted-note-id` /
+`--activity-id` / `--related-counselor` / `--note-purpose`；后两个也可写进笔记 frontmatter，
+命令行优先。**只在显式给值时才下发**——不传与传 null 在服务端语义不同，不替用户猜。
+
+**四条硬规矩写进了代码，不只是文档**：
+
+- `permission_code` 的 `null` **不是公开**。统一输出 `visibility: public|private|unknown` 三态，
+  `visibility_of()` 只认 `== 0`。服务端就因为把 null 当公开，差点把用户刻意隐藏的私密笔记改回公开；
+- **台账 ≠ 发布任务**。笔记被删后 `publish_jobs` 仍是 `published` 不回滚（实证某号 20 条 published、
+  平台只剩 17 篇），所以「这个号有几篇笔记」只认 `--ledger`；
+- **成功不等于生效**。三组件逐项看 `applied`/`failed`，`failed` 非空一律 `outcome=partial` + exit 1，
+  提示只对失败项单独重来（私密笔记加合集会被平台静默丢弃）；
+- **非幂等失败不重试**。可见性/评论/三组件提交后再出任何异常都落 `outcome=unknown` + exit 0，
+  绝不落 failed 诱导重发。为此把提交与轮询拆成两步（`start_*` / `poll_*`），入队拿到 id 的那一刻
+  就记进 `inflight`——轮询期断网也不会把已入队的任务说成「没发生」。可见性还挡掉了布尔值：
+  JSON 里传 `true` 服务端 pydantic 会读成 `1`，等于悄悄把笔记藏起来。
+
+**实测端点时抓到一个自己差点犯的错**：单条端点响应是 `{"note": {...}}` 包一层，直接读顶层
+`permission_code` 恒 `None`，正好落进「null 当未知」那条规则，把一篇公开笔记显示成 unknown。
+已修 + 回归测试钉死两种形态。
+
+业务规则也写进了 SKILL.md 与脚本 docstring：**只引用本账号的推介笔记**（跨账号引用会把客户导到
+别的运营名下、抢同事 KPI）、**矩阵号评论零引流指向**、评论区不能放链接；风控上「能走创作中心就
+别走他人主页」「别为了确认反复起会话，一小时 5 次会被打成请求太频繁」。
+
+测试 689 → 716（新增 27 条 note_ops + 5 条发布字段），全绿。
+
+---
+
 ## [1.51.0] — 2026-07-29
 
 ### 即梦登录重写：脚本自己把登录页开到用户面前

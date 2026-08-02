@@ -8,6 +8,8 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
     python3 publish_note.py --note post-01.md --account 账号名或ID
         [--images-dir DIR] [--schedule "2026-07-14T09:00:00+08:00"]
         [--api-base URL] [--no-wait] [--wait-timeout 900] [--dry-run]
+        [--collection-id N] [--quoted-note-id ID] [--activity-id N]
+        [--related-counselor 姓名] [--note-purpose 推介咨询师]
     python3 publish_note.py --job 42            # 只查已提交任务的状态
     python3 publish_note.py --list-jobs [--account 号] [--status pending] [--limit N]  # 列发布任务
     python3 publish_note.py --reschedule 42 --schedule "2026-07-16T09:00:00+08:00"    # 改定时
@@ -57,6 +59,13 @@ failed 仅表示服务端明确报 error：note_not_found（标题须精确匹�
 --cancel <id>：撤稿，{ok:true} exit 0；{ok:false,status} → exit 1 + hint（按 status 区分文案）；404 透传；
 --upload-images 输出 {batch_id,urls,expires_at,warnings}（urls 可直接作发布 images，7 天过期）；
 --list-uploads 透传 {batches:[...]}。PATCH 严格只发用户要改的字段（部分更新语义是服务端契约核心）。
+
+发布可选字段（全部可缺省，只在显式给值时才下发——不传与传 null 服务端语义不同）：
+--collection-id / --quoted-note-id / --activity-id / --related-counselor / --note-purpose；
+后两个也可写进笔记 frontmatter（`note_purpose:` / `related_counselor:`），命令行优先。
+related_counselor 驱动服务端**在本账号内**推导引用笔记，查不到就留空、绝不跨账号兜底
+（跨账号引用＝把客户导到别的运营名下）。activity_id 会让服务端往正文末尾追加活动话题、
+且话题名由活动侧配置不等于活动名。已发布笔记要改这些组件走 note_ops.py --set-components。
 """
 import argparse
 import base64
@@ -174,6 +183,42 @@ def b64_items(paths):
         items.append({"b64": base64.b64encode(p.read_bytes()).decode("ascii"),
                       "ext": p.suffix.lstrip(".").lower()})
     return items
+
+
+# 发布可选字段里，允许写进笔记 frontmatter 的两个（创作时就定得下来）；
+# collection_id / quoted_note_id / activity_id 是发布当下的运营决策，只走命令行。
+_META_EXTRA_KEYS = ("note_purpose", "related_counselor")
+
+
+def collect_extras(meta: dict, args) -> dict:
+    """组装 publish-jobs 的可选字段：合集 / 引用笔记 / 活动 / 关联咨询师 / 核心目的。
+    来源 = 命令行 > frontmatter。**只放用户显式给了值的键**——不传与传 null 在服务端语义不同，
+    绝不替用户猜。related_counselor 会驱动服务端自动推导引用笔记（只在本账号内找，查不到就留空，
+    绝不跨账号兜底——跨账号引用会把客户导到别的运营名下）。"""
+    extras = {}
+    for k in _META_EXTRA_KEYS:
+        v = meta.get(k)
+        if v not in (None, ""):
+            extras[k] = str(v).strip()
+    cli = {"collection_id": args.collection_id, "quoted_note_id": args.quoted_note_id,
+           "activity_id": args.activity_id, "related_counselor": args.related_counselor,
+           "note_purpose": args.note_purpose}
+    for k, v in cli.items():
+        if v not in (None, ""):
+            extras[k] = v
+    return extras
+
+
+def extras_warnings(extras: dict):
+    """可选字段的预警（都不阻断发布，只把服务端的副作用先说清楚）。"""
+    w = []
+    if extras.get("quoted_note_id") and extras.get("related_counselor"):
+        w.append("同时给了 quoted_note_id 与 related_counselor：以 quoted_note_id 为准，"
+                 "related_counselor 的引用自动推导不生效")
+    if extras.get("activity_id"):
+        w.append("关联活动会自动往正文末尾追加一个话题标签并真的发出去，且话题名由活动侧配置、"
+                 "不等于活动名（如活动「明日方舟创作应援」注入的是 #明日方舟）")
+    return w
 
 
 def build_warnings(title: str, content: str, topics, image_paths):
@@ -639,6 +684,13 @@ def main():
     ap.add_argument("--upload-images", nargs="+", metavar="路径",
                     help="上传图片得图床直链：目录（按名排序）或多个文件路径（1–18 张）")
     ap.add_argument("--list-uploads", action="store_true", help="列自己未过期的图床上传批次")
+    ap.add_argument("--collection-id", help="发布时把笔记加入该合集（合集 id 用 note_ops.py --collections 查）")
+    ap.add_argument("--quoted-note-id", help="发布时引用该笔记（显式指定，优先级高于 --related-counselor）")
+    ap.add_argument("--activity-id", help="发布时关联该活动（会往正文末尾追加活动话题；用 note_ops.py --activities 查）")
+    ap.add_argument("--related-counselor", help="关联咨询师姓名（驱动服务端在本账号内自动推导引用笔记）")
+    ap.add_argument("--note-purpose",
+                    help="本篇核心目的（推介咨询师/概念解读/案例剖析/热点分析/互动引导/个人记录/其他，"
+                         "词表会扩不强制）；也可写进笔记 frontmatter，命令行优先")
     args = ap.parse_args()
 
     key = nbdpsy_common.get_secret(nbdpsy_common.XHS_API_KEY)
@@ -784,7 +836,8 @@ def main():
             raise ValueError("frontmatter 缺 title")
         content, topics = split_content_topics(extract_publish_text(body), meta)
         image_paths = collect_images(args.note, args.images_dir)
-        warnings = build_warnings(title, content, topics, image_paths)
+        extras = collect_extras(meta, args)
+        warnings = build_warnings(title, content, topics, image_paths) + extras_warnings(extras)
         for w in warnings:
             print(f"⚠ {w}", file=sys.stderr)
 
@@ -793,7 +846,7 @@ def main():
                 "outcome": "dry_run", "title": title, "content_chars": len(content),
                 "topics": topics, "images": [str(p) for p in image_paths],
                 "account": args.account, "schedule_time": args.schedule,
-                "warnings": warnings,
+                "extras": extras, "warnings": warnings,
             }, ensure_ascii=False, indent=2))
             return
 
@@ -803,7 +856,7 @@ def main():
             print(f"⚠ {acc_warn}", file=sys.stderr)
 
         payload = {"account_id": account_id, "title": title, "content": content,
-                   "images": b64_items(image_paths), "topics": topics}
+                   "images": b64_items(image_paths), "topics": topics, **extras}
         if args.schedule:
             payload["schedule_time"] = args.schedule
 

@@ -1038,6 +1038,12 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
    python3 {SKILL_DIR}/scripts/publish_note.py --note {note_dir}/post-01.md --account <账号名或id>
    ```
 
+   **发布时可顺带设三个组件 + 两个标注**（全可选，运营没提就别加）：`--collection-id`（加入合集）、
+   `--quoted-note-id`（引用某篇笔记）、`--activity-id`（关联活动）、`--related-counselor <姓名>`
+   （让服务端在**本账号内**自动推导引用哪篇推介笔记）、`--note-purpose`（本篇核心目的，也可写进
+   frontmatter）。合集/活动 id 用 `note_ops.py --collections/--activities` 查。⚠ 关联活动会
+   **往正文末尾追加活动话题并真的发出去**，且话题名≠活动名。
+
    stdout JSON：`outcome=published` 时带 `note_url`（回给运营）；`failed` 带 `error`；
    `outcome=unknown` 表示**任务已入队但状态没确认**（网络抖动等）——**绝不重发**，按 hint 用
    `--job <id>` 复查到终态为止；轮询超时仍在跑同理。多篇逐条串行发，别并发轰同一账号。
@@ -1064,6 +1070,57 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
 - 文件路径与篇数 + 预览页（`{note_dir目录名}-preview.html`）路径 + `images/post-NN/` 各子目录。
 - **怎么发**：把「发布文案」整段复制进小红书（含可见标签行）；按 P01→PNN 顺序上传**该篇**子目录 `images/post-NN/` 里的图，首图即封面（别拿错别篇的图）。
 - **发布要点**：首图最关键、标签贴够、危机声明保留、不要在任何位置放微信/二维码导流。
+
+---
+
+## 笔记发出去之后（台账查询 + 改组件 / 改可见性 / 发评论）
+
+发布归 `publish_note.py`，**已发布笔记**的一切归 `scripts/note_ops.py`。用户问「这个号现在有哪些
+笔记 / 哪些是私密的 / 把某篇加进合集 / 把某篇藏起来 / 去某篇下面评论一条」时走这里。
+
+```bash
+python3 {SKILL_DIR}/scripts/note_ops.py --ledger <账号>            # 平台上现存哪些笔记
+python3 {SKILL_DIR}/scripts/note_ops.py --note <note_id>           # 单条（**只有这里给正文**）
+python3 {SKILL_DIR}/scripts/note_ops.py --collections <账号>       # 合集 id
+python3 {SKILL_DIR}/scripts/note_ops.py --activities <账号> [--keyword 心理]   # 活动 id
+python3 {SKILL_DIR}/scripts/note_ops.py --set-components --account <账号> --note-id <id> \
+        [--collection-id N] [--quoted-note-id ID] [--activity-id N] [--related-counselor 姓名]
+python3 {SKILL_DIR}/scripts/note_ops.py --set-visibility --account <账号> --note-id <id> --privacy 0|1
+python3 {SKILL_DIR}/scripts/note_ops.py --comment --account <账号> --title "标题" --text "评论文案"
+python3 {SKILL_DIR}/scripts/note_ops.py --sync-ledger <账号>       # 幂等，可放心重跑
+python3 {SKILL_DIR}/scripts/note_ops.py --backfill-purpose <账号>  # 幂等，可放心重跑
+```
+
+**四条硬规矩**（都是服务端已经踩过的坑，别绕开）：
+
+1. **`permission_code` 的 `null` 不是公开**。脚本输出的 `visibility` 是 `public|private|unknown`
+   三态——**unknown 只是没同步到，绝不能当公开对待**。要判断一篇笔记公不公开，看这个字段，
+   别自己去读 `permission_code` 做真假判断。服务端就因为把 null 当公开，差点把用户刻意隐藏的
+   私密笔记改回公开。
+2. **`--ledger`（平台上现在有什么）≠ `publish_note.py --list-jobs`（我们提交过什么）**。
+   笔记被删后发布任务仍是 `published` 不回滚（实证某号 20 条 published、平台只剩 17 篇）。
+   回答"这个号有几篇笔记"一律用 `--ledger`。`sync_status=orphan` 不是异常，只表示"不是本系统发的"
+   （人工在 App 里发的老帖，某些号大半都是）。
+3. **返回成功不等于生效**。这条产品线的失败普遍是静默的。三组件的结果里 `outcome=partial`
+   意思是"有的成了有的没成"——**这不是成功**，只对 `failed` 里的那几项单独重来，别整包重发。
+   已知静默丢弃：私密笔记加合集（平台不允许，先转公开再加）。
+4. **非幂等的四件事失败不要重试**：改可见性、发评论、改组件、删笔记。脚本给 `outcome=unknown`
+   时意思是"真不知道成没成"——**先 `--note <note_id>` 核对当前实际状态再决定**。反例：可见性
+   切换超时后盲目重试，会把运营刚手工改回公开的笔记再次藏起来；活动重复关联会把话题重复注入
+   正文、只增不减而且真的发出去。
+
+**两条业务规则（是绩效归属，不是技术偏好）**：
+
+- **只引用本账号的推介笔记**。每个账号背后是不同运营、各自算 KPI，跨账号引用等于把客户导到
+  别人名下。本账号没有就留空——服务端已按此实现，你也别手动传别号的 `quoted_note_id`。
+  唯一例外「接待员联系方式」笔记由服务端配置指定，不用管。
+- **矩阵号评论零引流指向**。转化引导只由笔记所属账号本人发。给别号的笔记评论时，写专业视角，
+  不写"想预约找我"。评论区也不能放链接（`#` 是死字符、URL 只存成不可点纯文本，且本身即违规导流特征）。
+
+**风控**（服务端实测，调用方也遵守）：能走创作中心的数据就别走他人主页（访问他人主页会触发验证墙）；
+**反复起浏览器会话本身就是风险源**——同一账号一小时内 5 次会话会被打成"请求太频繁"，诊断脚本也算
+次数，所以别为了"确认一下"反复跑 `--collections`/`--activities`。账号 `cookie_status=restricted`
+表示 cookie 没失效但被挂了验证墙，要运营用手机小红书 App 扫码验证身份后重新检测。
 
 ---
 
@@ -1207,7 +1264,8 @@ python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9
 | **路线② 文字版渲染**（markdown → HTML/CSS → Chromium → 按行边界切页 → 1080×1920 PNG；**`--style <json>` 吃运营「文字版」那套风格档案**（`style_profile.py --get --kind typeset` 落盘的那份，**每批必传**，没有那套才不传）/ `--theme clean\|paper`（⛔ 别每批写死，它会盖掉档案里的主题）/ `--no-meta` / `--max-pages` / `--html-only` 降级 / **`--counselor EMP…` 末页追加咨询师推介卡**） | `scripts/typeset_longimage.py` |
 | **路线② 系列篇拆分**（>3500 字用；按 H2 边界 + 动态规划均衡分组，出 body-01…NN.md 并埋承接段/预告段 TODO；`--target` 目标字数 / `--parts` 强制篇数） | `scripts/split_longform.py` |
 | 后端一致性出图（gpt-image 锚点法，异步 + 轮询；--cover-only 过闸门 / --anchor-url 批量 / --pages 重出失败页 / --job 复查 / --dry-run） | `scripts/gen_images.py` |
-| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads） | `scripts/publish_note.py` |
+| 自动发布到小红书（经 nbdpsy-api，异步 + 轮询；--list-accounts / --job / --dry-run / --extension-info / --wait-login / --check-cookie / --list-jobs / --reschedule / --cancel / --upload-images / --list-uploads；发布可选带 --collection-id / --quoted-note-id / --activity-id / --related-counselor / --note-purpose） | `scripts/publish_note.py` |
+| **已发布笔记**的台账与操作（--ledger 台账 / --note 单条含正文 / --collections / --activities / --set-components / --set-visibility / --comment / --sync-ledger / --backfill-purpose；四条硬规矩见「笔记发出去之后」一节） | `scripts/note_ops.py` |
 | 每用户风格档案读写（**一人多套**：`--list-profiles` 有几套 / `--get --kind carousel\|typeset` 取该形态那套（一套都没有 → `profile: null`，按内置默认继续）/ `--get --profile <套名>` 取点名那套 / `--new-profile <名> --kind <k> [--from <套名>\|--file <json>]` 新建 / `--set-active <名>` 切默认；开跑前 `--get` 三层降级 / `--versions` 历史 / `--version N [--profile <套名>]` 某套的某一版 / `--put <json> --base-version N [--profile <套名>\|--kind <k>]` **整份覆盖点名那一套**（`--put`/`--rollback`/`--versions` 都能点名，⛔ 不点名就落到默认那套——读哪套就把同样的 `--profile` 带到写命令上） / `--rollback N --base-version M`；`--put`/`--rollback` 必带 `--base-version`，值**直接取 `--get` 响应里的 `base_version`**（无条件下发，不用自己推）；**`--put`/`--rollback` 返回的 `dropped_keys` 必读**，非空 = 这次覆盖冲掉了别的字段，回读运营确认后再往下；exit 2 = 没连上服务走内置兜底、exit 3 = 409 别重试） | `scripts/style_profile.py` |
 | 工作区路径查询 / 凭据工具 / 沙盒放行（sandbox allow） | `scripts/nbdpsy_common.py` |
 | 源长文（输入，第 0 步拉取产物） | `{workspace}/drafts/{slug}.md` |
