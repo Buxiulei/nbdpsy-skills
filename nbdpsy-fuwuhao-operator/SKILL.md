@@ -155,15 +155,22 @@ python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；�
 ### 第 3 步 · 排版编译
 
 ```bash
-python3 MD2WX --in {workspace}/blog/{slug}/post.md --out {workspace}/wechat/{slug}/content.html --cover {封面图路径}
+python3 MD2WX {workspace}/blog/{slug}/post.md --cover {封面图路径} \
+  --html-out {workspace}/wechat/{slug}/content.html --out {workspace}/wechat/{slug}/compiled.json
 ```
 
-脚本自动做三件事：Markdown → 微信白名单内联样式 HTML（NBDpsy 品牌模板：标题 / 引用 / 分隔 / 结尾卡片）、
-正文里的 `<img>` 逐张经 `/upload-image` 换成 mmbiz URL、封面经 `/upload-material` 换成永久 `thumb_media_id`。
+脚本自动做三件事：Markdown → 微信白名单内联样式 HTML（NBDpsy 品牌模板：正文 / 标题竖线 / 引用卡片 /
+表格 / 分隔）、正文里的 `<img>` 逐张经 `/upload-image` 换成 mmbiz URL、封面经 `/upload-material`
+换成永久 `thumb_media_id`。`--html-out` 落的就是下一步建草稿要的正文文件；`--out` 是整份 JSON 存档。
+只想看排版效果不碰网络时加 `--dry-run`（不需要凭据，但产物会掉图，**不能拿去发布**）。
 
 - 图片限制：**jpg/png、单张 ≤1MB**。超限的先压缩，别硬传。
-- 编译完**扫一眼产物**，确认没有 `class=` / `<style>` / `<script>` / `iframe` / `position:`（脚本自检会拦，
-  但运营塞了原始 HTML 片段进 Markdown 时值得再看一眼）。
+- **`warnings` 逐条念给运营**，尤其这三类：残留 `**` 星号（发出去改不了，只能删+重发）、
+  正文超 2万字符（微信拒收，要拆上下篇）、外链可能不可点。
+- 标题：frontmatter 的 `title`（没有就取正文首个 H1）会被抽进 JSON 的 `title` 字段并从正文删掉——
+  微信标题在建草稿时单独设，正文再放一遍读者会看到两遍。下一步 `--title` 直接用它。
+- 编译完**扫一眼产物**，确认没有 `class=` / `<style>` / `<script>` / `iframe` / `position:`（脚本自检
+  会拦下并直接编译失败，但运营塞了原始 HTML 片段进 Markdown 时值得再看一眼——那些片段会被转义成纯文本）。
 
 ### 第 4 步 · 建草稿
 
