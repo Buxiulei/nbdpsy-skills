@@ -15,12 +15,15 @@ menu_ops.py / article_ops.py（后续 schedule_ops.py / stats_ops.py 同）共�
 
   · **结果未确认** → `OpUnknown` → `{"outcome":"unknown"}` **exit 0**
     线索：请求**已经发出去了**、但拿不准生效没有——读响应超时 / 连接被断 /
-    服务端 5xx（**含 502**）/ 响应不是 JSON；外加唯一特例 `45028`（群发保护待手机确认）。
-    **先查台账/线上现状核实，绝不自动重试。**
+    服务端 5xx（**含 502**，且**没**明说 `sent:false`）/ 响应不是 JSON；
+    外加唯一特例 `45028`（群发保护待手机确认）。**先查台账/线上现状核实，绝不自动重试。**
 
-为什么 502 必须落 unknown：服务端的 502 意味着「已经替你转给微信了，但没读到回复」，
-而发布 / 群发 / 删除三件事都不可逆——报 failed 会诱导 agent 再发一次。只有 200 +
-`success:false`（微信确定拒绝）才是 failed。
+为什么 502 默认落 unknown：服务端的 502 通常意味着「已经替你转给微信了，但没读到回复」，
+而发布 / 群发 / 删除三件事都不可逆——报 failed 会诱导 agent 再发一次。
+
+**唯一能把 5xx 判回 failed 的依据是服务端给的 `sent` 判别位**（T4 审查定案）：响应体带
+`"sent": false` 时服务端确知请求根本没转到微信，这次一定没生效——此时报 unknown 只会让运营
+白查一次必然为空的台账。`sent:true` 或**字段缺失**（旧版服务端）一律仍按 unknown 处置。
 
 调用方只要在**不可逆动作**上传 `irreversible=True`，两桶就自动分流；查询与幂等动作
 （草稿增改、素材上传）用默认 False——重跑最多多一份草稿，报 failed 让运营直接重试更省事。
@@ -191,15 +194,36 @@ def _rejected(data: dict):
     return OpFailed(f"微信拒绝（errcode {errcode}）：{errmsg or '（无 errmsg）'}", **extra)
 
 
+def _not_sent(resp) -> bool:
+    """5xx 响应体里的 `sent` 判别位：**只有明确 false** 才算「请求没发到微信」。
+
+    字段缺失、值为 null、响应体读不懂，一律**不**算——那是旧版服务端或网关错误页，
+    此时必须退回「结果不明」。判据写成 `is False` 而不是 `not data.get("sent")`：
+    后者会把缺失也当成没发出去，等于把「可能已经群发了」说成确定没发，正好搞反最贵的那一侧。
+    """
+    try:
+        data = resp.json()
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("sent") is False
+
+
 def read_response(resp, irreversible: bool = False) -> dict:
     """HTTP 响应 → 服务端 JSON；按两桶把各类败相转成 OpFailed / OpUnknown。"""
     status = getattr(resp, "status_code", 0)
     if status >= 500:
-        # 5xx（含 502）：服务端已经替我们把请求转出去了，结果不明。不可逆动作绝不报 failed
         msg = api_error(resp)
-        if irreversible:
-            raise OpUnknown(f"服务端 {status}，这次到底生效没有拿不准：{msg}")
-        raise OpFailed(msg)
+        # 查询与幂等动作：5xx 没有「可能已生效」的风险，如实报失败让运营直接重试
+        if not irreversible:
+            raise OpFailed(msg)
+        # 不可逆动作：服务端在 5xx 体里带 `sent` 判别位（T4 审查定案）——
+        # sent=false 说明请求根本没转到微信，这次确定没生效，含糊成 unknown 只会让运营
+        # 白查一次必然为空的台账；sent=true 或字段缺失（旧版服务端）则一律按「已发出、
+        # 结果不明」处置：宁可多查一次台账，也不能报 failed 诱导二次发布。
+        if _not_sent(resp):
+            raise OpFailed(f"{msg}——服务端判定请求**没有发到微信**（sent=false），"
+                           "本次确定没生效、也没有半成品，**不用查台账**，按上面的错误改完再来。")
+        raise OpUnknown(f"服务端 {status}，这次到底生效没有拿不准：{msg}")
     if status >= 400:
         # 4xx：鉴权/参数没过，服务端**没有**执行任何动作 → 确定失败
         raise OpFailed(api_error(resp))

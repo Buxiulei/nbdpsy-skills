@@ -102,13 +102,38 @@ class Test两桶口径:
             W.request_json("POST", "http://svc/x", "k", {})
         assert "413" in e.value.error and "压缩" in e.value.error
 
-    def test_不可逆动作的502是结果未确认不是失败(self, net):
-        """服务端 502 = 已经替你转给微信了、但没读到回复。报 failed 会诱导二次发布。"""
+    def test_不可逆动作的502没有sent判别位时按结果未确认(self, net):
+        """旧版服务端不带 sent 字段：502 = 可能已经替你转给微信了。报 failed 会诱导二次发布。
+        缺失**必须**退回 unknown——判成 failed 正好搞反最贵的那一侧。"""
         net.serve(FakeResp(502, {"success": False, "error": "微信接口不可达"}))
         with pytest.raises(W.OpUnknown) as e:
             W.request_json("POST", "http://svc/publish", "k", {}, irreversible=True)
         assert "拿不准" in e.value.error
         assert e.value.envelope()["outcome"] == "unknown"
+
+    def test_502带sent_true仍是结果未确认(self, net):
+        net.serve(FakeResp(502, {"success": False, "sent": True,
+                                 "error": "已发给微信但没读到回复"}))
+        with pytest.raises(W.OpUnknown):
+            W.request_json("POST", "http://svc/publish", "k", {}, irreversible=True)
+
+    def test_502带sent_false是确定失败且明说不用查台账(self, net):
+        """服务端确知请求没转出去时，含糊成 unknown 只会让运营白查一次必然为空的台账。"""
+        net.serve(FakeResp(502, {"success": False, "sent": False,
+                                 "error": "微信 token 接口返回 errcode=40013"}))
+        with pytest.raises(W.OpFailed) as e:
+            W.request_json("POST", "http://svc/publish", "k", {}, irreversible=True)
+        assert "sent=false" in e.value.error and "不用查台账" in e.value.error
+        assert e.value.envelope()["outcome"] == "failed"
+
+    def test_sent为null或读不懂的响应体一律退回结果未确认(self, net):
+        """`not data.get("sent")` 那种写法会把 null/缺失当成没发出去——判据必须是 `is False`。"""
+        net.serve(FakeResp(500, {"success": False, "sent": None, "error": "内部错误"}))
+        with pytest.raises(W.OpUnknown):
+            W.request_json("POST", "http://svc/publish", "k", {}, irreversible=True)
+        net.serve(FakeResp(502, payload=None, text="<html>网关错误页</html>"))
+        with pytest.raises(W.OpUnknown):
+            W.request_json("POST", "http://svc/publish", "k", {}, irreversible=True)
 
     def test_查询类的5xx照常算失败(self, net):
         """读操作没有「可能已生效」的风险，含糊成 unknown 只会让人去查一个必然为空的台账。"""
@@ -450,6 +475,13 @@ class Test发布与台账:
         code, data, _ = run_cli(A, ["--publish", "--media-id", "M1"], capsys)
         assert code == 0 and data["outcome"] == "unknown"
         assert "台账" in data["hint"]
+
+    def test_发布遇502但服务端说没发出去时如实报失败(self, net, capsys):
+        net.serve(FakeResp(502, {"success": False, "sent": False,
+                                 "error": "微信 token 接口返回 errcode=40013"}))
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "不用查台账" in data["error"]
 
     def test_发布被微信明确拒绝是失败要改再来(self, net, capsys):
         net.serve(FakeResp(200, {"success": False, "wechat_errcode": 53501,
