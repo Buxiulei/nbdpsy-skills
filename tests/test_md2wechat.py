@@ -59,8 +59,18 @@ class TestSandbox:
         """负向对照：扫描器不是摆设，标签属性里的 class/position 必须被抓到。"""
         assert M.scan_forbidden('<p class="x">a</p>')
         assert M.scan_forbidden('<p style="position:absolute">a</p>')
+        assert M.scan_forbidden('<p style="animation:fade 1s">a</p>')
         assert M.scan_forbidden("<script>x</script>")
         assert M.scan_forbidden('<img src="a.png" onerror="x()" />')
+        assert M.scan_forbidden('<a href="javascript:alert(1)">x</a>')
+
+    def test_属性值里的文字不误杀(self):
+        """alt/href 的**值**在标签内部，扫原串会让 `![讲 class= 用法](a.png)` 整篇硬失败。
+        结构类规则只扫属性值清空后的串，取值类规则只扫它该管的那类属性。"""
+        r = M.compile_markdown("![这里讲 class= 与 javascript: 的用法](a.png)\n")
+        assert "class=" in r["html"]              # alt 里的原文确实留着（证明有东西可误杀）
+        assert M.scan_forbidden(r["html"]) == []
+        assert M.scan_forbidden('<img src="a.png" alt="讲 class= 用法" style="max-width:100%" />') == []
 
     def test_表格渲染成带样式的table(self):
         """pillar 长文里普遍有对照表；不接表格插件，整张表会变成一行行竖线原文。"""
@@ -97,6 +107,14 @@ class TestCjkStrong:
         r = M.compile_markdown("这里有个孤零零的 ** 星号。\n")
         assert "**" in r["html"]
         assert any("残留" in w for w in r["warnings"])
+
+    def test_代码里的星号是字面量不许动(self):
+        """`<code>`/`<pre>` 里的星号是作者要展示的内容，改了就是篡改代码；
+        `<strong>` 塞进 `<code>` 里也不是作者的意思。那里的残留也不该报警。"""
+        r = M.compile_markdown("行内 `**字面量**` 与代码块：\n\n```\na **b** c\n```\n")
+        assert "<strong" not in r["html"]
+        assert r["html"].count("**") == 4          # 行内 2 处 + 代码块 2 处，一个没动
+        assert not any("残留" in w or "自动修正" in w for w in r["warnings"])
 
 
 class TestImages:
@@ -252,6 +270,12 @@ class TestFrontmatterTitle:
         assert r["title"] == ""
         assert "中间的H1" in r["html"]
 
+    def test_抽不到标题要出声不能静默给空串(self):
+        """空串会一路带到建草稿；微信标题发出去就定死，改它＝删+重发。"""
+        r = M.compile_markdown("正文\n\nsetext 式标题\n=====\n")
+        assert r["title"] == ""
+        assert any("--title" in w for w in r["warnings"])
+
 
 class TestLimits:
     def test_超两万字符给出警告不静默(self):
@@ -282,6 +306,37 @@ class TestCLI:
         p = self._run([str(tmp_path / "nope.md"), "--dry-run"])
         assert p.returncode == 1
         assert json.loads(p.stdout)["outcome"] == "failed"
+
+    def test_非UTF8稿子也回合法JSON不甩traceback(self, tmp_path):
+        """GBK 存的稿子会在 read_text 抛 UnicodeDecodeError。裸 traceback ＝ stdout 零字节，
+        消费方 json.loads 当场崩，而且看不出到底怎么了。"""
+        md = tmp_path / "gbk.md"
+        md.write_bytes("# 标题\n\n中文正文\n".encode("gbk"))
+        p = self._run([str(md), "--dry-run"])
+        assert p.returncode == 1
+        data = json.loads(p.stdout)              # 必须是合法 JSON
+        assert data["outcome"] == "failed" and "UTF-8" in data["error"]
+
+    def test_html_out路径不可写时保住回执(self, tmp_path):
+        """真实场景里此刻图片可能已经传上去了——回执里的 html 重跑也拿不回来，不能被吞掉。"""
+        md = tmp_path / "post.md"
+        md.write_text("正文\n", encoding="utf-8")
+        blocker = tmp_path / "blocker"
+        blocker.write_text("我是文件不是目录", encoding="utf-8")   # 父目录建不出来
+        p = self._run([str(md), "--dry-run", "--html-out", str(blocker / "sub" / "c.html")])
+        data = json.loads(p.stdout)              # 只有一份 JSON，且合法
+        assert p.returncode == 1 and data["outcome"] == "failed"
+        assert "<p " in data["html"]             # 回执里的正文仍在
+        assert "不必重传" in data["error"]
+
+    def test_out指向已存在目录时保住回执(self, tmp_path):
+        md = tmp_path / "post.md"
+        md.write_text("正文\n", encoding="utf-8")
+        (tmp_path / "adir").mkdir()
+        p = self._run([str(md), "--dry-run", "--out", str(tmp_path / "adir")])
+        data = json.loads(p.stdout)
+        assert p.returncode == 1 and data["outcome"] == "failed"
+        assert "<p " in data["html"] and "--out" in data["error"]
 
     def test_缺凭据时确定失败不静默通过(self, tmp_path):
         """请求根本发不出去 = 结果已确定失败（红线⑤），必须 exit 1 并点名缺哪个键。"""

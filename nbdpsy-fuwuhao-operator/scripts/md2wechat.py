@@ -19,6 +19,9 @@
      "images": [{"src": "原地址", "wx_url": "mmbiz地址"}], "warnings": [...]}
     done exit 0；failed exit 1（另带 error）。**warnings 要逐条念给运营**，尤其残留星号与超长两条。
     上传是幂等的（重传只多占一张素材），所以上传失败一律 failed，不走 unknown。
+    **任何情况下 stdout 都是且只有这一份 JSON**（含未预期异常），消费方可以无脑 json.loads。
+    产物落盘失败也记 failed，但 html / thumb_media_id 仍原样留在回执里——图片已经传上去了，
+    **不必重传**，换个可写路径重跑或直接保存回执里的 html 即可。
 
 为什么只能用本脚本排版（微信正文是 HTML 白名单沙盒，绕不开）:
   · 只认元素上的 style 内联样式——`class` / `id` / `<style>` 标签一律被吞，秀米/135 导出的
@@ -119,18 +122,26 @@ STYLES = {
     "td": f"padding:10px 12px;border:1px solid #e6e6e6;color:{BODY};line-height:1.7",
 }
 
-# 白名单外构件的扫描规则。**只看标签内部**，不看正文文字——否则一篇讲 HTML 的稿子
-# 写到「class=」三个字就会被自己的闸门误杀（原始 HTML 早在渲染时就被转义成 &lt; 了）。
-FORBIDDEN_PATTERNS = [
+# 白名单外构件的扫描规则，分两层——这个闸门是**硬失败**（整篇编译不出来），误杀比漏杀更贵。
+# 结构类：扫「属性值清空后」的串。既避开正文文字（`class=` 三个字），也避开属性值里的文字
+#         ——`![这里讲 class= 用法](a.png)` 的 alt 就在标签内部，扫原串会整篇卡死。
+# 取值类：只扫它该管的那类属性值（position/动画看 style=，伪协议看 href/src），
+#         这样 alt 里写 `javascript:` 也不会被误判。
+FORBIDDEN_STRUCTURE = [
     (re.compile(r"<\s*script\b", re.I), "<script> 标签"),
     (re.compile(r"<\s*style\b", re.I), "<style> 标签"),
     (re.compile(r"<\s*iframe\b", re.I), "<iframe> 标签"),
     (re.compile(r"<[^>]*\s(?:class|id)\s*=", re.I), "class/id 属性"),
     (re.compile(r"<[^>]*\son[a-z]+\s*=", re.I), "内联事件属性（JS 会被剔除）"),
-    (re.compile(r'style="[^"]*position\s*:', re.I), "position 定位"),
-    (re.compile(r'style="[^"]*(?:animation|@keyframes)', re.I), "CSS 动画"),
-    (re.compile(r"<[^>]*javascript\s*:", re.I), "javascript: 伪协议"),
 ]
+FORBIDDEN_STYLE = [
+    (re.compile(r"position\s*:", re.I), "position 定位"),
+    (re.compile(r"animation|@keyframes", re.I), "CSS 动画"),
+]
+_HARMFUL_PROTO = re.compile(r"^\s*javascript\s*:", re.I)
+_ATTR_VALUE = re.compile(r'"[^"]*"')
+_STYLE_ATTR = re.compile(r'\sstyle="([^"]*)"', re.I)
+_URL_ATTR = re.compile(r'\s(?:href|src)="([^"]*)"', re.I)
 
 
 class CompileError(Exception):
@@ -139,7 +150,13 @@ class CompileError(Exception):
 
 def scan_forbidden(html: str):
     """扫产物里的微信白名单外构件，返回人话违规项列表（空列表 = 干净）。"""
-    return [label for pattern, label in FORBIDDEN_PATTERNS if pattern.search(html)]
+    stripped = _ATTR_VALUE.sub('""', html)          # 属性值清空，只留结构
+    hits = [label for pattern, label in FORBIDDEN_STRUCTURE if pattern.search(stripped)]
+    styles = " ".join(_STYLE_ATTR.findall(html))
+    hits += [label for pattern, label in FORBIDDEN_STYLE if pattern.search(styles)]
+    if any(_HARMFUL_PROTO.match(url) for url in _URL_ATTR.findall(html)):
+        hits.append("javascript: 伪协议")
+    return hits
 
 
 def split_frontmatter(text: str):
@@ -294,13 +311,24 @@ _TAG_SPLIT = re.compile(r"(<[^>]*>)")
 def fix_cjk_strong(html: str):
     """补齐中文标点旁失效的 `**加粗**`，返回 (html, 修正处数, 残留 ** 处数)。
 
-    副作用是明确的：正文里**当作字面量**的 `**` 成对出现时也会被吃成加粗（如讲解 Markdown
-    语法的稿子）。心理科普稿里这种写法几乎不存在，而漏成星号发出去的代价是删+重发。
+    **`<code>` / `<pre>` 内部一律跳过**：那里的星号是作者要展示的字面量，改了就是篡改代码，
+    而且 `<strong>` 塞进 `<code>` 里既难看又不是作者的意思；那里残留的 `**` 也不计进警告。
+
+    此外的副作用是明确的：正文里当作字面量的 `**` 成对出现时也会被吃成加粗（如讲解 Markdown
+    语法的散文段落）。心理科普稿里这种写法几乎不存在，而漏成星号发出去的代价是删+重发。
     """
     parts = _TAG_SPLIT.split(html)
     fixed = leftover = 0
+    code_depth = 0
     for i, part in enumerate(parts):
         if part.startswith("<"):
+            tag = part[1:].lstrip().lower()
+            if tag.startswith(("code", "pre")):
+                code_depth += 1
+            elif tag.startswith(("/code", "/pre")):
+                code_depth = max(code_depth - 1, 0)
+            continue
+        if code_depth:
             continue
         parts[i], n = _LEFTOVER_STRONG.subn(
             f'<strong style="{STYLES["strong"]}">\\1</strong>', part)
@@ -339,6 +367,11 @@ def compile_markdown(md_text: str, upload=None):
         # 两者不一致时别闷声吞掉那行 H1：运营得知道正文少了哪一句、标题最终用的是谁
         warnings.append(f"正文首个 H1「{h1}」已从正文删掉，但**标题取的是 frontmatter 的「{title}」**"
                         "（两者不一致时以 frontmatter 为准）；想用 H1 那句请改 frontmatter。")
+    elif not title:
+        # 抽不到标题也要出声：静默给空串会一路带到建草稿，而标题发出去就定死了（改＝删+重发）
+        warnings.append("未识别到标题——frontmatter 里没写 title，正文也不是以「# 」开头（setext 式"
+                        "下划线标题不算）。**建草稿前必须人工传 --title**：微信标题发出去就定死，"
+                        "改它要付删+重发、换链接、阅读清零的代价。")
     renderer = WechatRenderer(upload=upload)
     inner = mistune.create_markdown(renderer=renderer, plugins=["table"])(body)
     # 外层用 <section>：微信编辑器自己就是这么包的，也免得和正文里被转义的 <div> 混淆
@@ -386,10 +419,20 @@ def _sandbox_hint(exc) -> str:
     return s[:300]
 
 
+def _requests():
+    """延迟导入 requests，缺依赖时给人话而不是 ImportError traceback。"""
+    try:
+        import requests
+    except ImportError:
+        raise CompileError("缺少依赖 requests：在仓库根跑一次 python3 setup.py，"
+                           "或 pip install requests 后重试；只排版不上传可以加 --dry-run。")
+    return requests
+
+
 def _post_multipart(url, api_key, filename, data, mime, timeout=60):
     """真正打网络的唯一出口——单测 monkeypatch 这里，不打真网络。
     上传是幂等的（重传只是多占一张素材），所以失败一律当「结果已确定失败」处理。"""
-    import requests
+    requests = _requests()
     try:
         resp = requests.post(url, headers={"Authorization": f"Bearer {api_key}"},
                              files={"file": (filename, data, mime)}, timeout=timeout)
@@ -426,7 +469,7 @@ def _pick(payload, keys, what):
 def _load_image(src, base_dir, max_bytes, timeout=60):
     """读图并做格式/体积闸门，返回 (bytes, filename, mime)。本地路径相对 base_dir 解析。"""
     if re.match(r"^https?://", src):
-        import requests
+        requests = _requests()
         try:
             resp = requests.get(src, timeout=timeout)
         except Exception as e:                 # noqa: BLE001
@@ -479,6 +522,13 @@ def _write(path, text):
     target.write_text(text, encoding="utf-8")
 
 
+def _fail(error: str, warnings) -> int:
+    """打 failed 信封到 stdout 并回退出码 1。字段与 done 信封同形，消费方不用分情况解析。"""
+    print(json.dumps({"outcome": "failed", "html": None, "title": "", "thumb_media_id": None,
+                      "images": [], "warnings": warnings, "error": error}, ensure_ascii=False))
+    return 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Markdown → 微信公众号内联样式 HTML")
     parser.add_argument("input", help="输入 Markdown 文件")
@@ -521,17 +571,38 @@ def main(argv=None):
         payload = {"outcome": "done", "html": result["html"], "title": result["title"],
                    "thumb_media_id": thumb_media_id, "images": result["images"],
                    "warnings": warnings + result["warnings"]}
-        if args.html_out:
-            _write(args.html_out, result["html"])
-        if args.out:
-            _write(args.out, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+        # 落盘失败**不能连回执一起吞掉**：此时图片/封面可能已经传上去了，回执里的 html 与
+        # thumb_media_id 是重跑也拿不回来的成果。所以逐个写、把失败收进信封，只打这一份 JSON
+        # （打两份会让消费方的 json.loads 当场崩）。
+        write_errors = []
+        for flag, path, text in (
+                ("--html-out", args.html_out, result["html"]),
+                ("--out", args.out, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")):
+            if not path:
+                continue
+            try:
+                _write(path, text)
+            except OSError as e:
+                write_errors.append(f"{flag} {path}（{type(e).__name__}: {e}）")
+        if write_errors:
+            payload["outcome"] = "failed"
+            payload["error"] = ("图片与封面都已处理完（**不必重传**），只是产物落盘失败："
+                                + "；".join(write_errors)
+                                + "。正文 HTML 就在本回执的 html 字段里——换个可写路径重跑，"
+                                  "或直接把它存下来即可。")
         print(json.dumps(payload, ensure_ascii=False))
-        return 0
+        return 0 if payload["outcome"] == "done" else 1
     except CompileError as e:
-        print(json.dumps({"outcome": "failed", "html": None, "title": "", "thumb_media_id": None,
-                          "images": [], "warnings": warnings, "error": str(e)},
-                         ensure_ascii=False))
-        return 1
+        return _fail(str(e), warnings)
+    except UnicodeDecodeError:
+        return _fail(f"稿子 {args.input} 不是 UTF-8 编码（多半是 Windows 记事本按 GBK/ANSI 存的）"
+                     "——请用编辑器「另存为 UTF-8」后再来。", warnings)
+    except Exception as e:                     # noqa: BLE001
+        # 兜底：stdout 是纯 JSON 契约，任何漏网异常都不能让它空着、更不能甩一脸 traceback
+        # ——消费方拿到零字节做 json.loads 会当场崩，还看不出到底发生了什么。
+        return _fail(f"未预期的错误（{type(e).__name__}: {e}）——这多半是脚本 bug 或环境问题，"
+                     "请把这条连同命令一起报给开发。", warnings)
 
 
 if __name__ == "__main__":
