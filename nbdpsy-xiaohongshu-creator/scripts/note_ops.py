@@ -16,6 +16,10 @@
     python3 note_ops.py --comment --account 号 --text "评论文案" [--title 标题] [--publisher-user-id X]
     python3 note_ops.py --sync-ledger 账号名或ID      # 手工触发一次台账同步（幂等，可放心重试）
     python3 note_ops.py --backfill-purpose 账号名或ID  # 手工触发核心目的回填（幂等，可放心重试）
+    python3 note_ops.py --backfill-interactions --scope account --account 号   # 给历史笔记补赞藏
+    python3 note_ops.py --backfill-interactions --scope all                    # 全矩阵互补（约六天）
+    python3 note_ops.py --backfill-interactions --scope newcomer --actor 新号  # 新号去补别人
+    python3 note_ops.py --backfill-status <job_id>   # 查补量进度（提交时不轮询，六天守不住）
 
 凭据同 publish_note.py：NBDPSY_XHS_API_KEY / NBDPSY_XHS_API_BASE（nbdpsy_common 三层解析）。
 
@@ -30,9 +34,15 @@
 3. **success 不等于生效。** 这条产品线的失败普遍是静默的（私密笔记的合集绑定会被平台
    静默丢弃、活动关联按钮首次点击无声失效）。三组件必须逐项看 applied / failed，
    本脚本 outcome=partial 就是「有的成了有的没成」，**不是成功**。
-4. **非幂等操作失败不要盲目重试**：可见性切换 / 评论 / 三组件（活动还会重复往正文注入话题）。
-   本脚本对这三类一律不自动重试，异常与超时都落 outcome=unknown + 「先核对当前实际状态」。
+4. **非幂等操作失败不要盲目重试**：可见性切换 / 评论 / 三组件（活动还会重复往正文注入话题）/
+   互动补量（重跑会重复处理、消耗当日配额、增加风控暴露）。本脚本对这几类一律不自动重试，
+   异常与超时都落 outcome=unknown + 「先核对当前实际状态」。
    幂等可安全重试的只有 --sync-ledger / --backfill-purpose。
+
+评论的成功判据（2026-08-02 服务端放宽）：**文案出现在评论列表**即算成功。结果里的 `cleared`
+（输入框是否清空）**只是排查用的附加信息，不要拿它判成败**——残留空白字符、placeholder 被读成
+内容、清空比列表渲染慢一拍，都会让它为假。此前两个条件做「与」判定，把 7 条已经发出去的评论
+记成了 error，那批历史记录没有回改。"未出现在列表"仍然判失败，这条不能松。
 
 两条业务规则（不是技术偏好，是绩效归属）：笔记只引用**本账号**的推介笔记，跨账号引用会把
 客户导到别的运营名下、抢同事 KPI；矩阵号评论零引流指向，转化引导只由笔记所属账号本人发。
@@ -390,6 +400,48 @@ def trigger_idempotent(api_base: str, key: str, account_id: int, kind: str, time
     return out, 1 if out["outcome"] == "failed" else 0
 
 
+BACKFILL_SCOPES = ("account", "all", "newcomer")
+
+
+def start_interaction_backfill(api_base: str, key: str, scope: str,
+                               target_account_id=None, actor_account_id=None) -> str:
+    """给**历史笔记**补点赞收藏（只点赞收藏，不评论——评论仍只在本系统发布笔记时自动触发）。
+    返回 job_id，**不轮询**：服务端四层限速（每账号每天 20 篇 / 单轮 5 篇 / 两篇之间随机停
+    60–240 秒 / 不额外起浏览器），全矩阵互补一遍约**六天**，守着轮询没有意义。
+
+    ⚠ **慢是设计意图，不是性能问题。** 集中对老笔记互动是平台眼里最典型的补量特征；
+    撞墙的代价是账号被置 restricted、要人工用手机扫码解开，期间该号所有任务全部失败。
+    所以：不要调高上限、不要反复重试、不要拆成多次小任务高频调用。本操作**非幂等**，
+    重跑会重复处理、白开浏览器、消耗当日配额、增加风控暴露。"""
+    if scope not in BACKFILL_SCOPES:
+        raise ValueError(f"scope 只能是 {'/'.join(BACKFILL_SCOPES)}，收到 {scope!r}")
+    payload = {"scope": scope}
+    if target_account_id is not None:
+        payload["target_account_id"] = target_account_id
+    if actor_account_id is not None:
+        payload["actor_account_id"] = actor_account_id
+    resp = send_request("POST", f"{api_base}/api/interaction-backfills", key, payload)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()["job_id"]
+
+
+def interaction_backfill_status(api_base: str, key: str, job_id: str) -> dict:
+    """查补量任务进度。撞验证墙时服务端会立刻中止本轮并把该号置 restricted，
+    **已完成的部分照常记账不回滚**——所以看到中止别当"全白跑了"。"""
+    resp = send_request("GET", f"{api_base}/api/interaction-backfills/{job_id}", key)
+    if resp.status_code == 404:
+        return {"available": False, "job_id": job_id, "hint": "查不到这个 job_id（敲错或从未发起）"}
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    view = resp.json()
+    view["available"] = True
+    if view.get("status") == "error":
+        view["hint"] = ("失败**不要盲目重试**：重跑会重复处理、消耗当日配额、增加风控暴露。"
+                        "先看该账号 cookie_status 是不是 restricted（撞了验证墙，要人工手机扫码解开）")
+    return view
+
+
 def main():
     ap = argparse.ArgumentParser(description="已发布笔记的台账查询与操作（nbdpsy-api）")
     ap.add_argument("--ledger", metavar="账号名或ID", help="台账列表：平台上当前存在哪些笔记")
@@ -403,6 +455,13 @@ def main():
                     help="切换公开/仅自己可见（非幂等；须配 --account 与 --privacy）")
     ap.add_argument("--comment", action="store_true",
                     help="给单篇笔记发评论（非幂等；须配 --account 与 --text）")
+    ap.add_argument("--backfill-interactions", action="store_true",
+                    help="给历史笔记补点赞收藏（非幂等，慢是设计意图；须配 --scope）")
+    ap.add_argument("--scope", choices=list(BACKFILL_SCOPES),
+                    help="--backfill-interactions 范围：account=给某号历史笔记互动（配 --account）/"
+                         " all=所有账号 / newcomer=某新号去互动其余所有号（配 --actor）")
+    ap.add_argument("--actor", metavar="账号名或ID", help="--scope newcomer：哪个新号去互动别人")
+    ap.add_argument("--backfill-status", metavar="JOB_ID", help="查互动补量任务进度")
     ap.add_argument("--sync-ledger", metavar="账号名或ID", help="手工触发台账同步（幂等）")
     ap.add_argument("--backfill-purpose", metavar="账号名或ID", help="手工触发核心目的回填（幂等）")
     ap.add_argument("--account", help="操作类命令的目标账号（名称或 id）")
@@ -456,6 +515,32 @@ def main():
             view = view if isinstance(view, dict) else {"activities": view}
             view["account"] = {"id": aid, "name": label}
             print(json.dumps(view, ensure_ascii=False))
+            return
+        if args.backfill_status:
+            print(json.dumps(interaction_backfill_status(api_base, key, args.backfill_status),
+                             ensure_ascii=False))
+            return
+        if args.backfill_interactions:
+            if not args.scope:
+                ap.error("--backfill-interactions 需要 --scope account|all|newcomer")
+            target = actor = None
+            if args.scope == "account":
+                if not args.account:
+                    ap.error("--scope account 需要 --account <给哪个号的历史笔记补互动>")
+                target, _, _ = resolve_account(api_base, key, args.account)
+            if args.scope == "newcomer":
+                if not args.actor:
+                    ap.error("--scope newcomer 需要 --actor <哪个新号去互动别人>")
+                actor, _, _ = resolve_account(api_base, key, args.actor)
+            job_id = start_interaction_backfill(api_base, key, args.scope, target, actor)
+            # 故意不轮询：全矩阵一遍约六天，守着轮询只会超时后给出误导性的 unknown
+            print(json.dumps({
+                "outcome": "submitted", "job_id": job_id, "scope": args.scope,
+                "hint": "已入队。服务端限速到每账号每天 20 篇、两篇间随机停 60–240 秒，"
+                        "全矩阵互补一遍约六天——**慢是设计意图，不是性能问题**，别调参别重跑："
+                        "集中给老笔记互动是平台眼里最典型的补量特征，撞墙要人工手机扫码解开、"
+                        f"期间该号所有任务全失败。要看进度用 --backfill-status {job_id}",
+            }, ensure_ascii=False))
             return
         if args.sync_ledger or args.backfill_purpose:
             target = args.sync_ledger or args.backfill_purpose
@@ -524,7 +609,8 @@ def main():
             sys.exit(code)
 
         ap.error("没给要做什么：--ledger / --note / --collections / --activities / "
-                 "--set-components / --set-visibility / --comment / --sync-ledger / --backfill-purpose")
+                 "--set-components / --set-visibility / --comment / --sync-ledger / "
+                 "--backfill-purpose / --backfill-interactions / --backfill-status")
 
     except Exception as e:
         msg = sandbox_hint(e)

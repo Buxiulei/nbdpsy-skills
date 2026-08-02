@@ -287,3 +287,65 @@ def test_main_set_components_requires_at_least_one_item(monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         note_ops.main()
     assert e.value.code == 2  # argparse 用法错误
+
+
+# ---- 互动补量：提交即返回，绝不轮询；非幂等 ----
+
+def test_backfill_scope_validated_and_payload_shape(monkeypatch):
+    import note_ops
+    seen = {}
+
+    def fake(method, url, key, payload=None, timeout=60):
+        seen["payload"] = payload
+        return _Resp(200, {"job_id": "b1"})
+
+    monkeypatch.setattr(note_ops, "send_request", fake)
+    assert note_ops.start_interaction_backfill("http://x", "k", "account", target_account_id=5) == "b1"
+    assert seen["payload"] == {"scope": "account", "target_account_id": 5}
+
+    note_ops.start_interaction_backfill("http://x", "k", "newcomer", actor_account_id=9)
+    assert seen["payload"] == {"scope": "newcomer", "actor_account_id": 9}
+
+    note_ops.start_interaction_backfill("http://x", "k", "all")
+    assert seen["payload"] == {"scope": "all"}
+
+    with pytest.raises(ValueError):
+        note_ops.start_interaction_backfill("http://x", "k", "everything")
+
+
+def test_backfill_status_404_and_error_hint(monkeypatch):
+    import note_ops
+    monkeypatch.setattr(note_ops, "send_request", lambda *a, **k: _Resp(404, {}))
+    assert note_ops.interaction_backfill_status("http://x", "k", "b9")["available"] is False
+
+    monkeypatch.setattr(note_ops, "send_request",
+                        lambda *a, **k: _Resp(200, {"status": "error", "done": 12}))
+    view = note_ops.interaction_backfill_status("http://x", "k", "b1")
+    assert "不要盲目重试" in view["hint"] and "restricted" in view["hint"]
+
+
+def test_main_backfill_submits_without_polling(monkeypatch, capsys):
+    """六天的任务守着轮询没意义，超时还会给出误导性的 unknown——提交完就返回。"""
+    import note_ops
+    called = {"poll": 0}
+    monkeypatch.setattr(note_ops, "poll_task",
+                        lambda *a, **k: called.__setitem__("poll", called["poll"] + 1))
+    monkeypatch.setattr(note_ops, "start_interaction_backfill", lambda *a, **k: "b7")
+    monkeypatch.setattr(sys, "argv", ["note_ops.py", "--backfill-interactions", "--scope", "all"])
+    monkeypatch.setattr(note_ops.nbdpsy_common, "get_secret", lambda k: "key")
+    monkeypatch.setattr(note_ops.nbdpsy_common, "xhs_api_base", lambda: "http://x")
+    note_ops.main()  # 走 return 而非 sys.exit
+    out = json.loads(capsys.readouterr().out)
+    assert out["outcome"] == "submitted" and out["job_id"] == "b7" and called["poll"] == 0
+    assert "设计意图" in out["hint"] and "六天" in out["hint"]
+
+
+def test_main_backfill_account_scope_requires_account(monkeypatch, capsys):
+    import note_ops
+    monkeypatch.setattr(sys, "argv", ["note_ops.py", "--backfill-interactions",
+                                      "--scope", "account"])
+    monkeypatch.setattr(note_ops.nbdpsy_common, "get_secret", lambda k: "key")
+    monkeypatch.setattr(note_ops.nbdpsy_common, "xhs_api_base", lambda: "http://x")
+    with pytest.raises(SystemExit) as e:
+        note_ops.main()
+    assert e.value.code == 2
