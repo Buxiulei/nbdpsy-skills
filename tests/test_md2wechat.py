@@ -290,6 +290,8 @@ class TestCLI:
                               capture_output=True, text=True, env=env)
 
     def test_dry_run输出纯JSON并落文件(self, tmp_path):
+        """正文已落盘时 stdout 不再重复一份（长文几十 KB 会糊满对话），但 html 键恒在（null）
+        + 给 html_path；--out 那份 JSON 里仍是完整正文。"""
         md = tmp_path / "post.md"
         md.write_text("---\ntitle: 标题\n---\n\n# 标题\n\n正文\n", encoding="utf-8")
         out, htm = tmp_path / "compiled.json", tmp_path / "content.html"
@@ -298,9 +300,16 @@ class TestCLI:
         data = json.loads(p.stdout)
         assert data["outcome"] == "done"
         assert data["thumb_media_id"] is None and data["title"] == "标题"
-        assert "<p " in data["html"]
-        assert htm.read_text(encoding="utf-8") == data["html"]
-        assert json.loads(out.read_text(encoding="utf-8"))["html"] == data["html"]
+        assert "html" in data and data["html"] is None      # 键恒在，值为空
+        assert data["html_path"] == str(htm)
+        saved = json.loads(out.read_text(encoding="utf-8"))
+        assert "<p " in saved["html"] == htm.read_text(encoding="utf-8")
+
+    def test_没给html_out时正文照常回在stdout里(self, tmp_path):
+        md = tmp_path / "post.md"
+        md.write_text("正文\n", encoding="utf-8")
+        data = json.loads(self._run([str(md), "--dry-run"]).stdout)
+        assert "<p " in data["html"] and data["html_path"] is None
 
     def test_输入文件不存在时failed信封exit1(self, tmp_path):
         p = self._run([str(tmp_path / "nope.md"), "--dry-run"])
@@ -328,6 +337,22 @@ class TestCLI:
         assert p.returncode == 1 and data["outcome"] == "failed"
         assert "<p " in data["html"]             # 回执里的正文仍在
         assert "不必重传" in data["error"]
+
+    def test_落盘的JSON与stdout的outcome不能自相矛盾(self, tmp_path):
+        """--out 必须在 outcome 定案之后才 dump：先 dump 会让文件记着 done、stdout 却说 failed，
+        运营照文件判断就会以为产物是好的。"""
+        md = tmp_path / "post.md"
+        md.write_text("正文\n", encoding="utf-8")
+        blocker = tmp_path / "blocker"
+        blocker.write_text("我是文件不是目录", encoding="utf-8")   # --html-out 的父目录建不出来
+        out = tmp_path / "compiled.json"
+        p = self._run([str(md), "--dry-run", "--html-out", str(blocker / "sub" / "c.html"),
+                       "--out", str(out)])
+        stdout_data = json.loads(p.stdout)
+        assert p.returncode == 1 and stdout_data["outcome"] == "failed"
+        saved = json.loads(out.read_text(encoding="utf-8"))
+        assert saved["outcome"] == "failed" and saved["error"] == stdout_data["error"]
+        assert "<p " in saved["html"]              # 落盘那份始终存完整正文
 
     def test_out指向已存在目录时保住回执(self, tmp_path):
         md = tmp_path / "post.md"

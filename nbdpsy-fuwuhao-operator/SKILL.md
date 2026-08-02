@@ -164,6 +164,10 @@ python3 MD2WX {workspace}/blog/{slug}/post.md --cover {封面图路径} \
 换成永久 `thumb_media_id`。`--html-out` 落的就是下一步建草稿要的正文文件；`--out` 是整份 JSON 存档。
 只想看排版效果不碰网络时加 `--dry-run`（不需要凭据，但产物会掉图，**不能拿去发布**）。
 
+- 给了 `--html-out` 时，stdout 回执里的 `html` 是 `null`（正文几十 KB，打进对话没用），
+  路径在 `html_path`；`--out` 落盘的那份 JSON 里仍是完整正文。**别以为 html 为空就是编译失败**——
+  看 `outcome`。
+
 - 图片限制：**jpg/png、单张 ≤1MB**。超限的先压缩，别硬传。
 - **`warnings` 逐条念给运营**，尤其这三类：残留 `**` 星号（发出去改不了，只能删+重发）、
   正文超 2万字符（微信拒收，要拆上下篇）、外链可能不可点。
@@ -248,11 +252,17 @@ python3 STATS --export --from ... --to ...                     # 导出
 **本地 JSON 文件是编辑真源**，改文件 → apply，别在公众平台后台和这里两头改。
 
 ```bash
-python3 MENU --get > {workspace}/wechat/menu.json    # 先拉线上现状当基线
+python3 MENU --get > {workspace}/wechat/menu.json    # 先拉线上现状当基线（stdout 就是可直接编辑的菜单）
 # 编辑 menu.json
-python3 MENU --apply {workspace}/wechat/menu.json    # apply 前脚本会打 diff，念给运营确认再执行
-python3 MENU --delete                                 # 删除整个自定义菜单（慎用，粉丝立刻看不到入口）
+python3 MENU --apply {workspace}/wechat/menu.json              # 只打 diff，不改线上
+python3 MENU --apply {workspace}/wechat/menu.json --confirm    # diff 念给运营确认后才真改
+python3 MENU --delete --confirm   # 删除整个自定义菜单（慎用，粉丝立刻看不到入口；不带 --confirm 只打警示）
 ```
+
+- **apply 是整体覆盖**：线上菜单被这份文件完全替换，文件里没写的入口就没了。所以基线一定要从
+  `--get` 拉，别手搓一份只写新增项的文件。
+- 不带 `--confirm` 跑一次是**安全闸门不是故障**：它回 `outcome: failed` + `diff`（exit 1），
+  把 diff 逐条念给运营、拿到确认后再带 `--confirm` 重跑同一条命令。
 
 - **菜单有约 24 小时缓存**：apply 成功后粉丝不一定马上看到，让运营**取消关注再关注**可立即看到新菜单——
   提前说明，免得运营以为没生效反复 apply。
@@ -265,7 +275,8 @@ python3 MENU --delete                                 # 删除整个自定义菜
 ## 已发布文章删除（**高危，先回头看红线②**）
 
 ```bash
-# 第一步：不带 --confirm，拿到警示与该文现状
+python3 ART --ledger --limit 20                          # 先看这篇现状：标题 / 链接 / 是否群发过
+# 第一步：不带 --confirm 只拿警示（**此时一个请求都不发**，绝不会误删）
 python3 ART --delete-published --article-id <article_id>
 # 第二步：把「链接失效 + 数据清零」讲清楚、拿到确认后
 python3 ART --delete-published --article-id <article_id> --confirm
@@ -302,5 +313,6 @@ python3 ART --delete-published --article-id <article_id> --confirm
 | 定时任务提交 / 列表 / 取消 | `scripts/schedule_ops.py` |
 | 自定义菜单 查/应用/删除 | `scripts/menu_ops.py` |
 | 数据统计（概况 / 单篇 / 导出） | `scripts/stats_ops.py` |
+| REST 调用与四态信封的公共层（红线⑤两桶判据的**唯一实现**，各脚本共用） | `scripts/wechat_api.py` |
 | 凭据工具 / 沙盒放行（`sandbox allow`，已含 `database.nbdpsy.com`） | `scripts/nbdpsy_common.py` |
 | 端点清单与微信侧硬约束速查 | `references/wechat-oa-spec.md` |

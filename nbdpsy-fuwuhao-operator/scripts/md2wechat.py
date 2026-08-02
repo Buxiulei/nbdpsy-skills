@@ -15,9 +15,13 @@
     python3 md2wechat.py post.md --dry-run --html-out /tmp/preview.html
 
 输出（stdout 纯 JSON）:
-    {"outcome": "done|failed", "html": "...", "title": "...", "thumb_media_id": null|"...",
-     "images": [{"src": "原地址", "wx_url": "mmbiz地址"}], "warnings": [...]}
+    {"outcome": "done|failed", "html": "...", "html_path": null|"...", "title": "...",
+     "thumb_media_id": null|"...", "images": [{"src": "原地址", "wx_url": "mmbiz地址"}],
+     "warnings": [...]}
     done exit 0；failed exit 1（另带 error）。**warnings 要逐条念给运营**，尤其残留星号与超长两条。
+    给了 `--html-out` 且写成功时，stdout 的 **`html` 置 null**（正文有几十 KB，糊满对话没用）、
+    `html_path` 给出落盘路径；**键恒在**，消费方不用分情况解析。`--out` 落盘的那份 JSON
+    始终存完整 html，且**在 outcome 定案之后**才写，不会出现「文件记 done、stdout 说 failed」。
     上传是幂等的（重传只多占一张素材），所以上传失败一律 failed，不走 unknown。
     **任何情况下 stdout 都是且只有这一份 JSON**（含未预期异常），消费方可以无脑 json.loads。
     产物落盘失败也记 failed，但 html / thumb_media_id 仍原样留在回执里——图片已经传上去了，
@@ -524,8 +528,9 @@ def _write(path, text):
 
 def _fail(error: str, warnings) -> int:
     """打 failed 信封到 stdout 并回退出码 1。字段与 done 信封同形，消费方不用分情况解析。"""
-    print(json.dumps({"outcome": "failed", "html": None, "title": "", "thumb_media_id": None,
-                      "images": [], "warnings": warnings, "error": error}, ensure_ascii=False))
+    print(json.dumps({"outcome": "failed", "html": None, "html_path": None, "title": "",
+                      "thumb_media_id": None, "images": [], "warnings": warnings,
+                      "error": error}, ensure_ascii=False))
     return 1
 
 
@@ -568,30 +573,44 @@ def main(argv=None):
         elif args.cover:
             thumb_media_id = upload_thumb(args.cover, api_base, api_key)
 
-        payload = {"outcome": "done", "html": result["html"], "title": result["title"],
-                   "thumb_media_id": thumb_media_id, "images": result["images"],
-                   "warnings": warnings + result["warnings"]}
+        payload = {"outcome": "done", "html": result["html"], "html_path": None,
+                   "title": result["title"], "thumb_media_id": thumb_media_id,
+                   "images": result["images"], "warnings": warnings + result["warnings"]}
 
         # 落盘失败**不能连回执一起吞掉**：此时图片/封面可能已经传上去了，回执里的 html 与
         # thumb_media_id 是重跑也拿不回来的成果。所以逐个写、把失败收进信封，只打这一份 JSON
         # （打两份会让消费方的 json.loads 当场崩）。
         write_errors = []
-        for flag, path, text in (
-                ("--html-out", args.html_out, result["html"]),
-                ("--out", args.out, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")):
-            if not path:
-                continue
-            try:
-                _write(path, text)
-            except OSError as e:
-                write_errors.append(f"{flag} {path}（{type(e).__name__}: {e}）")
-        if write_errors:
+
+        def _mark_failed():
             payload["outcome"] = "failed"
+            where = (f"正文 HTML 已经落在 {payload['html_path']} 了" if payload["html_path"]
+                     else "正文 HTML 就在本回执的 html 字段里")
             payload["error"] = ("图片与封面都已处理完（**不必重传**），只是产物落盘失败："
                                 + "；".join(write_errors)
-                                + "。正文 HTML 就在本回执的 html 字段里——换个可写路径重跑，"
-                                  "或直接把它存下来即可。")
-        print(json.dumps(payload, ensure_ascii=False))
+                                + f"。{where}——换个可写路径重跑，或直接把它存下来即可。")
+
+        if args.html_out:
+            try:
+                _write(args.html_out, result["html"])
+                payload["html_path"] = str(args.html_out)
+            except OSError as e:
+                write_errors.append(f"--html-out {args.html_out}（{type(e).__name__}: {e}）")
+        if write_errors:
+            _mark_failed()
+        if args.out:
+            # 必须在 outcome 翻转**之后**才 dump：先 dump 会让落盘的 JSON 记着 done、
+            # stdout 却是 failed，两份产物自相矛盾。
+            try:
+                _write(args.out, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+            except OSError as e:
+                write_errors.append(f"--out {args.out}（{type(e).__name__}: {e}）")
+                _mark_failed()
+
+        # 正文已经落盘时 stdout 不再重复一份：长文的 html 有几十 KB，糊满对话且毫无用处。
+        # 但 **html 键恒在**（值为 null）+ 给出 html_path，消费方不用分情况解析。
+        stdout_payload = dict(payload, html=None) if payload["html_path"] else payload
+        print(json.dumps(stdout_payload, ensure_ascii=False))
         return 0 if payload["outcome"] == "done" else 1
     except CompileError as e:
         return _fail(str(e), warnings)
