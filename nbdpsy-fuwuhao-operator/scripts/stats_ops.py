@@ -105,12 +105,24 @@ TRACK_WINDOW_NOTE = ("这个接口每篇只追踪**发布后 30 天**：更早�
 NESTED_KEYS = ("detail_list", "details")
 
 
+# 外层身份字段：`list[]` 是**每篇一项**，msgid/title 挂在外层、逐日行里没有。
+# 下探 detail_list 时不把它们带下来，多篇混在一起就再也分不出哪行是哪篇的了。
+IDENTITY_KEYS = ("msgid", "title")
+
+
 def unwrap(item):
-    """一条记录里若嵌着逐日明细数组，摊平成它的子条目；否则原样单条返回。"""
+    """一条记录里若嵌着逐日明细数组，摊平成它的子条目，**并把外层身份并进每一条**。
+
+    不带身份下来的后果很具体：`list[]` 每篇一项，多篇时逐日行只剩 stat_date 能当键，
+    后一篇会把前一篇同一天的数据覆盖掉——最后「报乙文的数字、挂甲文的标题」，还一声不吭。
+    身份字段都在 NON_METRIC 里，并进来不会污染求和。
+    """
+    identity = {k: item[k] for k in IDENTITY_KEYS if item.get(k) is not None}
     for key in NESTED_KEYS:
         nested = item.get(key)
         if isinstance(nested, list):
-            return [x for x in nested if isinstance(x, dict)]
+            # 外层身份优先：子条目**长在**这篇里面，它的归属就是外层那个 msgid
+            return [{**x, **identity} for x in nested if isinstance(x, dict)]
     return [item]
 
 
@@ -168,17 +180,36 @@ def sum_all(daily: dict):
     return total
 
 
-def latest_series(rows):
+def same_msgid(item, msgid) -> bool:
+    """记录是不是这篇的。记录没带 msgid 时算「认不出来」→ 当成是（否则整篇算空）；
+    带了就按字符串比——服务端存成数字还是字符串都认。"""
+    got = item.get("msgid")
+    return got is None or str(got) == str(msgid)
+
+
+def latest_series(rows, msgid=None):
     """单篇逐日序列：按 stat_date 去重，**同一天以更新的快照为准**。
 
-    getarticletotal 每天回的是这篇文章**整段历史**（后一天的快照会修订前几天的数字），
+    getarticletotaldetail 每天回的是**整段历史**（后一天的快照会修订前几天的数字），
     照单全收会把同一天的阅读数重复累加成好几倍。
+
+    给了 msgid 就**只留这一篇**：`list[]` 是每篇一项，多篇混在一起时 stat_date 会撞键，
+    后一篇直接盖掉前一篇。
     """
     series = {}
     for ref_date, item in sorted(iter_records(rows), key=lambda x: str(x[0] or "")):
+        if msgid is not None and not same_msgid(item, msgid):
+            continue
         day = item.get("stat_date") or item.get("ref_date") or ref_date
         series[day] = dict(item, stat_date=day)
     return [series[day] for day in sorted(series, key=str)]
+
+
+def foreign_msgids(rows, msgid):
+    """这批快照里**混着的别篇** msgid（去重排序）。有值就说明服务端没按 msgid 过滤干净，
+    得出声说一句「已经替你滤掉了」——闷声滤掉和闷声混算一样不可接受。"""
+    return sorted({str(item["msgid"]) for _, item in iter_records(rows)
+                   if item.get("msgid") is not None and str(item["msgid"]) != str(msgid)})
 
 
 def pick(totals: dict, fields):
@@ -241,6 +272,18 @@ def labels_for(*dicts):
 def other_fields(totals: dict, known):
     """已知字段之外的数值合计原样带出：微信加字段时不至于被静默吞掉。"""
     return {k: v for k, v in totals.items() if k not in known}
+
+
+def non_additive_view(records):
+    """费率/均值字段的可见通道：**不求和，但也绝不消失**。
+
+    它们被挡在求和路径外（见 NON_ADDITIVE），若就此不出现在任何输出里，就成了
+    「微信给了、脚本吞了、谁也不知道」——正是本脚本声称不干的那件事。
+    这里按与 --article 同一套加权口径给出区间值，只列**真出现过**的字段。
+    """
+    present = sorted({f for r in records for f in NON_ADDITIVE
+                      if isinstance(r.get(f), (int, float)) and not isinstance(r.get(f), bool)})
+    return {f: weighted_mean(records, f) for f in present}
 
 
 def missing_warning(missing, stat_type, row_count):
@@ -326,6 +369,9 @@ def do_overview(args, api_base, key):
 
     user_daily, biz_daily = daily_totals(user_rows), daily_totals(biz_rows)
     user_total, biz_total = sum_all(user_daily), sum_all(biz_daily)
+    # 费率/均值不进合计，但要**看得见**（见 non_additive_view 的理由）
+    non_additive = {t: non_additive_view([item for _, item in iter_records(rows)])
+                    for t, rows in ((TYPE_USER, user_rows), (TYPE_BIZ, biz_rows))}
 
     followers, missing_f = pick(user_total, FOLLOWER_FIELDS)
     engagement, missing_e = pick(biz_total, ENGAGEMENT_FIELDS)
@@ -362,11 +408,13 @@ def do_overview(args, api_base, key):
         "engagement": engagement,
         "other_fields": {TYPE_USER: other_fields(user_total, FOLLOWER_FIELDS),
                          TYPE_BIZ: other_fields(biz_total, ENGAGEMENT_FIELDS)},
-        "labels": labels_for(followers, engagement),
+        "non_additive": non_additive,
+        "labels": labels_for(followers, engagement, *non_additive.values()),
         "daily": daily, "daily_note": daily_note,
         "snapshot_rows": {TYPE_USER: len(user_rows), TYPE_BIZ: len(biz_rows)},
         "warnings": warnings,
-        "hint": "数据来自服务端每日快照（每天 "
+        "hint": "engagement 是可加计数的区间合计；费率/均值类字段在 non_additive 里"
+                "（**加权，不求和**）。数据来自服务端每日快照（每天 "
                 f"{SNAPSHOT_AT} 抓前一天），跨任意区间都能查。null 表示**这段区间里没有这个字段**"
                 "，不是 0。单篇表现看 `--article <msgid>`。",
     }
@@ -374,17 +422,15 @@ def do_overview(args, api_base, key):
 
 
 # ── --article ──────────────────────────────────────────────────────────
-def article_title(rows):
-    """标题挂在 detail_list 的**外层**（`{"list":[{"title":..,"detail_list":[...]}]}`），
-    所以这里不能只看 payload 顶层。"""
-    for row in rows:
-        payload = row.get("payload") if isinstance(row, dict) else None
-        if not isinstance(payload, dict):
-            continue
-        outer = payload["list"] if isinstance(payload.get("list"), list) else [payload]
-        for item in outer:
-            if isinstance(item, dict) and item.get("title"):
-                return item["title"]
+def series_title(series):
+    """标题从**已按 msgid 过滤后的记录**里取（unwrap 已把外层 title 并进每条）。
+
+    刻意不去原始 rows 里翻第一个 title：那正是「报乙文的数字、挂甲文的标题」的来源——
+    标题和数字必须来自同一批记录，才不可能张冠李戴。
+    """
+    for item in series:
+        if item.get("title"):
+            return item["title"]
     return None
 
 
@@ -401,22 +447,39 @@ def do_article(args, api_base, key):
     warnings.append(TRACK_WINDOW_NOTE)
 
     rows = fetch_stats(api_base, key, TYPE_ARTICLE_DETAIL, args.timeout, d_from, d_to, msgid)
-    series = latest_series(rows)
+    # 只留这一篇：快照里可能装着当天全部文章，混着算就是张冠李戴
+    series = latest_series(rows, msgid)
+    foreign = foreign_msgids(rows, msgid)
     totals = {}
     for item in series:
         add_metrics(totals, item)          # 费率/均值在 NON_METRIC 里，不会被加进来
 
+    if foreign:
+        shown = "、".join(foreign[:5]) + ("…" if len(foreign) > 5 else "")
+        warnings.append(f"这批快照里还混着**别的文章**的数据（msgid：{shown}），"
+                        f"已按 msgid={msgid} 过滤，下面的数字与标题**只属于这一篇**。"
+                        "（服务端没按 msgid 滤干净，本身不影响这里的结果。）")
+    if rows and not series:
+        warnings.append(f"这批快照里**一条 msgid={msgid} 的记录都没有**，只有别的文章"
+                        f"（{'、'.join(foreign[:5]) or '未知'}）——msgid 是不是写错了？"
+                        "台账里那条的 `msg_id` 才是。")
     if not rows:
-        warnings.append(f"msgid={msgid} 一行快照都没有。四种可能，**先别下结论**："
+        warnings.append(f"msgid={msgid} 一行快照都没有。五种可能，**先别下结论**："
                         "①这篇**发布超过 30 天**了（接口只追踪发布后 30 天，属正常）；"
                         "②这篇**没有群发过**（只发布不群发的文章没有单篇数据）；"
-                        "③才发出去不到一天（微信 T+1）；④msgid 写错了"
+                        "③才发出去不到一天（微信 T+1）；④阅读量过低未入统计"
+                        "（微信侧门槛，T15 待证）；⑤msgid 写错了"
                         "（台账里那条的 msg_id 才是）。⛔ 别把「查不到」说成「没人看」。")
 
     picked, missing = pick(totals, ARTICLE_COUNT_FIELDS)
     # 费率与均值单列：它们是微信直接给的，按阅读人数加权汇总，**不求和**
     averages = {f: weighted_mean(series, f)
                 for f in ARTICLE_RATE_FIELDS + ARTICLE_AVG_FIELDS}
+    if averages.get("read_delivery_rate"):
+        # 送达率的分母本该是推送数，不是阅读人数——权重只是近似，别当精确值念
+        averages["read_delivery_rate"]["how"] += (
+            "；⚠️ 送达率的分母本该是**推送数**而不是阅读人数，这里拿阅读人数当权重只是近似，"
+            "T15 拿真数据核准前别当精确值报给运营")
     # 现算的转化率，与上面的 read_finish_rate 是两回事。新口径不给送达数与原文页阅读数，
     # 那两项**置 null 而不是硬凑**——送达情况直接看微信给的 read_delivery_rate。
     rates = {
@@ -429,7 +492,7 @@ def do_article(args, api_base, key):
         warnings.append(missing_warning(missing, TYPE_ARTICLE_DETAIL, len(rows)))
 
     payload = {
-        "msgid": msgid, "title": article_title(rows),
+        "msgid": msgid, "title": series_title(series),
         "range": {"from": str(d_from) if d_from else None, "to": str(d_to) if d_to else None},
         "totals": picked, "averages": averages, "rates": rates,
         "rates_note": "新口径 detail_list 不给送达数，也没有原文页阅读——「送达→阅读」「阅读→点开原文」"

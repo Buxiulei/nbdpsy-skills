@@ -728,6 +728,15 @@ class Test定时提交:
         assert code == 0 and data["outcome"] == "unknown"
         assert "--list" in data["hint"] and "重复入队" in data["hint"]
 
+    def test_时间类提醒也要吼到stderr而不是只埋在JSON里(self, net, capsys):
+        """「离现在只有 30 秒、可能错过这一轮」正是要当面说的那句，埋在 JSON 里最容易被略过。"""
+        net.serve(FakeResp(200, {"success": True, "job_id": 1}))
+        soon = (datetime.now(S.CN_TZ) + timedelta(seconds=40)).replace(microsecond=0).isoformat()
+        code, data, err = run_cli(S, ["--submit-publish", "M1", "--at", soon], capsys)
+        assert code == 0 and data["warnings"]                    # 回执里有
+        assert any("每分钟扫一次" in w for w in data["warnings"])
+        assert "每分钟扫一次" in err                              # stderr 里也得有
+
     def test_服务端没回id时不拼出跑不通的取消命令(self, net, capsys):
         net.serve(FakeResp(200, {"success": True}))
         code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future()], capsys)
@@ -885,8 +894,27 @@ class Test快照聚合:
             {"msgid": "2247", "title": "CPTSD 是什么", "detail_list": [
                 {"stat_date": "2026-07-01", "read_user": 200},
                 {"stat_date": "2026-07-02", "read_user": 50}]}]}}]
-        assert [r["read_user"] for r in ST.latest_series(rows)] == [200, 50]
-        assert ST.article_title(rows) == "CPTSD 是什么"        # 标题挂在 detail_list 外层
+        series = ST.latest_series(rows)
+        assert [r["read_user"] for r in series] == [200, 50]
+        # 外层身份必须并进每条逐日记录，否则多篇时分不出哪行是哪篇的
+        assert all(r["msgid"] == "2247" and r["title"] == "CPTSD 是什么" for r in series)
+
+    def test_多篇混在一起时按msgid各归各家(self):
+        """`list[]` 每篇一项且 stat_date 会撞键：不按 msgid 分开，后一篇直接盖掉前一篇，
+        最后「报乙文的数字、挂甲文的标题」还一声不吭。"""
+        rows = [{"ref_date": "2026-07-03", "payload": {"list": [
+            {"msgid": "甲", "title": "甲文", "detail_list": [
+                {"stat_date": "2026-07-01", "read_user": 100}]},
+            {"msgid": "乙", "title": "乙文", "detail_list": [
+                {"stat_date": "2026-07-01", "read_user": 999}]}]}}]
+        jia = ST.latest_series(rows, "甲")
+        assert [r["read_user"] for r in jia] == [100] and ST.series_title(jia) == "甲文"
+        yi = ST.latest_series(rows, "乙")
+        assert [r["read_user"] for r in yi] == [999] and ST.series_title(yi) == "乙文"
+        assert ST.foreign_msgids(rows, "甲") == ["乙"]
+        # 服务端把 msgid 存成数字、入参是字符串时也要对得上
+        assert ST.same_msgid({"msgid": 2247}, "2247") and not ST.same_msgid({"msgid": 2247}, "9")
+        assert ST.same_msgid({"read_user": 1}, "任何")   # 没带 msgid 的记录不丢
 
     def test_费率与均值绝不进求和(self):
         """40%+50%+60%=150% 这种数看着像指标、其实和把 user_source 加起来是同一类垃圾。"""
@@ -1061,9 +1089,59 @@ class Test统计CLI:
         assert code == 0 and data["totals"]["read_user"] is None
         joined = "｜".join(data["warnings"])
         assert "30 天" in joined and "没有群发过" in joined and "msgid 写错" in joined
+        assert "阅读量过低未入统计" in joined            # 第五种可能，T15 待证
         assert "别把「查不到」说成「没人看」" in joined
         # 老文章查空是合法结果这句，任何时候都在（不只是查空的时候）
         assert any("发布后 30 天" in w and "属正常" in w for w in data["warnings"])
+
+    def test_快照里混着别篇时只算这一篇并出声(self, net, capsys):
+        """服务端没按 msgid 滤干净时，闷声混算与闷声滤掉一样不可接受。"""
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"ref_date": "2026-07-03", "payload": {"list": [
+                {"msgid": "2247", "title": "甲文", "detail_list": [
+                    {"stat_date": "2026-07-01", "read_user": 100, "share_user": 3}]},
+                {"msgid": "9999", "title": "乙文", "detail_list": [
+                    {"stat_date": "2026-07-01", "read_user": 88888, "share_user": 777}]}]}}]}))
+        code, data, err = run_cli(ST, ["--article", "2247"], capsys)
+        assert code == 0
+        assert data["totals"]["read_user"] == 100        # ⛔ 不是 88988，也不是 88888
+        assert data["title"] == "甲文"                    # ⛔ 数字和标题必须同源
+        assert data["days_covered"] == 1
+        assert any("混着" in w and "9999" in w and "只属于这一篇" in w for w in data["warnings"])
+        assert "9999" in err
+
+    def test_只有别篇数据时点出msgid可能写错(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"ref_date": "2026-07-03", "payload": {"list": [
+                {"msgid": "9999", "title": "乙文", "detail_list": [
+                    {"stat_date": "2026-07-01", "read_user": 500}]}]}}]}))
+        code, data, _ = run_cli(ST, ["--article", "2247"], capsys)
+        assert code == 0 and data["totals"]["read_user"] is None and data["title"] is None
+        assert any("一条 msgid=2247 的记录都没有" in w and "写错" in w for w in data["warnings"])
+
+    def test_送达率的权重语义带免责(self, net, capsys):
+        net.serve(FakeResp(200, self.ARTICLE_ROWS))
+        code, data, _ = run_cli(ST, ["--article", "2247483647"], capsys)
+        how = data["averages"]["read_delivery_rate"]["how"]
+        assert "推送数" in how and "近似" in how and "T15" in how
+        # 完成率那条不该被这句免责污染
+        assert "推送数" not in data["averages"]["read_finish_rate"]["how"]
+
+    def test_概况里的费率字段不求和但也不许消失(self, net, capsys):
+        """挡在求和路径外之后若哪儿都不出现，就成了「微信给了、脚本吞了、谁也不知道」。"""
+        net.serve(FakeResp(200, self.USER_ROWS),
+                  FakeResp(200, {"success": True, "items": [
+                      {"ref_date": "2026-07-01", "payload": {"read_user": 100,
+                                                             "read_finish_rate": 0.4}},
+                      {"ref_date": "2026-07-02", "payload": {"read_user": 300,
+                                                             "read_finish_rate": 0.6}}]}))
+        code, data, _ = run_cli(ST, ["--overview", "--from", "2026-07-01",
+                                     "--to", "2026-07-02"], capsys)
+        assert code == 0
+        assert "read_finish_rate" not in data["other_fields"]["getbizsummary"]   # 没被求和
+        assert data["non_additive"]["getbizsummary"]["read_finish_rate"]["value"] == 0.55
+        assert data["labels"]["read_finish_rate"] == "阅读完成率"
+        assert "non_additive" in data["hint"]
 
     def test_单篇缺msgid不发请求(self, net, capsys):
         code, data, _ = run_cli(ST, ["--article", "  "], capsys)
