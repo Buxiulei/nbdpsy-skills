@@ -816,11 +816,15 @@ class Test定时提交:
 
 
 class Test队列查询与撤销:
-    QUEUE = {"success": True, "total": 2, "items": [
+    # 形状照抄生产实测的原始返回：每行的队列 id 字段名是 **`id`**（不是 job_id），
+    # 且服务端已经给了换算好的 `run_at_cn`。
+    QUEUE = {"success": True, "total": 2, "limit": 20, "offset": 0, "items": [
         {"id": 12, "job_type": "publish", "status": "pending",
-         "run_at": "2026-08-03T09:00:00+08:00", "payload": {"media_id": "M1"}},
+         "run_at": "2026-08-03T01:00:00+00:00", "run_at_cn": "2026-08-03 09:00:00+08:00",
+         "payload": {"media_id": "M1"}},
         {"id": 11, "job_type": "mass_send", "status": "done",
-         "run_at": "2026-07-30T10:00:00+08:00", "payload": {"media_id": "M0"}},
+         "run_at": "2026-07-30T02:00:00+00:00", "run_at_cn": "2026-07-30 10:00:00+08:00",
+         "payload": {"media_id": "M0"}},
     ]}
 
     def test_list补人话状态与能不能撤(self, net, capsys):
@@ -834,6 +838,31 @@ class Test队列查询与撤销:
         assert data["counts"] == {"in_page": 2, "by_status": {"pending": 1, "done": 1},
                                   "mass_send": 1}
         assert data["total"] == 2                     # 顶层字段不被本页统计覆盖
+
+    def test_每行都补上要敲进cancel的那个数字(self, net, capsys):
+        """服务端这里的字段名是 `id`，运营下一步敲的却是 `--cancel <job_id>`。
+        不做两认，念给运营的 job_id 恒为 null，他就只能自己去猜该敲哪个数。"""
+        net.serve(FakeResp(200, self.QUEUE))
+        code, data, _ = run_cli(S, ["--list"], capsys)
+        assert code == 0
+        assert [r["job_id"] for r in data["items"]] == [12, 11]
+
+    def test_服务端改叫job_id时也认(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"job_id": 77, "job_type": "publish", "status": "pending",
+             "run_at": "2026-08-03T01:00:00+00:00"}]}))
+        code, data, _ = run_cli(S, ["--list"], capsys)
+        assert code == 0 and data["items"][0]["job_id"] == 77
+
+    def test_只有run_at_cn时拿它兜底且星期照样念得出(self, net, capsys):
+        """run_at_cn 是服务端换算好的北京时间，但它**没有星期**——
+        直接当 label 用，就把「核对有没有写错一天」的抓手弄丢了。"""
+        net.serve(FakeResp(200, {"success": True, "items": [
+            {"id": 9, "job_type": "publish", "status": "pending",
+             "run_at_cn": "2026-08-03 09:00:00+08:00"}]}))
+        code, data, _ = run_cli(S, ["--list"], capsys)
+        text = data["items"][0]["run_at_label"]
+        assert code == 0 and "2026年8月3日" in text and "周一" in text and "09:00" in text
 
     def test_服务端时间读不懂时如实给null而不是瞎猜(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "items": [
@@ -867,6 +896,16 @@ class Test队列查询与撤销:
         assert code == 1 and data["outcome"] == "failed"
         assert "只有还没到点" in data["error"] and "--list" in data["error"]
         assert "上一次取消其实已经成功了" in data["error"]
+
+    def test_id压根不存在时说是抄错而不是甩HTTP404(self, net, capsys):
+        """404 与 409 的下一步动作完全不同：前者去核对 id，后者去核对是不是已经执行了。
+        甩原始 HTTP 码就把这个区分丢了，运营最容易的误判是「撤不掉就再提一条」。"""
+        net.serve(FakeResp(404, {"success": False, "error": "定时任务 id=99 不存在"}))
+        code, data, _ = run_cli(S, ["--cancel", "99"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "HTTP 404" not in data["error"]
+        assert "id 抄错" in data["error"] and "--list" in data["error"]
+        assert "到点会发两次" in data["error"]        # ⛔ 劝住「撤不掉就重提一条」
 
     def test_四个动作互斥(self, net, capsys):
         with pytest.raises(SystemExit):
@@ -1121,7 +1160,7 @@ class Test统计CLI:
         assert code == 0 and data["totals"]["read_user"] is None
         joined = "｜".join(data["warnings"])
         assert "30 天" in joined and "没有群发过" in joined and "msgid 写错" in joined
-        assert "阅读量过低未入统计" in joined            # 第五种可能，T15 待证
+        assert "阅读量过低未入统计" in joined            # 第五种可能，待真数据核准
         assert "别把「查不到」说成「没人看」" in joined
         # 老文章查空是合法结果这句，任何时候都在（不只是查空的时候）
         assert any("发布后 30 天" in w and "属正常" in w for w in data["warnings"])
@@ -1167,7 +1206,7 @@ class Test统计CLI:
         net.serve(FakeResp(200, self.ARTICLE_ROWS))
         code, data, _ = run_cli(ST, ["--article", "2247483647"], capsys)
         how = data["averages"]["read_delivery_rate"]["how"]
-        assert "推送数" in how and "近似" in how and "T15" in how
+        assert "推送数" in how and "近似" in how and "别当精确值" in how
         # 完成率那条不该被这句免责污染
         assert "推送数" not in data["averages"]["read_finish_rate"]["how"]
 

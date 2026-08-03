@@ -9,6 +9,7 @@ ROOT = Path(__file__).parent.parent
 def test_fuwuhao_registered_in_installers_and_plugin():
     """skill 目录在仓库里 ≠ 装得到：漏进清单就是「本地跑得通、运营装完没有」。"""
     assert "nbdpsy-fuwuhao-operator" in (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "nbdpsy-fuwuhao-operator" in (ROOT / "install.ps1").read_text(encoding="utf-8")
     assert "./nbdpsy-fuwuhao-operator" in (
         ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
 

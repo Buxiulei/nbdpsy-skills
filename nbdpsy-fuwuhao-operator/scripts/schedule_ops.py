@@ -147,7 +147,12 @@ def submit_job(api_base, key, body, timeout):
 
 
 def job_id_of(data):
-    """服务端回的队列 id。字段名 T15 联调时收紧，这里两种都认，拿不到就如实回 None。"""
+    """服务端回的队列 id。两种字段名都认，拿不到就如实回 None。
+
+    提交回执用的是 `job_id`，队列查询（GET /schedule）每行用的是 `id`——两处不同名。
+    这个函数是**两条路径共用**的：只在提交路径上认两种、查询路径直接读 `id`，
+    结果就是 `--list` 每行的 job_id 恒为 null，而 `--cancel` 要的正是这个数字。
+    """
     for field in ("job_id", "id"):
         if data.get(field) is not None:
             return data.get(field)
@@ -233,11 +238,16 @@ def do_submit_mass(args, api_base, key):
 
 # ── 队列查询 / 撤销 ──────────────────────────────────────────────────────
 def job_view(row):
-    """给队列行补人话：状态、执行时刻（北京时间）、还撤不撤得掉。"""
+    """给队列行补人话：队列 id、状态、执行时刻（北京时间）、还撤不撤得掉。"""
+    # 服务端这里叫 `id`，而运营下一步要敲的是 `--cancel <job_id>`：不补这一行，
+    # 念给运营的字段名和他要敲的参数名就对不上（见 job_id_of）
+    row["job_id"] = job_id_of(row)
     row["status_label"] = JOB_STATUS_LABELS.get(row.get("status"),
                                                 f"未收录的状态「{row.get('status')}」")
     row["job_type_label"] = JOB_TYPE_LABELS.get(row.get("job_type"), row.get("job_type"))
-    run_at = parse_iso(row.get("run_at"))
+    # run_at_cn 是服务端已经换算好的北京时间串，run_at 缺失时拿它兜底。
+    # 但**不直接拿它当 label**：它没有星期，而「周几」正是核对 run_at 有没有写错一天的抓手。
+    run_at = parse_iso(row.get("run_at") or row.get("run_at_cn"))
     row["run_at_label"] = label(run_at) if run_at else None
     row["can_cancel"] = row.get("status") == "pending"
     return row
@@ -266,7 +276,16 @@ def do_cancel(args, api_base, key):
         data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/schedule/cancel",
                                        key, {"id": args.cancel}, args.timeout)
     except OpFailed as e:
-        # 服务端约定：只有 pending 能撤，撤不到行回 409。这里把它翻成运营能处置的人话。
+        # 服务端把「压根没这条」与「有但已不是 pending」分成 404 / 409：两者下一步动作
+        # 完全不同（前者是 id 抄错，后者要去核对是不是已经执行了），甩原始 HTTP 码等于
+        # 把这个区分白白丢掉。
+        if e.error.startswith("HTTP 404"):
+            raise OpFailed(
+                f"队列里没有 id={args.cancel} 这条——**多半是 id 抄错了**（提交回执里的 "
+                "`job_id` 才是，不是 media_id、也不是台账 id）。先 `--list` 把队列列出来"
+                "对一眼再撤。⛔ 别因为「撤不掉」就去重提交一条：原来那条要是还在，"
+                "到点会发两次。", **e.extra) from e
+        # 只有 pending 能撤，撤不到行回 409。这里把它翻成运营能处置的人话。
         if e.error.startswith("HTTP 409"):
             raise OpFailed(
                 f"撤不掉 id={args.cancel}：**只有还没到点的（pending）能撤**。可能是"
