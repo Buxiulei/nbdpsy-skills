@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """已发布笔记的台账查询与操作（经 nbdpsy-api，纯 REST）。
 
-发布走 publish_note.py；**笔记发出去之后**的事都在这里：查台账、改合集/引用/活动、
+发布走 publish_note.py；**笔记发出去之后**的事都在这里：查台账、改标题正文图片、改合集/引用、
 切公开或私密、发评论、手工触发同步与目的回填。
 
 用法：
@@ -10,8 +10,10 @@
     python3 note_ops.py --note <note_id>     # 单条详情（**只有这里返回正文 content_text**）
     python3 note_ops.py --collections 账号名或ID          # 该号的合集
     python3 note_ops.py --activities 账号名或ID [--keyword 心理]   # 可关联的活动
-    python3 note_ops.py --set-components --account 号 --note-id ID
-        [--collection-id N] [--quoted-note-id ID] [--activity-id N] [--related-counselor 姓名]
+    python3 note_ops.py --set-components --account 号 --note-id ID   # 九个字段可同批提交
+        [--collection-id N] [--quoted-note-id ID] [--related-counselor 姓名] [--activity-id N]
+        [--set-title 标题] [--set-content 正文 | --set-content-file 路径]
+        [--add-image URL...] [--remove-image-index N...] [--expected-image-count N]
     python3 note_ops.py --set-visibility --account 号 --privacy 0|1 [--note-id ID|--title 标题]
     python3 note_ops.py --comment --account 号 --text "评论文案" [--title 标题] [--publisher-user-id X]
     python3 note_ops.py --sync-ledger 账号名或ID      # 手工触发一次台账同步（幂等，可放心重试）
@@ -32,9 +34,10 @@
    问「我们提交过什么」查 publish_note.py --list-jobs。笔记被删后 publish_jobs 仍是
    published 不回滚（实证：某号 20 条 published，平台只剩 17 篇）。
 3. **success 不等于生效。** 这条产品线的失败普遍是静默的（私密笔记的合集绑定会被平台
-   静默丢弃、活动关联按钮首次点击无声失效）。三组件必须逐项看 applied / failed，
+   静默丢弃、活动关联按钮首次点击无声失效）。三组件必须逐项看 applied（**true 才算数，
+   null 是本次没请求这项**）与 failed，
    本脚本 outcome=partial 就是「有的成了有的没成」，**不是成功**。
-4. **非幂等操作失败不要盲目重试**：可见性切换 / 评论 / 三组件（活动还会重复往正文注入话题）/
+4. **非幂等操作失败不要盲目重试**：可见性切换 / 评论 / 三组件与编辑 /
    互动补量（重跑会重复处理、消耗当日配额、增加风控暴露）。本脚本对这几类一律不自动重试，
    异常与超时都落 outcome=unknown + 「先核对当前实际状态」。
    幂等可安全重试的只有 --sync-ledger / --backfill-purpose。
@@ -57,6 +60,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 
 # 同目录 vendored 副本
@@ -249,43 +253,113 @@ def _items(view: dict, key: str):
     return list(v) if isinstance(v, list) else []
 
 
+def _split_applied(view: dict):
+    """`applied` 是逐项三态映射 {collection: true/false/null}：true=生效，false=没生效，
+    **null=本次没请求这项**（不是失败）。归一成 (生效项, 没生效项)。
+    历史形态（list）也兼容：那时 list 里的就是生效项。"""
+    v = view.get("applied")
+    if isinstance(v, dict):
+        ok = [k for k, val in v.items() if val is True]
+        bad = [k for k, val in v.items() if val is False]
+        return ok, bad
+    return (list(v) if isinstance(v, list) else []), []
+
+
 def components_result(view: dict, job_id: str, requested: dict):
-    """三组件终态视图 → 信封 + exit code。
-    **逐项判定**：failed 非空即不算成功（服务端 status 可能是 done 但个别项被平台静默丢弃）。"""
+    """三组件 / 编辑任务的终态视图 → 信封 + exit code。
+
+    **逐项判定**：`applied` 里为 true 的才算数——"没报错"不等于生效（平台会静默丢弃）。
+    done 与 error 现在都下发逐项详情，所以两种状态都按同一套逻辑读。"""
     status = view.get("status")
-    applied, failed = _items(view, "applied"), _items(view, "failed")
+    ok, not_ok = _split_applied(view)
+    failed = _items(view, "failed")
+    extras = {k: view[k] for k in ("topics_dropped", "images_before", "images_after",
+                                   "ledger_synced") if view.get(k) not in (None, [], {})}
     if status == "gone":
         return {"outcome": "unknown", "job_id": job_id, "requested": requested,
-                "hint": "任务台账查不到了（server 可能重启）：三组件非幂等（活动会重复往正文注入话题），"
+                "hint": "任务台账查不到了（server 可能重启）：本操作非幂等，"
                         "先用 --note <note_id> 核对当前实际生效情况，再决定要不要重提交"}, 0
-    if status == "error" and not applied:
+
+    # aborted_before_submit：文本/图片某步失败，整单没提交、笔记原样——这是唯一可以放心重试的失败
+    if view.get("aborted_before_submit"):
+        return {"outcome": "aborted", "job_id": job_id, "requested": requested,
+                "failed": failed, "reason": view.get("reason"), **extras,
+                "hint": "整单在提交前就中止了，**笔记保持原样，可以安全重试**"
+                        "（这是唯一不需要先核对现状的失败）。先看 failed 里的原因修因再重来"}, 1
+
+    if not ok and (status == "error" or not_ok or failed):
         out = {"outcome": "failed", "job_id": job_id, "requested": requested,
-               "reason": view.get("reason"), "failed": failed}
-        reason = view.get("reason") or ""
+               "reason": view.get("reason"), "failed": failed, "not_applied": not_ok, **extras}
+        reason = " ".join(str(x) for x in ([view.get("reason") or ""] + failed))
         if "note_not_locatable" in reason:
             out["hint"] = "笔记定位不了（空标题或同号重复标题无法区分）——重试也不会变得可定位，改用 note_id"
+        elif "activity" in " ".join(not_ok) or "activity" in reason:
+            out["hint"] = ("关联活动没设上：**编辑页的「关联活动」区 2026-08-03 起被平台收走了**"
+                           "（08-01 还能用），不是我们的 bug。活动现在只能在发布时挂"
+                           "（publish_note.py --activity-id）。平台若恢复则零改动自动可用——"
+                           "隔几天拿一篇试，applied.activity 变 true 就是回来了")
         else:
-            out["hint"] = "一项都没生效，可以修因后重提交；重提交前先 --note <note_id> 核对现状"
+            out["hint"] = "一项都没生效。重提交前先 --note <note_id> 核对现状（本操作非幂等）"
         return out, 1
-    if failed:
-        return {"outcome": "partial", "job_id": job_id, "requested": requested,
-                "applied": applied, "failed": failed, "reason": view.get("reason"),
-                "hint": "部分生效：**只对 failed 的那几项**单独重提交，别整包重发（活动会重复注入话题）。"
-                        "私密笔记加合集会被平台静默丢弃，这类先把笔记转公开再加"}, 1
+
+    if not_ok or failed:
+        out = {"outcome": "partial", "job_id": job_id, "requested": requested,
+               "applied": ok, "not_applied": not_ok, "failed": failed,
+               "reason": view.get("reason"), **extras,
+               "hint": "部分生效：**只对没生效的那几项**单独重提交，别整包重发。"
+                       "私密笔记加合集会被平台静默丢弃，这类先把笔记转公开再加"}
+        if "activity" in " ".join(not_ok):
+            out["hint"] += "；activity 没生效多半是平台 08-03 收走了编辑页的关联活动区，改到发布时挂"
+        return out, 1
+
     if status in ("done", "partially_applied"):
-        return {"outcome": "done", "job_id": job_id, "requested": requested,
-                "applied": applied}, 0
+        out = {"outcome": "done", "job_id": job_id, "requested": requested, "applied": ok, **extras}
+        if extras.get("topics_dropped"):
+            out["hint"] = ("改正文会**丢掉既有话题实体**（含发布时精选的），平台行为、不重建。"
+                           "要保住这些话题，得把它们写进新正文重新发布时精选")
+        return out, 0
+
     # running：轮询超时未达终态
     return {"outcome": "unknown", "job_id": job_id, "requested": requested,
-            "hint": f"轮询超时仍未出终态（任务可能仍在跑）。三组件非幂等：先用 --note <note_id> "
-                    f"核对实际生效情况，绝不盲目重提交"}, 0
+            "hint": "轮询超时仍未出终态（任务可能仍在跑）。本操作非幂等：先用 --note <note_id> "
+                    "核对实际生效情况，绝不盲目重提交"}, 0
+
+
+def check_component_request(requested: dict):
+    """提交前的本地预检，返回 warning 列表；能当场判死的直接抛。
+    图片操作必须带 expected_image_count（服务端的防呆闸）——少了它服务端 422，
+    但报错时人往往搞不清缺的是什么，所以在这里先说清楚。"""
+    warns = []
+    touches_images = "add_images" in requested or "remove_image_indexes" in requested
+    if touches_images and "expected_image_count" not in requested:
+        raise ValueError("动图片必须同时给 --expected-image-count <你认为现在几张>："
+                         "这是防呆闸，页面实际张数与它不符时服务端整单零点击拒绝")
+    content = requested.get("content")
+    if content is not None and len(content) > 900:
+        raise ValueError(f"正文 {len(content)} 字超 900，服务端会拒绝")
+    if content is not None:
+        warns.append("整体替换正文会**丢掉既有话题实体**（含发布时精选的），平台行为不重建；"
+                     "丢了哪些会在结果的 topics_dropped 里")
+    title = requested.get("title")
+    if title:
+        warns.append("标题按显长 >20 直接 422，服务端不截断（传 \"\" 是清空标题）")
+    if "activity_id" in requested:
+        warns.append("**编辑页的「关联活动」区 2026-08-03 起被平台收走**（08-01 还能用），"
+                     "这一项大概率设不上；活动改到发布时挂（publish_note.py --activity-id）")
+    if "collection_id" in requested:
+        warns.append("合集这条路零实战：**先拿一篇看 applied.collection 是不是 true，再批量**")
+    return warns
 
 
 def start_components(api_base: str, key: str, account_id: int, note_id: str,
                      requested: dict) -> str:
-    """提交三组件任务，返回 job_id。**非幂等**：重复提交会重复执行，活动还会把话题重复注入正文
-    （换活动会取消旧活动，但旧话题留在正文里不删、只增不减）。提交与轮询分开，是为了让调用方
-    在拿到 id 的那一刻就记住它——轮询期间的任何异常都不能把已入队的任务说成「没发生」。"""
+    """提交三组件 / 编辑任务，返回 job_id。九个可选字段同一次提交：
+    collection_id / quoted_note_id / related_counselor / activity_id / title / content /
+    add_images / remove_image_indexes / expected_image_count。
+
+    **非幂等**：重复提交会重复执行。唯一例外是结果带 `aborted_before_submit: true`
+    （整单没提交、笔记原样），那种可以安全重试。提交与轮询分开，是为了让调用方在拿到 id 的
+    那一刻就记住它——轮询期间的任何异常都不能把已入队的任务说成「没发生」。"""
     payload = {"note_id": note_id, **requested}
     resp = send_request("POST", f"{api_base}/api/accounts/{account_id}/note-components", key, payload)
     if resp.status_code >= 400:
@@ -470,7 +544,7 @@ def main():
     ap.add_argument("--activities", metavar="账号名或ID", help="列可关联的活动")
     ap.add_argument("--keyword", help="--activities 的筛选关键词（如 心理）")
     ap.add_argument("--set-components", action="store_true",
-                    help="改已发布笔记的合集/引用/活动（非幂等；须配 --account 与 --note-id）")
+                    help="改已发布笔记：标题/正文/图片/合集/引用/咨询师推导（非幂等；须配 --account 与 --note-id）")
     ap.add_argument("--set-visibility", action="store_true",
                     help="切换公开/仅自己可见（非幂等；须配 --account 与 --privacy）")
     ap.add_argument("--comment", action="store_true",
@@ -489,8 +563,22 @@ def main():
     ap.add_argument("--title", help="按标题定位（空标题或同号重复标题会 note_not_locatable）")
     ap.add_argument("--collection-id", help="--set-components：加入该合集")
     ap.add_argument("--quoted-note-id", help="--set-components：引用该笔记（限本账号内）")
-    ap.add_argument("--activity-id", help="--set-components：关联该活动（会往正文追加话题）")
+    ap.add_argument("--activity-id",
+                    help="--set-components：关联该活动（⚠ 编辑页入口 2026-08-03 起被平台收走，"
+                         "大概率设不上；活动改在发布时挂）")
     ap.add_argument("--related-counselor", help="--set-components：关联咨询师姓名（驱动引用自动推导）")
+    ap.add_argument("--set-title", metavar="标题",
+                    help="--set-components：整体替换标题（传空串=清空；显长>20 服务端 422 不截断）")
+    ap.add_argument("--set-content", metavar="正文",
+                    help="--set-components：整体替换正文（≤900 字；**会丢既有话题实体**）")
+    ap.add_argument("--set-content-file", metavar="路径",
+                    help="--set-components：从文件读正文（长文本别塞命令行）")
+    ap.add_argument("--add-image", nargs="+", metavar="URL或路径",
+                    help="--set-components：追加图片（URL / 本服务 /uploads 路径）")
+    ap.add_argument("--remove-image-index", nargs="+", type=int, metavar="N",
+                    help="--set-components：删第几张图（**1-based**，按发布态图序；删完须剩 ≥1）")
+    ap.add_argument("--expected-image-count", type=int, metavar="N",
+                    help="--set-components 动图片时**必填**防呆闸：你认为现在几张（不符则整单拒绝）")
     ap.add_argument("--privacy", type=int, choices=[0, 1],
                     help="--set-visibility 目标可见性：0=公开可见 / 1=仅自己可见（只开放这两档）")
     ap.add_argument("--text", help="--comment 的评论文案")
@@ -576,16 +664,24 @@ def main():
         if args.set_components:
             if not args.account or not args.note_id:
                 ap.error("--set-components 需要 --account 与 --note-id（组件操作只按 note_id 定位）")
+            content = args.set_content
+            if args.set_content_file:
+                content = Path(args.set_content_file).read_text(encoding="utf-8").strip()
             requested = {k: v for k, v in (
                 ("collection_id", args.collection_id), ("quoted_note_id", args.quoted_note_id),
                 ("activity_id", args.activity_id), ("related_counselor", args.related_counselor),
+                ("content", content),
+                ("add_images", args.add_image), ("remove_image_indexes", args.remove_image_index),
+                ("expected_image_count", args.expected_image_count),
             ) if v not in (None, "")}
+            if args.set_title is not None:   # 空串是「清空标题」的合法值，不能被过滤掉
+                requested["title"] = args.set_title
             if not requested:
                 ap.error("--set-components 至少要给一项：--collection-id / --quoted-note-id / "
-                         "--activity-id / --related-counselor")
-            if args.activity_id:
-                print("⚠ 关联活动会往正文末尾追加活动话题并真的发出去；换活动会取消旧活动但"
-                      "旧话题留在正文里不删——别反复切换活动", file=sys.stderr)
+                         "--activity-id / --related-counselor / --set-title / --set-content[-file] / "
+                         "--add-image / --remove-image-index")
+            for w in check_component_request(requested):
+                print(f"⚠ {w}", file=sys.stderr)
             aid, label, warn = resolve_account(api_base, key, args.account)
             if warn:
                 print(f"⚠ {warn}", file=sys.stderr)

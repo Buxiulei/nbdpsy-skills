@@ -101,7 +101,7 @@ def test_components_done_with_failed_items_is_partial_not_success():
         {"status": "done", "applied": ["collection_id"], "failed": ["activity_id"]},
         "j1", {"collection_id": "c", "activity_id": "a"})
     assert out["outcome"] == "partial" and code == 1
-    assert "只对 failed" in out["hint"]
+    assert "只对没生效的那几项" in out["hint"]
 
 
 def test_components_partially_applied_without_failures_counts_as_done():
@@ -131,13 +131,21 @@ def test_components_gone_and_timeout_are_unknown_not_failed():
         assert "核对" in out["hint"]
 
 
-def test_components_items_accept_dict_shape():
+def test_applied_is_tristate_null_means_not_requested():
+    """applied 是逐项三态：true=生效，false=没生效，**null=本次没请求这项**（不是失败）。
+    把 null 当失败会让「只改了标题」的任务被判成部分失败。"""
     import note_ops
-    out, _ = note_ops.components_result(
-        {"status": "done", "applied": {"collection_id": "ok"}, "failed": {"activity_id": "dropped"}},
-        "j1", {})
-    assert out["outcome"] == "partial"
-    assert out["failed"] == ["activity_id=dropped"]
+    out, code = note_ops.components_result(
+        {"status": "done", "applied": {"title": True, "collection": None, "activity": None}},
+        "j1", {"title": "新标题"})
+    assert out["outcome"] == "done" and code == 0 and out["applied"] == ["title"]
+
+    out, code = note_ops.components_result(
+        {"status": "done", "applied": {"title": True, "activity": False}},
+        "j1", {"title": "x", "activity_id": "43561"})
+    assert out["outcome"] == "partial" and code == 1
+    assert out["applied"] == ["title"] and out["not_applied"] == ["activity"]
+    assert "08-03" in out["hint"]  # 平台收走了编辑页的关联活动区
 
 
 # ---- 可见性：只收整数 0/1，布尔必须被拒 ----
@@ -349,3 +357,52 @@ def test_main_backfill_account_scope_requires_account(monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         note_ops.main()
     assert e.value.code == 2
+
+
+# ---- 编辑能力（title/content/images）与 aborted_before_submit ----
+
+def test_aborted_before_submit_is_the_one_safe_retry():
+    """整单在提交前中止 = 笔记原样。这是唯一不需要先核对现状就能重试的失败——
+    落成普通 failed 会让 agent 白白去人工核对；落成 unknown 又会拦住本可以直接重来的重试。"""
+    import note_ops
+    out, code = note_ops.components_result(
+        {"status": "error", "aborted_before_submit": True,
+         "failed": ["content: 超长"], "images_before": 4},
+        "j1", {"content": "x" * 10})
+    assert out["outcome"] == "aborted" and code == 1
+    assert "笔记保持原样" in out["hint"] and "安全重试" in out["hint"]
+    assert out["images_before"] == 4
+
+
+def test_topics_dropped_surfaced_on_success():
+    """改正文会丢掉既有话题实体——成功也要把这件事说出来，否则运营发现不了。"""
+    import note_ops
+    out, code = note_ops.components_result(
+        {"status": "done", "applied": {"content": True}, "topics_dropped": ["CPTSD", "情绪内耗"]},
+        "j1", {"content": "新正文"})
+    assert out["outcome"] == "done" and code == 0
+    assert out["topics_dropped"] == ["CPTSD", "情绪内耗"] and "丢掉既有话题" in out["hint"]
+
+
+def test_image_ops_require_expected_count_guard():
+    """动图片必须带防呆闸：少了它服务端 422，但报错时人常搞不清缺什么，所以本地先拦。"""
+    import note_ops
+    with pytest.raises(ValueError) as ei:
+        note_ops.check_component_request({"remove_image_indexes": [2]})
+    assert "expected-image-count" in str(ei.value)
+    with pytest.raises(ValueError):
+        note_ops.check_component_request({"add_images": ["http://x/a.png"]})
+    # 给了就放行
+    note_ops.check_component_request({"add_images": ["http://x/a.png"], "expected_image_count": 3})
+
+
+def test_content_length_and_warnings():
+    import note_ops
+    with pytest.raises(ValueError):
+        note_ops.check_component_request({"content": "字" * 901})
+    warns = note_ops.check_component_request(
+        {"content": "短正文", "activity_id": "1", "collection_id": "c"})
+    joined = " ".join(warns)
+    assert "丢掉既有话题实体" in joined          # 改正文的代价
+    assert "08-03" in joined                      # 活动入口被收走
+    assert "零实战" in joined                     # 合集先验一篇再批量

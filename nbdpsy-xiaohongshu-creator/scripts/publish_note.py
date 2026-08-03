@@ -526,6 +526,15 @@ def refresh_notes(api_base: str, key: str, account_id: int, timeout: float = 300
     raise ValueError(f"导出轮询超时（export_id={export_id}），稍后重跑 --notes <账号> --refresh")
 
 
+def manifest(api_base: str, key: str) -> dict:
+    """拉服务端的机器可读契约（每个端点的参数/返回/注意）。**对接以它为实时真源**——
+    skill 里写的能力说明是给人看的快照，两者冲突时以这份为准。"""
+    resp = send_request("GET", f"{api_base}/api/manifest", key)
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    return resp.json()
+
+
 def list_artifacts(api_base: str, key: str, job_id: int) -> dict:
     """列某次发布留下的现场截图（按发布流程真实时序，如 12_before_publish / 16_timeout）。
     **空清单不是异常**：本功能上线前的 job 没打截图标记，服务端会连 hint 一起说明原因。"""
@@ -564,8 +573,28 @@ def download_artifacts(api_base: str, key: str, job_id: int, files, out_dir: Pat
 
 
 def job_brief(view: dict) -> dict:
-    return {"outcome": view.get("status"), "job_id": view.get("job_id"),
-            "note_url": view.get("note_url"), "error": view.get("error")}
+    """发布任务视图 → 运营信封。带上服务端的 `applied` 回显与 pending 详情：
+    **参数被平台静默丢弃是当场可见的**（话题没挂上、组件没设上），不看这层就会以为全成了。"""
+    out = {"outcome": view.get("status"), "job_id": view.get("job_id"),
+           "note_url": view.get("note_url"), "error": view.get("error")}
+    applied = view.get("applied")
+    if applied:
+        out["applied"] = applied
+        if isinstance(applied, dict):
+            failed_topics = applied.get("topics_failed") or []
+            if failed_topics:
+                out["topics_hint"] = ("有话题没挂上：`reason=no_exact_match` 说明平台话题库里没这个词"
+                                      "（话题走下拉精选实体，不是随便打字），换个词就能解")
+    for k in ("pending_reason", "pending_seconds_remaining", "pending_overdue", "pending_hint"):
+        if view.get(k) is not None:
+            out[k] = view[k]
+    if view.get("pending_reason") == "waiting_schedule" and not view.get("pending_overdue"):
+        # 定时任务等待是正常态。绝不能说成"超时/卡死"——按那个思路去"救"会杀掉定时发布
+        out["hint"] = ("定时任务正在正常等待到点，**不是卡死也不是超时**，到点自动发；"
+                       "只有 pending_overdue=true（到点超 30 分钟仍没派）才该报障")
+    elif view.get("pending_overdue"):
+        out["hint"] = "已到点超 30 分钟仍未派发（pending_overdue），这才是真异常，找服务端看"
+    return out
 
 
 def poll_job(api_base: str, key: str, job_id: int, timeout: float,
@@ -740,6 +769,8 @@ def main():
     ap.add_argument("--upload-images", nargs="+", metavar="路径",
                     help="上传图片得图床直链：目录（按名排序）或多个文件路径（1–18 张）")
     ap.add_argument("--list-uploads", action="store_true", help="列自己未过期的图床上传批次")
+    ap.add_argument("--manifest", action="store_true",
+                    help="拉服务端机器可读契约（端点/参数/返回/注意；对接的实时真源）")
     ap.add_argument("--artifacts", type=int, metavar="JOB_ID",
                     help="列该次发布留下的现场截图（排障用；空清单不是异常）")
     ap.add_argument("--out", metavar="DIR", help="--artifacts 配它则把截图下载到该目录")
@@ -827,6 +858,9 @@ def main():
             out, code = delete_note_result(view, args.delete_status)
             print(json.dumps(out, ensure_ascii=False))
             sys.exit(code)
+        if args.manifest:
+            print(json.dumps(manifest(api_base, key), ensure_ascii=False))
+            return
         if args.artifacts is not None:
             view = list_artifacts(api_base, key, args.artifacts)
             files = view.get("files") or []
@@ -949,7 +983,9 @@ def main():
         out = job_brief(view)
         out["warnings"] = warnings
         if out["outcome"] not in TERMINAL_STATUSES:
-            out["hint"] = f"仍在发布中，稍后 python3 publish_note.py --job {job_id} 复查"
+            # 定时任务的 pending 是正常等待，job_brief 已给出准确说法，别用"仍在发布中"盖掉它
+            out.setdefault("hint",
+                           f"仍在发布中，稍后 python3 publish_note.py --job {job_id} 复查")
         print(json.dumps(out, ensure_ascii=False))
         sys.exit(1 if out["outcome"] in ("failed", "canceled") else 0)
 

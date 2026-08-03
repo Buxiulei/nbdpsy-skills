@@ -918,3 +918,42 @@ def test_download_artifacts_writes_files_and_filters(tmp_path, monkeypatch):
     only = publish_note.download_artifacts("https://x", "k", 135, files, tmp_path,
                                            only="16_timeout.png")
     assert [Path(p).name for p in only] == ["16_timeout.png"]
+
+
+# ---- applied 回显 与 pending 语义 ----
+
+def test_job_brief_surfaces_applied_and_topic_failures():
+    """参数被平台静默丢弃是当场可见的——不把 applied 抬到信封里，agent 会以为全成了。"""
+    import publish_note
+    out = publish_note.job_brief({
+        "status": "published", "job_id": 9, "note_url": "https://x/1",
+        "applied": {"topics_requested": ["CPTSD", "不存在的词"], "topics_applied": ["CPTSD"],
+                    "topics_failed": [{"topic": "不存在的词", "reason": "no_exact_match"}]},
+    })
+    assert out["outcome"] == "published"
+    assert out["applied"]["topics_applied"] == ["CPTSD"]
+    assert "no_exact_match" in out["topics_hint"] and "换个词" in out["topics_hint"]
+
+
+def test_pending_waiting_schedule_is_not_a_failure():
+    """定时任务 pending 是正常等待。说成"超时/卡死"会诱导 agent 去"救"，那会杀掉定时发布。"""
+    import publish_note
+    out = publish_note.job_brief({
+        "status": "pending", "job_id": 9, "pending_reason": "waiting_schedule",
+        "pending_seconds_remaining": 3600, "pending_overdue": False})
+    assert out["pending_reason"] == "waiting_schedule"
+    assert "不是卡死" in out["hint"] and "到点自动发" in out["hint"]
+
+
+def test_pending_overdue_is_the_real_alarm():
+    import publish_note
+    out = publish_note.job_brief({"status": "pending", "job_id": 9,
+                                  "pending_reason": "waiting_schedule", "pending_overdue": True})
+    assert "真异常" in out["hint"]
+
+
+def test_manifest_is_passed_through(monkeypatch):
+    import publish_note
+    monkeypatch.setattr(publish_note, "send_request",
+                        lambda *a, **k: _Resp(200, {"service": "nbdpsy-api", "version": "0.17.0"}))
+    assert publish_note.manifest("https://x", "k")["version"] == "0.17.0"
