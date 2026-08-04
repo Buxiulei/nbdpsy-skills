@@ -9,6 +9,55 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.57.0] — 2026-08-04
+
+### 组件回读 + 引用收口：按运营侧变更需求逐条落地
+
+运营 8 月有 360 篇批量计划，两条 P0 会直接决定脚本能不能用。
+
+**P0-1 新增 `note_ops.py --read-components`**（配 `--account` 与 `--note-id`）：回读平台实况——
+`quote_set` / `quote_text` / `collection_set` / `collection_label` / `collection_entry_present` /
+`topics` / `image_count` / `permission` / `body_head`。只读且**幂等，失败可放心重试**。
+
+**这是核对组件的唯一可信来源**。`published_notes` 表根本没有组件列，`--note` 读到的
+`quoted_note_id` / `collection_id` **恒为 None**——拿它推断会得出「全都没挂上」的相反结论
+（运营为此盲测了两天，最后手写脚本直调 API 才发现组件其实都在）。所以 `--note` 的输出里加了
+`components_hint` 明确劝退，SKILL.md 也把这条写进「成功不等于生效」那一节紧挨着判据。
+量大时**抽样核对 + 失败单必查**，别全量逐篇（每篇要开一次编辑页、串行拟人化）。
+
+**P0-2 引用自动推导已收口**：`--set-components` 只传合集/活动/编辑项时，**不再顺带挂引用**。
+批量作业里这是最容易静默漏挂的一处——什么都不给就是不挂，且**不会有任何报错**。现在脚本会在
+提交前打一条 warning，SKILL.md 用一张表把两条路径分开写：**发新笔记的自动推导保持原样**
+（推介笔记自动引接待员、科普笔记自动引本账号推介），**改已发布笔记必须显式给**
+`--related-counselor` 或 `--quoted-note-id`。
+
+**P1-1 `--collection-name`**：带 `--collection-id` 时顺带给合集名，服务端用它做「已选态」比对；
+不给且页面解析不出会报 `collection_chosen_unverifiable`。另：合集挂载**已幂等**（已在目标合集
+返回 `status: "skipped"` 也算成功），**批量挂载可安全重跑，调用方不用自己去重**——写进了 SKILL.md。
+「合集零实战」那句同时删掉，运营已实测四篇全部真实生效。
+
+**P1-2 `--job` 打印 `applied`**：v1.56.0 已做（`job_brief` 整体透传，含 `topics_applied` 与
+`components.activity.status`），本次核对确认无需再改。
+
+**P2 help 三处修正**，都补了本地预检而不只是改文案：
+
+- `--add-image` **只收图床直链或 `/uploads` 路径**，传本地文件路径服务端 422——脚本提交前直接拦，
+  并指向 `publish_note.py --upload-images`；
+- `--expected-image-count` 是**编辑前的当前张数，不是目标张数**（删 1 张时传 6 不是 5）；
+- 正文里话题标签**之间不能留空格**，须连写 `#A[话题]##B[话题]#`，否则回读校验必然
+  `content_readback_mismatch`——`--set-content` 检出空格写法时给 warning。
+
+**P3 实操经验进 SKILL.md**：出图后必须压缩（信息卡 PIL 量化 32 色 / **真人照片必须 JPEG q92**，
+调色板量化会让面部出现色带；每篇 ≤2.5MB，否则发布 30 秒超时）；定时任务 pending **不要 cancel**
+（运营曾误删 9 篇排好的定时稿，只看 `pending_overdue`）；同账号发布**共享一把锁严格串行**，
+批量前先 `--list-jobs --status pending` 看队列；活动照带无害、探测看首篇回执的
+`applied.components.activity.status`；临时脚本直调 API **必须用 `requests` 不要用 `urllib`**
+（会被 Cloudflare 按指纹拦成 `error code: 1010`，所有端点一律 403，很容易误判成接口坏了）。
+
+实测一篇跑通回读（`quote_set=false` / `topics` 6 个 / `image_count=3` / 公开可见）。测试 921 → 925。
+
+---
+
 ## [1.56.0] — 2026-08-03
 
 ### 按 server「能力全景总纲」对齐：编辑已发布笔记 + 两条会误导人的语义

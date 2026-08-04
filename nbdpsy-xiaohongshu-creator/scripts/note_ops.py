@@ -14,6 +14,8 @@
         [--collection-id N] [--quoted-note-id ID] [--related-counselor 姓名] [--activity-id N]
         [--set-title 标题] [--set-content 正文 | --set-content-file 路径]
         [--add-image URL...] [--remove-image-index N...] [--expected-image-count N]
+    python3 note_ops.py --read-components --account 号 --note-id ID
+                                # 回读组件实况（**核对组件的唯一可信来源**，台账没有组件列）
     python3 note_ops.py --set-visibility --account 号 --privacy 0|1 [--note-id ID|--title 标题]
     python3 note_ops.py --comment --account 号 --text "评论文案" [--title 标题] [--publisher-user-id X]
     python3 note_ops.py --sync-ledger 账号名或ID      # 手工触发一次台账同步（幂等，可放心重试）
@@ -58,6 +60,7 @@ done exit 0；partial/failed exit 1；unknown exit 0（真实未知，绝不冒�
 """
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -186,6 +189,11 @@ def note_detail(api_base: str, key: str, note_id: str) -> dict:
     note = view["note"] if isinstance(view.get("note"), dict) else view
     view["available"] = True
     view["visibility"] = visibility_of(note.get("permission_code"))
+    # published_notes 表根本没有组件列——这里的 quoted_note_id / collection_id 恒为 None，
+    # 拿它推断"组件没挂上"会得出完全相反的结论（运营为此盲测了两天）
+    view["components_hint"] = ("⛔ 台账没有组件列，别用本输出判断合集/引用挂没挂上"
+                               "（那些字段恒为 None，不代表没挂）。组件核对走 "
+                               "--read-components --account <号> --note-id <id>")
     if note.get("purpose_source") == "inferred":
         view["purpose_hint"] = "note_purpose 是服务端从正文推断的（LLM 分类），留余地；declared 才是发布时声明的"
     return view
@@ -325,6 +333,47 @@ def components_result(view: dict, job_id: str, requested: dict):
                     "核对实际生效情况，绝不盲目重提交"}, 0
 
 
+def start_component_read(api_base: str, key: str, account_id: int, note_id: str) -> str:
+    """提交一次组件回读，返回 job_id。**这是唯一能程序化验证组件真假的手段**——
+    台账（--note）的 quoted_note_id / collection_id **恒为 None**：published_notes 表根本
+    没有组件列，拿它推断组件等于拿一个永远为空的字段当证据（运营为此盲测了两天）。
+    只读操作，**幂等，失败可以放心重试**。"""
+    resp = send_request("POST", f"{api_base}/api/accounts/{account_id}/note-component-reads",
+                        key, {"note_id": note_id})
+    if resp.status_code >= 400:
+        raise ValueError(api_error(resp))
+    job_id = resp.json()["job_id"]
+    print(f"  已入队 job_id={job_id}", file=sys.stderr)
+    return job_id
+
+
+# 回读端点返回的实况字段（原样透传，别自己加工——这是核对组件的唯一证据）
+_READ_FIELDS = ("quote_set", "quote_text", "collection_set", "collection_label",
+                "collection_entry_present", "topics", "image_count", "permission", "body_head")
+
+
+def poll_component_read(api_base: str, key: str, job_id: str, note_id: str, timeout: float):
+    """轮询组件回读到终态。返回 (信封, exit code)。"""
+    view = poll_task(api_base, key, f"{api_base}/api/note-component-reads/{job_id}",
+                     timeout, {"done", "error"})
+    status = view.get("status")
+    data = view.get("result") if isinstance(view.get("result"), dict) else view
+    if status == "done":
+        out = {"outcome": "done", "job_id": job_id, "note_id": note_id,
+               **{k: data.get(k) for k in _READ_FIELDS if k in data}}
+        out["hint"] = ("这是组件核对的**唯一可信来源**——台账（--note）没有组件列、"
+                       "quoted_note_id / collection_id 恒为 None，别拿它推断。"
+                       "360 篇这种量级做**抽样核对 + 失败单必查**即可，别全量逐篇："
+                       "每篇要开一次编辑页、串行拟人化，很慢")
+        return out, 0
+    if status == "error":
+        return {"outcome": "failed", "job_id": job_id, "note_id": note_id,
+                "reason": view.get("reason"),
+                "hint": "回读是只读操作、**幂等**，失败可以直接重试"}, 1
+    return {"outcome": "unknown", "job_id": job_id, "note_id": note_id,
+            "hint": "轮询超时或台账失效。回读是只读且幂等的，直接重跑本命令即可"}, 0
+
+
 def check_component_request(requested: dict):
     """提交前的本地预检，返回 warning 列表；能当场判死的直接抛。
     图片操作必须带 expected_image_count（服务端的防呆闸）——少了它服务端 422，
@@ -332,22 +381,39 @@ def check_component_request(requested: dict):
     warns = []
     touches_images = "add_images" in requested or "remove_image_indexes" in requested
     if touches_images and "expected_image_count" not in requested:
-        raise ValueError("动图片必须同时给 --expected-image-count <你认为现在几张>："
-                         "这是防呆闸，页面实际张数与它不符时服务端整单零点击拒绝")
+        raise ValueError("动图片必须同时给 --expected-image-count <**编辑前**的当前张数>："
+                         "这是防呆闸（传目标张数是最常见的理解反了：删 1 张时该传 6 不是 5），"
+                         "页面实际张数与它不符时服务端整单零点击拒绝")
+    for item in requested.get("add_images") or []:
+        # 服务端只收 URL / 本服务 /uploads 路径；本地文件路径会 422「无法识别的图片项」
+        if not str(item).startswith(("http://", "https://", "/uploads")):
+            raise ValueError(f"--add-image 不接受本地文件路径（{item}）："
+                             "先用 publish_note.py --upload-images <目录|文件...> 换成图床直链再传")
+    # 引用的隐式推导已被服务端收口：不显式要，就一定不会挂上
+    wants_quote = "related_counselor" in requested or "quoted_note_id" in requested
+    if requested and not wants_quote:
+        warns.append("本次**不会挂引用**——编辑已发布笔记的引用自动推导已收口，"
+                     "只传合集/活动/编辑项不再顺带推导。要挂引用得显式给 "
+                     "--related-counselor（推荐，服务端按规则推导）或 --quoted-note-id")
     content = requested.get("content")
     if content is not None and len(content) > 900:
         raise ValueError(f"正文 {len(content)} 字超 900，服务端会拒绝")
     if content is not None:
         warns.append("整体替换正文会**丢掉既有话题实体**（含发布时精选的），平台行为不重建；"
                      "丢了哪些会在结果的 topics_dropped 里")
+        if re.search(r"\[话题\]#\s+#", content):
+            warns.append("正文里的话题标签**之间不能留空格**，必须连写 `#A[话题]##B[话题]#`——"
+                         "平台会吃掉空格，回读校验必然 content_readback_mismatch")
     title = requested.get("title")
     if title:
         warns.append("标题按显长 >20 直接 422，服务端不截断（传 \"\" 是清空标题）")
     if "activity_id" in requested:
         warns.append("**编辑页的「关联活动」区 2026-08-03 起被平台收走**（08-01 还能用），"
                      "这一项大概率设不上；活动改到发布时挂（publish_note.py --activity-id）")
-    if "collection_id" in requested:
-        warns.append("合集这条路零实战：**先拿一篇看 applied.collection 是不是 true，再批量**")
+    if "collection_id" in requested and "collection_name" not in requested:
+        warns.append("带 --collection-id 时最好一起给 --collection-name（合集名）："
+                     "服务端用它做「已选态」比对，不传且页面解析不出会报 "
+                     "collection_chosen_unverifiable")
     return warns
 
 
@@ -561,7 +627,11 @@ def main():
     ap.add_argument("--account", help="操作类命令的目标账号（名称或 id）")
     ap.add_argument("--note-id", help="笔记的平台 note_id（有它就用它，标题只是兜底）")
     ap.add_argument("--title", help="按标题定位（空标题或同号重复标题会 note_not_locatable）")
-    ap.add_argument("--collection-id", help="--set-components：加入该合集")
+    ap.add_argument("--collection-id", help="--set-components：加入该合集（挂载幂等，可安全重跑）")
+    ap.add_argument("--collection-name", help="--set-components：合集名，供服务端做「已选态」比对")
+    ap.add_argument("--read-components", action="store_true",
+                    help="回读某篇笔记的组件实况（**核对组件的唯一可信来源**；只读幂等，"
+                         "须配 --account 与 --note-id）")
     ap.add_argument("--quoted-note-id", help="--set-components：引用该笔记（限本账号内）")
     ap.add_argument("--activity-id",
                     help="--set-components：关联该活动（⚠ 编辑页入口 2026-08-03 起被平台收走，"
@@ -570,15 +640,18 @@ def main():
     ap.add_argument("--set-title", metavar="标题",
                     help="--set-components：整体替换标题（传空串=清空；显长>20 服务端 422 不截断）")
     ap.add_argument("--set-content", metavar="正文",
-                    help="--set-components：整体替换正文（≤900 字；**会丢既有话题实体**）")
+                    help="--set-components：整体替换正文（≤900 字；**会丢既有话题实体**；"
+                         "话题标签之间不能留空格，须连写 #A[话题]##B[话题]#）")
     ap.add_argument("--set-content-file", metavar="路径",
                     help="--set-components：从文件读正文（长文本别塞命令行）")
-    ap.add_argument("--add-image", nargs="+", metavar="URL或路径",
-                    help="--set-components：追加图片（URL / 本服务 /uploads 路径）")
+    ap.add_argument("--add-image", nargs="+", metavar="URL",
+                    help="--set-components：追加图片，**只收图床直链或本服务 /uploads 路径**；"
+                         "本地文件路径服务端 422，先用 publish_note.py --upload-images 换直链")
     ap.add_argument("--remove-image-index", nargs="+", type=int, metavar="N",
                     help="--set-components：删第几张图（**1-based**，按发布态图序；删完须剩 ≥1）")
     ap.add_argument("--expected-image-count", type=int, metavar="N",
-                    help="--set-components 动图片时**必填**防呆闸：你认为现在几张（不符则整单拒绝）")
+                    help="--set-components 动图片时**必填**防呆闸：**编辑前的当前张数**"
+                         "（不是目标张数！删 1 张时传 6 不是 5），不符则整单零点击拒绝")
     ap.add_argument("--privacy", type=int, choices=[0, 1],
                     help="--set-visibility 目标可见性：0=公开可见 / 1=仅自己可见（只开放这两档）")
     ap.add_argument("--text", help="--comment 的评论文案")
@@ -661,6 +734,18 @@ def main():
             print(json.dumps(out, ensure_ascii=False))
             sys.exit(code)
 
+        if args.read_components:
+            if not args.account or not args.note_id:
+                ap.error("--read-components 需要 --account 与 --note-id")
+            aid, label, warn = resolve_account(api_base, key, args.account)
+            if warn:
+                print(f"⚠ {warn}", file=sys.stderr)
+            job_id = start_component_read(api_base, key, aid, args.note_id)
+            out, code = poll_component_read(api_base, key, job_id, args.note_id, args.wait_timeout)
+            out["account"] = {"id": aid, "name": label}
+            print(json.dumps(out, ensure_ascii=False))
+            sys.exit(code)
+
         if args.set_components:
             if not args.account or not args.note_id:
                 ap.error("--set-components 需要 --account 与 --note-id（组件操作只按 note_id 定位）")
@@ -668,7 +753,8 @@ def main():
             if args.set_content_file:
                 content = Path(args.set_content_file).read_text(encoding="utf-8").strip()
             requested = {k: v for k, v in (
-                ("collection_id", args.collection_id), ("quoted_note_id", args.quoted_note_id),
+                ("collection_id", args.collection_id), ("collection_name", args.collection_name),
+                ("quoted_note_id", args.quoted_note_id),
                 ("activity_id", args.activity_id), ("related_counselor", args.related_counselor),
                 ("content", content),
                 ("add_images", args.add_image), ("remove_image_indexes", args.remove_image_index),
@@ -724,7 +810,7 @@ def main():
             print(json.dumps(out, ensure_ascii=False))
             sys.exit(code)
 
-        ap.error("没给要做什么：--ledger / --note / --collections / --activities / "
+        ap.error("没给要做什么：--ledger / --note / --read-components / --collections / --activities / "
                  "--set-components / --set-visibility / --comment / --sync-ledger / "
                  "--backfill-purpose / --backfill-interactions / --backfill-status")
 

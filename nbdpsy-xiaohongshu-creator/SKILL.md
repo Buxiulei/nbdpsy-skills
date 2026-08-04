@@ -1012,6 +1012,13 @@ python3 {SKILL_DIR}/scripts/render_preview.py {note_dir}   # 默认输出 {note_
 
 **图片对抗审查**：触发 nbdpsy-content-reviewer（独立实例）按 `checklist-images.md` 审查——数量/尺寸由脚本核对，错字/风格/人物一致性逐张看图核对。FAIL → 只重出问题页（同一提示词重生成，或请运营重出该页回传），复审通过为止。
 
+> ⚠️ **出图后必须先压缩再发布**（2026-08 批量生产踩出来的）：后端 gpt-image 出的原图每张
+> 1.4–1.6MB，6 张共 8.8MB **会让发布 30 秒超时**。压法按内容分两种，别一刀切：
+> - **四色扁平信息卡** → PIL 量化 32 色（体积降 65–75%，**文字零损失**）；
+> - **真人照片** → 必须走 **JPEG q92**；用调色板量化会让**面部出现明显色带**。
+>
+> **每篇总计控制在 2.5MB 以内**。
+
 **收尾（三条路线统一）· 成图上图床，把查看链接交付运营**：图审 PASS 后，把**每篇**最终成图上传图床得公网直链交付运营预览——比让运营翻本地目录/服务器路径省事，手机点开即看：
 
 ```bash
@@ -1051,11 +1058,15 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
    换个词就能解。
    **定时任务的 `pending` 是正常等待**（`pending_reason=waiting_schedule`），**不是卡死也不是超时**，
    到点自动发；只有 `pending_overdue: true`（到点超 30 分钟仍没派）才该报障。
-   ⛔ 永远不要说"pending 超时了自动置 failed"或据此去"救"——那会杀掉定时发布。
+   ⛔ 永远不要说"pending 超时了自动置 failed"，**更不要去 cancel 它**——运营曾因把 pending
+   当成卡死，误删了 9 篇排好的定时稿。要判断该不该管，只看 `pending_reason` /
+   `pending_overdue` / `pending_hint` 这三个字段，`pending_overdue: true` 才是真该查的。
 
    stdout JSON：`outcome=published` 时带 `note_url`（回给运营）；`failed` 带 `error`；
    `outcome=unknown` 表示**任务已入队但状态没确认**（网络抖动等）——**绝不重发**，按 hint 用
    `--job <id>` 复查到终态为止；轮询超时仍在跑同理。多篇逐条串行发，别并发轰同一账号。
+   **同账号发布共享一把锁、严格串行**：前一个任务卡住会把后面全部堵住，所以批量发布前先
+   `--list-jobs --account <id> --status pending` 看一眼队列，别对着堵住的队列继续灌。
 3. **失败排障**：
    - 报 `Host not allowed` / proxy blocked / 恒超时 → Claude 沙盒拦网：先跑
      `python3 {SKILL_DIR}/scripts/nbdpsy_common.py sandbox allow` 写入放行名单，提醒运营**重启
@@ -1095,7 +1106,10 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
 
 发布归 `publish_note.py`，**已发布笔记**的一切归 `scripts/note_ops.py`。
 > 服务端能力有变动或本节说法对不上时，用 `publish_note.py --manifest` 拉**实时契约**为准
-> （机器可读，含每个端点的参数/返回/注意）；本节是给人看的快照。用户问「这个号现在有哪些
+> （机器可读，含每个端点的参数/返回/注意）；本节是给人看的快照。
+> ⚠️ 万一要写临时脚本直调 API：**必须用 `requests`（skill 脚本用的库），不要用 `urllib`**
+> ——urllib 会被 Cloudflare 按浏览器指纹拦成 `error code: 1010`，所有端点一律 403，
+> 包括明明可用的那些，很容易误判成"接口坏了/没权限"。用户问「这个号现在有哪些
 笔记 / 哪些是私密的 / 把某篇加进合集 / 把某篇藏起来 / 去某篇下面评论一条」时走这里。
 
 ```bash
@@ -1107,6 +1121,7 @@ python3 {SKILL_DIR}/scripts/note_ops.py --set-components --account <账号> --no
         [--collection-id N] [--quoted-note-id ID] [--related-counselor 姓名] \
         [--set-title "新标题"] [--set-content-file 正文.md] \
         [--add-image URL...] [--remove-image-index N...] [--expected-image-count N]
+python3 {SKILL_DIR}/scripts/note_ops.py --read-components --account <账号> --note-id <id>  # 组件实况
 python3 {SKILL_DIR}/scripts/note_ops.py --set-visibility --account <账号> --note-id <id> --privacy 0|1
 python3 {SKILL_DIR}/scripts/note_ops.py --comment --account <账号> --title "标题" --text "评论文案"
 python3 {SKILL_DIR}/scripts/note_ops.py --sync-ledger <账号>       # 幂等，可放心重跑
@@ -1127,28 +1142,50 @@ python3 {SKILL_DIR}/scripts/note_ops.py --backfill-purpose <账号>  # 幂等，
    逐项三态 `true`=生效 / `false`=没生效 / **`null`=本次没请求这项（不是失败）**。
    `outcome=partial` 意思是"有的成了有的没成"——**这不是成功**，只对没生效的那几项单独重来。
    已知静默丢弃：私密笔记加合集（平台不允许，先转公开再加）。
+   > **核对组件只有一个可信来源：`--read-components`**（回读平台实况，只读且幂等）。
+   > ⛔ **绝不要用 `--note` 的台账字段推断组件**——`published_notes` 表根本没有组件列，
+   > `quoted_note_id` / `collection_id` **恒为 None**，拿它当证据会得出「全没挂上」的相反结论
+   > （运营为此盲测了两天，最后手写脚本直调 API 才发现组件其实都在）。
+   > 量大时（几百篇）做**抽样核对 + 失败单必查**，别全量逐篇：每篇要开一次编辑页、串行拟人化，很慢。
 4. **非幂等的四件事失败不要重试**：改可见性、发评论、改组件/编辑、删笔记。脚本给 `outcome=unknown`
    时意思是"真不知道成没成"——**先 `--note <note_id>` 核对当前实际状态再决定**。反例：可见性
    切换超时后盲目重试，会把运营刚手工改回公开的笔记再次藏起来。
    > **唯一的例外是 `outcome=aborted`**（服务端 `aborted_before_submit: true`）：文本或图片某步
    > 失败导致**整单没提交、笔记原样**，这种**可以直接修因重试**，不用先去核对现状。
 
+### ⚠ 挂引用：两条路径行为不同，别混
+
+| 场景 | 命令 | 自动推导 |
+|---|---|---|
+| **发新笔记** | `publish_note.py`（`--related-counselor` 可选） | **照旧自动推导**：推介笔记自动引接待员那篇、科普笔记自动引本账号推介笔记 |
+| **改已发布笔记** | `note_ops.py --set-components` | ⛔ **已收口，不再隐式推导**——只传 `--collection-id` / 编辑项时**不会**顺带挂引用 |
+
+改已发布笔记要挂引用，**必须显式给**：`--related-counselor <姓名>`（推荐，服务端按规则在本账号内
+推导）或 `--quoted-note-id <id>`。什么都不给 = 不挂引用，**不会有任何报错**——批量作业里这是
+最容易静默漏挂的一处，脚本会在提交前打一条 warning 提醒。
+
 **改已发布笔记的正文 / 标题 / 图片**（2026-08-03 新增，与三组件同一个入口、可同批提交）：
 
 - `--set-title "新标题"`：整体替换（传空串 = 清空）。**显长 >20 服务端直接 422，不截断**；
 - `--set-content-file 正文.md`：整体替换正文（≤900 字）。⚠ **会丢掉既有话题实体**（含发布时
   精选的那些），平台行为、不重建——丢了哪些在结果的 `topics_dropped` 里。要保住话题，得把它们
-  写进新正文、重新发布时精选；
-- `--add-image URL...` / `--remove-image-index N...`（**1-based**，按发布态图序，删完须剩 ≥1）：
-  **动图片必须同时给 `--expected-image-count <你认为现在几张>`**——这是防呆闸，页面实际张数与它
-  不符时整单零点击拒绝。脚本会在提交前先拦一道，别等服务端 422 才发现。
-- **合集这条路零实战**：先拿一篇看 `applied.collection` 是不是 `true`，确认了再批量。
+  写进新正文、重新发布时精选。⚠ 正文里的话题标签**之间不能留空格**，必须连写
+  `#A[话题]##B[话题]#`——平台会吃掉空格，回读校验必然 `content_readback_mismatch`；
+- `--add-image URL...`（**只收图床直链或 `/uploads` 路径，本地文件路径服务端 422**——先用
+  `publish_note.py --upload-images` 换直链）/ `--remove-image-index N...`（**1-based**，按发布态
+  图序，删完须剩 ≥1）：**动图片必须同时给 `--expected-image-count`，传的是「编辑前的当前张数」
+  不是目标张数**（删 1 张时传 6 不是 5，字面极易理解反）。脚本提交前先拦一道，别等 422 才发现。
+- **合集**：带 `--collection-id` 时**顺带给 `--collection-name <合集名>`**，服务端用它做「已选态」
+  比对；不给且页面解析不出会报 `collection_chosen_unverifiable`。合集 id→名用 `--collections <账号>`
+  查一次记下来。**挂载已幂等**——笔记已在目标合集时返回 `components.collection.status: "skipped"`
+  也算成功，所以**批量挂载可以安全重跑，调用方不用自己做去重**。
 
 ⛔ **活动只能在发布时挂**：编辑已发布笔记的页面 **2026-08-03 起不再渲染「关联活动」区**
 （08-01 还能用，判定是平台近期收走的，**不是从来不支持、也不是我们的 bug**）。所以
 `--set-components --activity-id` 现在大概率 `applied.activity=false`；要挂活动就在发布时用
-`publish_note.py --activity-id`。平台若恢复，**我们零改动自动可用**——隔几天拿一篇试，
-`applied.activity` 变 `true` 就是回来了。
+`publish_note.py --activity-id`。**照带 `--activity-id` 无害**（服务端说明），所以不必为它
+改流程、也别反复排查这一项。平台若恢复，**我们零改动自动可用**——探测方式：看每天首篇发布回执的
+`applied.components.activity.status`，从 `error` 变 `done` 即恢复。
 
 **两条业务规则（是绩效归属，不是技术偏好）**：
 

@@ -405,4 +405,40 @@ def test_content_length_and_warnings():
     joined = " ".join(warns)
     assert "丢掉既有话题实体" in joined          # 改正文的代价
     assert "08-03" in joined                      # 活动入口被收走
-    assert "零实战" in joined                     # 合集先验一篇再批量
+    assert "collection_chosen_unverifiable" in joined   # 合集该配 --collection-name
+
+
+def test_quote_no_longer_implicit():
+    """引用的隐式推导已被服务端收口：不显式要就一定不挂。批量挂引用最容易在这里静默漏。"""
+    import note_ops
+    warns = " ".join(note_ops.check_component_request({"collection_id": "c"}))
+    assert "不会挂引用" in warns and "--related-counselor" in warns
+    # 显式要了就不再啰嗦
+    quiet = " ".join(note_ops.check_component_request(
+        {"collection_id": "c", "related_counselor": "李宇"}))
+    assert "不会挂引用" not in quiet
+
+
+def test_add_image_rejects_local_path():
+    """--add-image 只收直链/uploads 路径，本地路径服务端 422「无法识别的图片项」。"""
+    import note_ops
+    with pytest.raises(ValueError) as ei:
+        note_ops.check_component_request(
+            {"add_images": ["/home/roots/x/P01.png"], "expected_image_count": 3})
+    assert "--upload-images" in str(ei.value)
+    note_ops.check_component_request(
+        {"add_images": ["https://x/a.png", "/uploads/b.png"], "expected_image_count": 3})
+
+
+def test_topic_tags_must_not_have_spaces():
+    import note_ops
+    warns = " ".join(note_ops.check_component_request(
+        {"content": "正文 #A[话题]# #B[话题]#"}))
+    assert "不能留空格" in warns and "content_readback_mismatch" in warns
+
+
+def test_expected_image_count_hint_says_before_not_target():
+    import note_ops
+    with pytest.raises(ValueError) as ei:
+        note_ops.check_component_request({"remove_image_indexes": [1]})
+    assert "编辑前" in str(ei.value) and "传目标张数是最常见的理解反了" in str(ei.value)
