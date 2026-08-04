@@ -148,6 +148,7 @@ python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；�
 | 「菜单加个入口」「改下底部按钮」 | 菜单装修 | MENU |
 | 「发过哪些」「那篇链接给我」「删掉那篇」 | 台账 / 删除（删是高危） | ART `--ledger` / `--delete-published` |
 | 「涨了多少粉」「那篇多少阅读」 | 数据统计 | STATS |
+| 「服务号能干啥」「这个能不能做」「为什么不行」 | **能力问答**（不动线上，照实说清能与不能） | 读 `references/capabilities.md` 回答 |
 
 ### 第 2 步 · 取内容（**优先承接自家长文，不做无源之稿**）
 
@@ -382,6 +383,7 @@ python3 ART --delete-published --article-id <article_id> --confirm
 
 | 用途 | 路径 |
 |------|------|
+| **能力全景阐述**（能做什么/不能做什么/三条纪律——运营问「服务号能干啥」时照它答） | `references/capabilities.md` |
 | 出配图：gpt-image-2 锚点法横版生图（封面裁 2.35:1、插图 16:9，转 JPEG 落盘） | `scripts/gen_gzh_images.py` |
 | 配图规格（封面避裁与不放字、插图张数、风格档案复用、「## 配图」区块格式） | `references/gzh-illustration-spec.md` |
 | Markdown → 微信白名单内联样式 HTML（含图片上传换链接、封面进素材库） | `scripts/md2wechat.py` |
