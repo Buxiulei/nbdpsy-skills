@@ -439,7 +439,14 @@ class Test红线三正文闸门:
 
     def test_dry_run产物掉图会被警告(self):
         w = A.content_warnings('<p><img src="/local/a.png" /></p>')
-        assert any("mmbiz" in x and "dry-run" in x for x in w)
+        assert any("qpic.cn" in x and "dry-run" in x for x in w)
+
+    def test_mmecoa图床不算掉图(self):
+        """微信 /upload-image 实际回的是 mmecoa/sz_mmecoa.qpic.cn（2026-08-04 实测，图能显示）。
+        判据只认 mmbiz 会把每一篇正常稿子都误报成掉图。"""
+        for host in ("mmbiz.qpic.cn", "mmecoa.qpic.cn", "sz_mmecoa.qpic.cn"):
+            w = A.content_warnings(f'<p><img src="http://{host}/x/0?from=appmsg" /></p>')
+            assert not any("qpic.cn" in x for x in w), host
 
     def test_残留星号要警告(self):
         assert any("星号" in x for x in A.content_warnings("<p>叫**复杂性创伤**的东西</p>"))

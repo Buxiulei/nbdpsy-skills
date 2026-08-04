@@ -133,8 +133,10 @@ def content_warnings(html: str):
         w.append("正文里有残留的 `**` 星号——微信里会原样显示，**发布前先回源稿改掉**："
                  "已发布文章不能改，改一个星号要付删+重发、换链接、阅读清零的代价。"
                  "（代码块 `<pre>/<code>` 里的星号是字面量，不算在内。）")
-    if not re.search(r"https?://[\w.-]*mmbiz\.qpic\.cn/", html) and "<img" in html:
-        w.append("正文里有图片但没看到 mmbiz.qpic.cn 域名——外链图微信一律不显示（读者看到空白）。"
+    # 图床域名不止 mmbiz：实测 /upload-image 也回 mmecoa.qpic.cn / sz_mmecoa.qpic.cn。
+    # 锁死 mmbiz 会对正常产物一路误报「图会掉」，逼运营去重编译一份本来就对的 HTML。
+    if not re.search(r"https?://[\w.-]*\.qpic\.cn/", html) and "<img" in html:
+        w.append("正文里有图片但没看到微信图床域名（*.qpic.cn）——外链图微信一律不显示（读者看到空白）。"
                  "这份 HTML 多半是 md2wechat.py `--dry-run` 出来的，重新编译一次再发。")
     return w
 

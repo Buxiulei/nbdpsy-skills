@@ -193,8 +193,11 @@ def strip_leading_h1(body: str):
     return body, ""
 
 
-def _is_mmbiz(url: str) -> bool:
-    return bool(re.match(r"^https?://[\w.-]*mmbiz\.qpic\.cn/", url or ""))
+# 微信图床域名不止 mmbiz：2026-08-04 实测 /upload-image 回的是 mmecoa.qpic.cn 与
+# sz_mmecoa.qpic.cn（图能正常显示）。判据锁死 mmbiz 会两头出错——重编译时把已上传的图
+# 又传一次，建草稿时还误报「图会掉」。统一按 qpic.cn 这个微信图床根域认。
+def _is_wx_image(url: str) -> bool:
+    return bool(re.match(r"^https?://[\w.-]*\.qpic\.cn/", url or ""))
 
 
 class WechatRenderer(mistune.HTMLRenderer):
@@ -261,7 +264,7 @@ class WechatRenderer(mistune.HTMLRenderer):
         if url in self._uploaded:
             src = self._uploaded[url]
         else:
-            if _is_mmbiz(url):
+            if _is_wx_image(url):
                 src, wx_url = url, url          # 已是微信素材，重编译不必再传一次
             elif self.upload is None:
                 src, wx_url = url, None
@@ -505,7 +508,7 @@ def make_uploader(api_base, api_key, base_dir=".", timeout=60):
     url = f"{str(api_base).rstrip('/')}/api/external/wechat/upload-image"
 
     def upload(src):
-        if _is_mmbiz(src):
+        if _is_wx_image(src):
             return src
         data, filename, mime = _load_image(src, base_dir, MAX_IMAGE_BYTES, timeout)
         payload = _post_multipart(url, api_key, filename, data, mime, timeout)
