@@ -16,8 +16,12 @@
 把这张封面当**锚点参考图**（`--anchor-url`）喂给正文插图——每张独立锚定生成，整篇调性统一。
 封面没确认就把插图一起出 = 风格跑偏后整篇全废。
 
-**封面 2.35:1**：微信封面官方比例是 2.35:1，而 gpt-image 出的是 16:9（1536×1024）。
-下载后用 Pillow **居中裁剪**成 1536×654 存 `cover.jpg`，未裁的原图另存 `cover-raw.jpg` 便于重裁。
+**封面 2.35:1**：微信封面官方比例是 2.35:1，而 gpt-image 出的是 16:9（标称 1536×1024）。
+下载后用 Pillow **居中裁剪**成 2.35:1 存 `cover.jpg`，未裁的原图另存 `cover-raw.jpg` 便于重裁。
+⚠️ **裁剪按拿到的图现算，不认死 1536**：服务端去水印工作流会做非整数缩小（实测 ×0.855），
+所以到手常是 1313×876 而非 1536×1024，裁后是 1313×559 而非 1536×654。`crop_box()` 一律用
+`im.width/im.height` 现算目标高（`round(w / 2.35)`），**比例恒定、绝对像素随实际宽度走**——
+谁都别把 1536/654 写死回去，那样缩过的图会被裁错或拉伸。
 所以写封面提示词时**视觉重心要居中**——上下两条各 185px 会被裁掉。正文插图不裁，原样 16:9。
 落盘统一转 JPEG（微信正文图硬上限单张 1MB，PNG 原图常超），质量阶梯降到达标为止。
 
@@ -555,7 +559,10 @@ def run_dry(args, md, images_dir, api_base):
         "selected": [i["label"] for i in selected],
         "images_dir": str(images_dir) if images_dir else None,
         "filenames": [image_filename(i) for i in selected],
-        "cover_crop": f"1536x1024 → 1536x{round(1536 / COVER_RATIO)}（2.35:1 居中裁）",
+        # 只给标称值：真实尺寸取决于服务端去水印的等比缩小（实测 ×0.855），裁剪时按到手的图现算
+        "cover_crop": f"居中裁成 {COVER_RATIO}:1（标称 1536x1024 → 1536x"
+                      f"{round(1536 / COVER_RATIO)}；服务端缩图时按实际宽度等比走，"
+                      f"如 1313x876 → 1313x{round(1313 / COVER_RATIO)}）",
         "payload_preview": payload,
         "warnings": warnings,
     }, ensure_ascii=False, indent=2))

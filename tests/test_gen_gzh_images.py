@@ -268,6 +268,36 @@ def test_process_cover_real_image(tmp_path):
     assert Path(cover_path).stat().st_size <= gz.MAX_IMAGE_BYTES
 
 
+def test_crop_box_follows_actual_width_not_nominal_1536():
+    """⛔ 回归锁：裁剪必须按**到手的图**现算，绝不能认死标称 1536×654。
+
+    服务端去水印工作流会做非整数等比缩小（实测 ×0.855），所以真实到手的是 1313×876
+    而不是 1536×1024。写死 1536 会让缩过的图被裁错。三种宽度都必须给出 2.35:1。"""
+    for w, h in ((1536, 1024), (1313, 876), (800, 534)):
+        left, top, right, bottom = gz.crop_box(w, h, gz.COVER_RATIO)
+        cw, ch = right - left, bottom - top
+        assert cw == w                       # 宽度不动
+        assert ch == round(w / gz.COVER_RATIO)   # 高按实际宽度现算
+        assert abs(cw / ch - gz.COVER_RATIO) < 0.01
+    # 实测那一组的确切数字（第三次真实出图）
+    assert gz.crop_box(1313, 876, gz.COVER_RATIO) == (0, (876 - 559) // 2, 1313, (876 - 559) // 2 + 559)
+
+
+def test_process_cover_on_shrunk_server_image(tmp_path):
+    """端到端：喂服务端实际会给的 1313×876（已缩），产出必须是 1313×559 而非 1536×654。"""
+    from PIL import Image
+    import io
+    buf = io.BytesIO()
+    Image.new("RGB", (1313, 876), (168, 181, 196)).save(buf, "PNG")
+    cover_path, raw_path, warnings = gz.process_cover(buf.getvalue(), tmp_path)
+    from PIL import Image as I
+    with I.open(cover_path) as im:
+        assert im.size == (1313, 559)
+    with I.open(raw_path) as im:
+        assert im.size == (1313, 876)
+    assert warnings == []
+
+
 def test_process_illus_keeps_16_9(tmp_path):
     from PIL import Image
     import io
