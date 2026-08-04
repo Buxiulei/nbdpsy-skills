@@ -95,10 +95,15 @@ DRYRUN_IMAGE_WARNING = ("图片没上传，正文里还是原始地址——**�
 # 与小红书文字版 clean 主题同一套品牌红 #B3282D，跨渠道观感统一。
 ACCENT = "#B3282D"
 BODY = "#3a3a3a"
+# 正文字号/行高/字色/字距**只写在 container 上，靠 CSS 继承管到每个 p 与 li**。
+# 不这么做的话，每个段落都要重复挂 ~74 字符的样式串——3500 汉字的稿子光这一项就多出
+# 七千多字符，直接把正文顶过微信 2 万字符上限（2026-08-04 实测两篇被拦）。
+# ⚠️ 改这里前先想清楚：p / li 的字号字色现在**依赖 container**，别给它们单独设 font-size，
+# 也别把 container 的这几条搬走。
 STYLES = {
     "container": f"font-size:16px;line-height:1.8;color:{BODY};letter-spacing:0.4px;"
                  "word-break:break-word",
-    "p": f"font-size:16px;line-height:1.8;color:{BODY};margin:0 0 20px;letter-spacing:0.4px",
+    "p": "margin:0 0 20px",
     "h1": "font-size:20px;line-height:1.6;color:#1a1a1a;font-weight:700;margin:0 0 24px;"
           "text-align:center",
     "h2": f"font-size:18px;line-height:1.6;color:#1a1a1a;font-weight:700;margin:36px 0 18px;"
@@ -110,9 +115,9 @@ STYLES = {
     "quote_p": "font-size:15px;line-height:1.8;color:#5a5a5a;margin:0 0 10px",
     "strong": "font-weight:700;color:#1a1a1a",
     "em": f"font-style:italic;color:{BODY}",
-    "ul": f"margin:0 0 20px;padding-left:22px;color:{BODY}",
-    "ol": f"margin:0 0 20px;padding-left:22px;color:{BODY}",
-    "li": "font-size:16px;line-height:1.8;margin:0 0 10px",
+    "ul": "margin:0 0 20px;padding-left:22px",
+    "ol": "margin:0 0 20px;padding-left:22px",
+    "li": "margin:0 0 10px",
     "hr": "border:none;border-top:1px solid #e6e6e6;margin:32px 0",
     "img": "max-width:100%;display:block;margin:0 auto;border-radius:4px",
     "a": f"color:{ACCENT};text-decoration:none;border-bottom:1px solid #e8c8c9",
