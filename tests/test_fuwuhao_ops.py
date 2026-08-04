@@ -312,6 +312,27 @@ class Test菜单diff:
         online = MENU_ONLINE["menu"]["button"]
         assert M.menu_diff(online, json.loads(json.dumps(online)))["changed"] is False
 
+    def test_小程序按钮换了pagepath要报出来(self):
+        """url 是网页回落、pagepath 才是真跳转目标——只比 url 会让改动隐身。"""
+        old = [{"name": "我的", "sub_button": [
+            {"name": "立即预约", "type": "miniprogram", "appid": "wxAPP",
+             "pagepath": "subpkg/booking/booking", "url": "https://a/booking"}]}]
+        new = json.loads(json.dumps(old))
+        new[0]["sub_button"][0]["pagepath"] = "pages/client/home/home"   # 只动 pagepath
+        d = M.menu_diff(old, new)
+        assert d["changed"] is True
+        assert "pages/client/home/home" in "｜".join(d["lines"])
+
+    def test_二级顺序调整要报出来(self):
+        """「放最上面」是运营明确要的效果，顺序变了不报等于骗人说没改。"""
+        old = [{"name": "找咨询师", "sub_button": [
+            {"name": "智能匹配", "type": "view", "url": "https://a/1"},
+            {"name": "立即预约", "type": "view", "url": "https://a/2"}]}]
+        new = [{"name": "找咨询师", "sub_button": list(reversed(old[0]["sub_button"]))}]
+        d = M.menu_diff(old, new)
+        assert d["changed"] is True
+        assert any("顺序调整" in x for x in d["lines"])
+
 
 class Test菜单CLI:
     """菜单文件落 tmp_path；每个用例自带 net（假网络层）与 capsys。"""

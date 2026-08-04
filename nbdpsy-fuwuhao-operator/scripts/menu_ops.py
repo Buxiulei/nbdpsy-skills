@@ -60,9 +60,15 @@ def action_of(button: dict) -> str:
     subs = button.get("sub_button") or []
     if subs:
         return f"{len(subs)} 个二级"
-    target = (button.get("url") or button.get("key") or button.get("appid")
-              or button.get("media_id") or button.get("article_id") or "")
-    return f"{button.get('type') or '?'} {target}".strip()
+    btype = button.get("type") or "?"
+    if btype == "miniprogram":
+        # 小程序按钮的身份是 appid+pagepath。只看 url（那是非微信环境的网页回落）
+        # 会让「换了跳转的小程序页面」这种改动在 diff 里完全隐身。
+        target = f"{button.get('appid') or ''} {button.get('pagepath') or ''}".strip()
+    else:
+        target = (button.get("url") or button.get("key")
+                  or button.get("media_id") or button.get("article_id") or "")
+    return f"{btype} {target}".strip()
 
 
 def validate(buttons):
@@ -142,11 +148,15 @@ def menu_diff(old, new):
         for sname in osub:
             if sname not in nsub:
                 lines.append(f"「{name}」下删除二级「{sname}」（原 {action_of(osub[sname])}）")
+        # 顺序就是运营眼里「谁排最上面」，本身是一次改动，必须单独报出来
+        if set(osub) == set(nsub) and list(osub) != list(nsub):
+            lines.append(f"「{name}」下二级顺序调整（自上而下）："
+                         f"{' | '.join(osub)} → {' | '.join(nsub)}")
     for name, ob in o.items():
         if name not in n:
             lines.append(f"删除一级菜单「{name}」（原 {action_of(ob)}）")
-    if list(o) != list(n) and set(o) == set(n) and not lines:
-        lines.append(f"只调了一级菜单顺序：{' | '.join(o)} → {' | '.join(n)}")
+    if set(o) == set(n) and list(o) != list(n):
+        lines.append(f"一级菜单顺序调整：{' | '.join(o)} → {' | '.join(n)}")
     return {"lines": lines, "changed": bool(lines),
             "top_level": {"before": list(o), "after": list(n)}}
 
