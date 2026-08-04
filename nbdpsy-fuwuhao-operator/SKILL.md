@@ -175,7 +175,17 @@ python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；�
 完整规格（封面为什么不放字、上下各裁 185px、风格档案怎么复用、「## 配图」区块格式）见
 `references/gzh-illustration-spec.md`。
 
-**① 稿子里得先有「## 配图」区块**（`### 封面` / `### 插图N` 各带一个 ``` 围栏提示词）。
+**⓪ 先按字数算张数**（2026-08-04 老板定案：**每 ~500 汉字一张插图**，封面另算）：
+
+```bash
+grep -oP '[\x{4e00}-\x{9fa5}]' {稿子}.md | wc -l     # 正文汉字数 → ÷500 四舍五入 = 插图张数
+```
+
+3500 字 → 7 张。**先把这个数报给运营**（「正文 3500 字 → 配 7 张插图」）再动手，
+别按旧习惯只出两三张——那是此前的口径，实测手机上整屏都是字，太干。
+
+**① 稿子里得先有「## 配图」区块**（`### 封面` / `### 插图N` 各带一个 ``` 围栏提示词，
+张数按上一步算出来的来）。
 没有 → **别现编**，先按规格把区块写出来：写之前**先读运营的风格档案**
 （`python3 ../nbdpsy-xiaohongshu-creator/scripts/style_profile.py --get --kind carousel`，
 `trace_line` 原样写进区块开头留痕；`../nbdpsy-xiaohongshu-creator/` 指安装后与本 skill 同级的

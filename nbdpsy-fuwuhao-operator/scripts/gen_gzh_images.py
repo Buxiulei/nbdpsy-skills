@@ -2,7 +2,7 @@
 """用后端 gpt-image 锚点法给一篇公众号稿子出「一致性」配图（经运营工具 op API）。
 
 与小红书轮播共用同一个后端与同一把凭据，差别只有三处：**横版 16:9**、**一篇只有
-1 张封面 + 0~3 张正文插图**、**封面要裁成 2.35:1**。其余（锚点法、任务台账、失败处置）完全同源，
+1 张封面 + 按正文字数配的正文插图（每 ~500 汉字一张）**、**封面要裁成 2.35:1**。其余（锚点法、任务台账、失败处置）完全同源，
 所以行为契约请直接照 `nbdpsy-xiaohongshu-creator/scripts/gen_images.py` 理解。
 
 服务端：nbdpsy-server（mcp.nbdpsy.com）`/api/op/consistent-images`，gpt-image-2 锚点法 +
@@ -71,6 +71,10 @@ STATE_FILE = ".gen_gzh_images_state.json"
 
 # 出图比例：公众号恒横版。服务端按此归一到 gpt-image-2 的 1536×1024。
 ASPECT_RATIO = "16:9"
+# 正文插图张数上限。张数本身按「每 ~500 汉字一张」由写稿侧算好写进「## 配图」区块，
+# 这里只兜住离谱的量——超过这个数，读者是在图册里找正文。
+MAX_ILLUS = 10
+
 # 微信封面官方比例（gpt-image 出的 16:9 居中裁到它）
 COVER_RATIO = 2.35
 # 微信正文图硬上限：单张 1MB（md2wechat.MAX_IMAGE_BYTES 同值）
@@ -204,9 +208,9 @@ def build_warnings(selected, cover_only, anchor_url):
         w.append("未带锚点参考图（--anchor-url），整篇一致性无保障；正常流程应先 --cover-only 出封面"
                  "过风格闸门，运营确认后用返回的 anchor_url 再出插图")
     n_illus = sum(1 for i in selected if i["slot"] == "illus")
-    if n_illus > 3:
-        w.append(f"本次 {n_illus} 张正文插图，超出公众号建议的 0~3 张——长文配图贵精不贵多，"
-                 "每个小标题都塞图反而打断阅读")
+    if n_illus > MAX_ILLUS:
+        w.append(f"本次 {n_illus} 张正文插图，超过上限 {MAX_ILLUS} 张——"
+                 "再多就成图册了，读者要在图里找正文")
     return w
 
 
