@@ -1,6 +1,6 @@
 ---
 name: nbdpsy-fuwuhao-operator
-description: 运营 NBDpsy 微信服务号（公众号）：把长文/分发稿排版成公众号样式并建草稿、发布或定时发布、给粉丝群发（高危，每自然月仅 4 次）、装修自定义菜单、查已发文章台账与删除、看涨粉与阅读数据。当用户说「发公众号 / 发到服务号 / 服务号发文 / 把这篇长文发到公众号 / 公众号排版 / 排版成公众号样式 / 定时发公众号 / 明早九点发公众号 / 公众号群发 / 推送给粉丝 / 装修菜单 / 服务号菜单 / 公众号底部按钮改一下 / 公众号数据 / 服务号涨了多少粉 / 公众号阅读量 / 服务号台账 / 公众号都发过哪些 / 公众号文章改错字 / 删掉公众号那篇」时，即使没说「skill」字样也应使用本 skill。五个子场景：①**排版发文**（Markdown → 微信白名单内联样式 HTML，图片自动上传换 mmbiz 链接，封面自动进素材库）②**定时发布与定时群发**（微信 API 没有定时参数，由服务端队列到点执行）③**自定义菜单装修**（本地 JSON 为编辑真源，apply 前 diff）④**已发布文章查/删**（微信没有「改」，只能删+重发，会换链接、阅读清零）⑤**数据统计**（涨粉/阅读/分享，查服务端每日快照，可跨任意区间）。微信凭据（AppSecret）只存生产服务器、出站走固定出口 IP，运营电脑只拿个人 key（`NBDPSY_WECHAT_API_KEY`）走 REST。本 skill 只服务 NBDpsy 自家服务号，内容优先承接 nbdpsy-seo-artical-creator 的长文与公众号分发稿；不适用于其它公众号的泛化代运营。
+description: 运营 NBDpsy 微信服务号（公众号）：把长文/分发稿排版成公众号样式并建草稿、发布或定时发布、给粉丝群发（高危，每自然月仅 4 次）、装修自定义菜单、查已发文章台账与删除、看涨粉与阅读数据。当用户说「发公众号 / 发到服务号 / 服务号发文 / 把这篇长文发到公众号 / 公众号排版 / 排版成公众号样式 / 公众号配图 / 给公众号出封面 / 公众号插图生成 / 定时发公众号 / 明早九点发公众号 / 公众号群发 / 推送给粉丝 / 装修菜单 / 服务号菜单 / 公众号底部按钮改一下 / 公众号数据 / 服务号涨了多少粉 / 公众号阅读量 / 服务号台账 / 公众号都发过哪些 / 公众号文章改错字 / 删掉公众号那篇」时，即使没说「skill」字样也应使用本 skill。五个子场景：①**排版发文**（Markdown → 微信白名单内联样式 HTML，图片自动上传换 mmbiz 链接，封面自动进素材库；稿子没图时可先用 gpt-image-2 锚点法**出横版配图**——封面裁 2.35:1、正文插图 16:9，风格复用运营自己的风格档案）②**定时发布与定时群发**（微信 API 没有定时参数，由服务端队列到点执行）③**自定义菜单装修**（本地 JSON 为编辑真源，apply 前 diff）④**已发布文章查/删**（微信没有「改」，只能删+重发，会换链接、阅读清零）⑤**数据统计**（涨粉/阅读/分享，查服务端每日快照，可跨任意区间）。微信凭据（AppSecret）只存生产服务器、出站走固定出口 IP，运营电脑只拿个人 key（`NBDPSY_WECHAT_API_KEY`）走 REST。本 skill 只服务 NBDpsy 自家服务号，内容优先承接 nbdpsy-seo-artical-creator 的长文与公众号分发稿；不适用于其它公众号的泛化代运营。
 ---
 
 # 微信服务号运营（排版 / 发布 / 定时 / 群发 / 菜单 / 数据）
@@ -88,7 +88,8 @@ description: 运营 NBDpsy 微信服务号（公众号）：把长文/分发稿�
 > **路径约定**：下面 `{SKILL_DIR}` 指本 SKILL.md 所在目录；
 > `MD2WX` = `{SKILL_DIR}/scripts/md2wechat.py`、`ART` = `{SKILL_DIR}/scripts/article_ops.py`、
 > `SCHED` = `{SKILL_DIR}/scripts/schedule_ops.py`、`MENU` = `{SKILL_DIR}/scripts/menu_ops.py`、
-> `STATS` = `{SKILL_DIR}/scripts/stats_ops.py`、`COMMON` = `{SKILL_DIR}/scripts/nbdpsy_common.py`；
+> `STATS` = `{SKILL_DIR}/scripts/stats_ops.py`、`GENIMG` = `{SKILL_DIR}/scripts/gen_gzh_images.py`、
+> `COMMON` = `{SKILL_DIR}/scripts/nbdpsy_common.py`；
 > `{workspace}` 指内容工作区（`python3 COMMON workspace` 查询），本 skill 的产物落 `{workspace}/wechat/{slug}/`。
 > （Windows 把 `python3` 换成 `python`、`/` 换成 `\`。）
 
@@ -116,6 +117,10 @@ python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；�
 
 基址默认 `https://database.nbdpsy.com`，可用凭据 `NBDPSY_WECHAT_API_BASE` 覆盖（一般无需动）。
 
+⚠️ **第 2.5 步出配图用的是另一把 key**：`NBDPSY_XHS_API_KEY`（与小红书生图/发布、视频搬运同一把），
+走的也是另一个服务（`mcp.nbdpsy.com`）。发文与出配图**两条线各自独立**——
+发文那把好使不代表能出图，反之亦然，报 `MISSING:` 时先看它点的是哪一把。
+
 ---
 
 ## 完整流程（发一篇文章的主线，每步都有验证闸门）
@@ -124,6 +129,7 @@ python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；�
 0. 环境与凭据自检          → 验证：secret ensure NBDPSY_WECHAT_API_KEY 无输出（有输出=缺，先去配）；网络不通先 sandbox allow
 1. 判子场景                → 验证：五个子场景已对号入座；涉及群发/删除的，红线①/②已当面复述并拿到确认
 2. 取内容                  → 验证：拿到本地 md 路径（优先 nbdpsy-seo-artical-creator 的长文/公众号分发稿）
+2.5 出配图（GENIMG，稿子没图才走）→ 验证：先 --cover-only 出封面过闸门、运营确认后再出插图；图片路径已写回 md 的 ![]() 引用
 3. 排版编译（MD2WX）       → 验证：产物 HTML 无 class/<style>/<script>/iframe/position；图片全是 mmbiz 域名；封面拿到 thumb media_id
 4. 建草稿（ART --draft-add）→ 验证：拿到 media_id；标题/作者/摘要已与运营核对
 5. 发布：立即 或 定时      → 验证：立即=拿到台账 id 且 status=publishing；定时=拿到 job id，run_at 已按「几月几号几点」复述给运营
@@ -151,6 +157,56 @@ python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；�
 
 心理科普的合规红线（极限词 / 医疗词 / 站外导流）与长文侧同源，稿子来自长文 skill 时已过校验；
 运营自带稿子时，把明显违规处指出来再发。
+
+### 第 2.5 步 · 出配图（**稿子已有图就整步跳过**）
+
+稿子里已经有可用的封面与插图（`![](...)` 指向本地文件且文件都在）→ **跳过本步**，直接进第 3 步。
+只有"有稿无图"时才走这里。
+
+配图走**与小红书轮播同一个出图后端、同一把凭据**（`NBDPSY_XHS_API_KEY`，
+**不是**本 skill 发文那把 `NBDPSY_WECHAT_API_KEY`），差别只在**横版**：封面 2.35:1、插图 16:9。
+完整规格（封面为什么不放字、上下各裁 185px、风格档案怎么复用、「## 配图」区块格式）见
+`references/gzh-illustration-spec.md`。
+
+**① 稿子里得先有「## 配图」区块**（`### 封面` / `### 插图N` 各带一个 ``` 围栏提示词）。
+没有 → **别现编**，先按规格把区块写出来：写之前**先读运营的风格档案**
+（`python3 ../nbdpsy-xiaohongshu-creator/scripts/style_profile.py --get --kind carousel`，
+`trace_line` 原样写进区块开头留痕；`../nbdpsy-xiaohongshu-creator/` 指安装后与本 skill 同级的
+兄弟 skill 目录，命令在 `{SKILL_DIR}` 下执行或自行换算成绝对路径）。
+⛔ 不读档案凭记忆用默认配色 = 出一批和这个号不搭的图；⛔ 别用裸 `--get`（多套时它给的可能是
+"文字版"那套，`visual` 段根本不存在，配色人物会一起取空）。
+
+**② 先出封面过风格闸门**（锚点法第一步，**不可跳**）：
+
+```bash
+python3 GENIMG --md {workspace}/distribution/{slug}--gzh.md --cover-only
+```
+
+拿到 `cover.jpg`（已裁成 2.35:1，**给运营看的就是这张**）、`cover-raw.jpg`（未裁原图，便于重裁）
+与回执里的 `anchor_url`。**把 cover.jpg 拿给运营确认配色 / 人物 / 基调**，不满意就调提示词重跑本步。
+
+**③ 确认后再出插图**，把上一步的 `anchor_url` 当锚点，保证整篇调性统一：
+
+```bash
+python3 GENIMG --md ... --pages 1-2 --anchor-url <上一步的 anchor_url>
+```
+
+⛔ **封面没确认就把插图一起出**：风格一跑偏整篇图全废、额度白烧。
+某张没出成 → `--pages <编号> --anchor-url <同一张>` 只重出那几张，**别整批重发**。
+
+**④ 把图片路径写回 md 的 `![]()` 引用**：封面用 `--cover` 传给下一步（不进正文），
+插图按小标题位置插进正文。默认落盘在 `<稿子同目录>/images/<稿子名>/`，所以正文里写相对路径即可：
+
+```markdown
+![](images/{稿子名}/illus-01.jpg)
+```
+
+第 3 步的 `md2wechat.py` 会把这些本地图**逐张传微信图床换成 mmbiz 链接**，不用手动上传。
+
+- 图**已入队**就绝不重发：回执 `outcome: pending` / `unknown` 时用
+  `--job <id> --session <id>` 复查补下载（重发 = 重复生成 + 重复扣额度）。
+- 回执 `warnings` 逐条念给运营，尤其"压到最低质量仍超 1MB"那条——微信正文图硬上限 1MB。
+- 只想看提示词解析与参数组装、不烧额度：加 `--dry-run`（不打网络、不需要凭据）。
 
 ### 第 3 步 · 排版编译
 
@@ -326,6 +382,8 @@ python3 ART --delete-published --article-id <article_id> --confirm
 
 | 用途 | 路径 |
 |------|------|
+| 出配图：gpt-image-2 锚点法横版生图（封面裁 2.35:1、插图 16:9，转 JPEG 落盘） | `scripts/gen_gzh_images.py` |
+| 配图规格（封面避裁与不放字、插图张数、风格档案复用、「## 配图」区块格式） | `references/gzh-illustration-spec.md` |
 | Markdown → 微信白名单内联样式 HTML（含图片上传换链接、封面进素材库） | `scripts/md2wechat.py` |
 | 草稿 CRUD / 发布 / 台账 / 状态 / 群发（高危）/ 删除已发布（高危） | `scripts/article_ops.py` |
 | 定时任务提交 / 列表 / 取消 | `scripts/schedule_ops.py` |
