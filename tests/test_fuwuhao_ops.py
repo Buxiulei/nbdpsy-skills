@@ -491,6 +491,46 @@ class Test草稿:
         assert art["title"] == "标题" and art["author"] == "胡佰亿" and art["thumb_media_id"] == "T1"
         assert "--publish --media-id M1" in data["hint"]
 
+    def _manifest(self, tmp_path, specs, name="articles.json"):
+        p = tmp_path / name
+        p.write_text(json.dumps(specs, ensure_ascii=False), encoding="utf-8")
+        return str(p)
+
+    def test_多图文按清单顺序进articles(self, net, tmp_path, capsys):
+        """一条群发只算 1 次配额，所以打包多篇是省配额的正路——顺序即版面，不能乱。"""
+        net.serve(FakeResp(200, {"success": True, "data": {"media_id": "M9"}}))
+        mf = self._manifest(tmp_path, [
+            {"title": "主图文", "content": _html(tmp_path, name="a.html"), "thumb_media_id": "T1"},
+            {"title": "副一", "content": _html(tmp_path, name="b.html"), "thumb_media_id": "T2"},
+            {"title": "副二", "content": _html(tmp_path, name="c.html"), "thumb_media_id": "T3"},
+        ])
+        code, data, _ = run_cli(A, ["--draft-add", "--articles", mf], capsys)
+        assert code == 0 and data["media_id"] == "M9" and data["article_count"] == 3
+        arts = net.calls[0]["body"]["body"]["articles"]
+        assert [a["title"] for a in arts] == ["主图文", "副一", "副二"]
+        assert data["titles"][0] == "主图文" and "主图文" in data["hint"]
+
+    def test_超过8篇本地就拦下(self, net, tmp_path, capsys):
+        """微信一条消息最多 8 篇。本地拦住，别浪费一次调用去换微信的报错。"""
+        mf = self._manifest(tmp_path, [{"title": f"第{i}", "content": _html(tmp_path, name="a.html")}
+                                       for i in range(9)])
+        code, data, _ = run_cli(A, ["--draft-add", "--articles", mf], capsys)
+        assert code == 1 and "8" in data["error"] and net.calls == []
+
+    def test_清单与命令行标题不能混用(self, net, tmp_path, capsys):
+        """两处都写标题时没人说得清哪份生效——宁可拒收。"""
+        mf = self._manifest(tmp_path, [{"title": "清单里的", "content": _html(tmp_path, name="a.html")}])
+        code, data, _ = run_cli(A, ["--draft-add", "--articles", mf, "--title", "命令行的"], capsys)
+        assert code == 1 and "二选一" in data["error"] and net.calls == []
+
+    def test_清单某篇缺标题要点名第几篇(self, net, tmp_path, capsys):
+        mf = self._manifest(tmp_path, [
+            {"title": "有标题", "content": _html(tmp_path, name="a.html")},
+            {"content": _html(tmp_path, name="b.html")},
+        ])
+        code, data, _ = run_cli(A, ["--draft-add", "--articles", mf], capsys)
+        assert code == 1 and "第 2 篇" in data["error"] and net.calls == []
+
     def test_没封面要警告不拦(self, net, tmp_path, capsys):
         net.serve(FakeResp(200, {"success": True, "data": {"media_id": "M1"}}))
         code, data, _ = run_cli(A, ["--draft-add", "--content", _html(tmp_path),

@@ -60,6 +60,10 @@ from urllib.parse import urlencode
 import wechat_api
 from wechat_api import OpFailed
 
+# 微信一条图文消息最多 8 篇（第 1 篇是主图文，大图展示）。群发时**一条消息只算 1 次配额**，
+# 所以「三篇分三次群发」是白烧配额——打包成一条更划算。
+MAX_ARTICLES = 8
+
 # 台账状态（数据库 wechat_articles.status 的取值）→ 给运营的人话
 STATUS_LABELS = {
     "publishing": "发布中（服务端每 5 分钟轮询一次微信，几分钟内转 published；拿不到 url 不等于失败）",
@@ -141,33 +145,87 @@ def content_warnings(html: str):
     return w
 
 
-def do_draft_add(args, api_base, key):
-    title = (args.title or "").strip()
+def build_article(spec, where, warnings):
+    """把一篇的字段拼成微信 articles 元素。where 用于把报错定位到具体是哪一篇。"""
+    title = (spec.get("title") or "").strip()
     if not title:
-        raise OpFailed("--draft-add 必须给 --title：微信标题**发出去就定死了**"
+        raise OpFailed(f"{where}缺 title：微信标题**发出去就定死了**"
                        "（改它要付删+重发、换链接、阅读清零的代价），不能让它空着。")
-    if not args.content:
-        raise OpFailed("--draft-add 必须给 --content <正文 HTML 文件>（md2wechat.py --html-out 那份）。")
-    html = read_content(args.content)
-    warnings = content_warnings(html)
+    if not spec.get("content"):
+        raise OpFailed(f"{where}缺 content（正文 HTML 文件，md2wechat.py --html-out 那份）。")
+    html = read_content(spec["content"])
+    warnings.extend(content_warnings(html))
     article = {"title": title, "content": html}
-    for flag, field in (("author", "author"), ("digest", "digest"),
-                        ("thumb_media_id", "thumb_media_id"), ("source_url", "content_source_url")):
-        value = (getattr(args, flag) or "").strip()
+    for src, field in (("author", "author"), ("digest", "digest"),
+                       ("thumb_media_id", "thumb_media_id"), ("source_url", "content_source_url")):
+        value = (spec.get(src) or "").strip()
         if value:
             article[field] = value
     if "thumb_media_id" not in article:
-        warnings.append("没给 --thumb-media-id（封面）：微信通常要求图文有永久封面素材，"
+        warnings.append(f"「{title}」没给封面（thumb_media_id）：微信通常要求图文有永久封面素材，"
                         "缺了可能被拒。封面用 `md2wechat.py --cover` 上传后拿到的那个 id。")
+    return article
+
+
+def read_manifest(path):
+    """读多图文清单：一个数组，每个元素一篇（字段名同 CLI，content 是 HTML 文件路径）。"""
+    p = Path(path)
+    if not p.is_file():
+        raise OpFailed(f"--articles 指向的文件不存在：{p}")
+    try:
+        specs = json.loads(p.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError) as e:
+        raise OpFailed(f"--articles 读不出来（{p}）：{type(e).__name__}: {e}")
+    except json.JSONDecodeError as e:
+        raise OpFailed(f"--articles 不是合法 JSON（{p}）：{e}")
+    if not isinstance(specs, list) or not specs:
+        raise OpFailed("--articles 要的是**非空数组**，每个元素一篇文章"
+                       "（`title` 与 `content` 必填，`author`/`digest`/`thumb_media_id` 可选）。")
+    if len(specs) > MAX_ARTICLES:
+        raise OpFailed(f"清单里有 {len(specs)} 篇，超过微信一条图文消息的上限 {MAX_ARTICLES} 篇"
+                       "——拆成两条消息发。（注意：群发时一条消息只算 1 次配额，"
+                       "所以 8 篇塞满比分两次发划算）")
+    for i, spec in enumerate(specs):
+        if not isinstance(spec, dict):
+            raise OpFailed(f"--articles 第 {i + 1} 篇不是对象：{json.dumps(spec, ensure_ascii=False)[:80]}")
+    return specs
+
+
+def do_draft_add(args, api_base, key):
+    warnings = []
+    if args.articles:
+        if args.content or args.title:
+            raise OpFailed("--articles 与 --content/--title 只能二选一："
+                           "多图文的标题正文全部写在清单里，别再从命令行传一份，"
+                           "两处不一致时没人说得清哪份生效。")
+        specs = read_manifest(args.articles)
+    else:
+        # 两个都没给才提示「二选一」；只缺一个时交给 build_article 报——
+        # 它的消息里带着「标题发出去就定死」这句该被念给运营听的警示。
+        if not args.content and not args.title:
+            raise OpFailed("--draft-add 要么给 --title + --content（单篇），"
+                           "要么给 --articles <清单.json>（多图文，最多 8 篇）。")
+        specs = [{"title": args.title, "content": args.content, "author": args.author,
+                  "digest": args.digest, "thumb_media_id": args.thumb_media_id,
+                  "source_url": args.source_url}]
+
+    articles = [build_article(s, f"第 {i + 1} 篇（共 {len(specs)} 篇）" if len(specs) > 1 else "--draft-add ",
+                              warnings)
+                for i, s in enumerate(specs)]
 
     data = wechat_api.proxy_call(api_base, key, "/cgi-bin/draft/add",
-                                 {"articles": [article]}, args.timeout)
+                                 {"articles": articles}, args.timeout)
     media_id = data.get("media_id")
     if not media_id:
         raise OpFailed(f"微信没回 media_id：{json.dumps(data, ensure_ascii=False)[:200]}")
-    return {"outcome": "done", "media_id": media_id, "title": title, "warnings": warnings,
-            "hint": "草稿已建。**标题/作者/摘要发出去就定死了**，落笔前跟运营念一遍；"
-                    f"确认无误后 `--publish --media-id {media_id}`。"}, 0
+    titles = [a["title"] for a in articles]
+    hint = ("草稿已建。**标题/作者/摘要发出去就定死了**，落笔前跟运营念一遍；"
+            f"确认无误后 `--publish --media-id {media_id}`。")
+    if len(articles) > 1:
+        hint = (f"多图文草稿已建（{len(articles)} 篇）。**第 1 篇「{titles[0]}」是主图文**"
+                "（大图展示、决定点击率），其余按清单顺序排在下面——顺序发出去就定死了。" + hint)
+    return {"outcome": "done", "media_id": media_id, "title": titles[0], "titles": titles,
+            "article_count": len(articles), "warnings": warnings, "hint": hint}, 0
 
 
 def fetch_draft(api_base, key, media_id, timeout):
@@ -420,6 +478,7 @@ def main(argv=None):
     ap.add_argument("--ledger-id", dest="ledger_id", type=int, help="--mass-send 的台账 id")
     ap.add_argument("--article-id", dest="article_id", help="--delete-published 的 article_id")
     ap.add_argument("--index", type=int, help="多图文的下标（默认 0）")
+    ap.add_argument("--articles", help="多图文清单 JSON（数组，最多 8 篇；每篇 title/content 必填）——与 --content/--title 二选一")
     ap.add_argument("--content", help="正文 HTML 文件（md2wechat.py --html-out 那份）")
     ap.add_argument("--title", help="文章标题（发出去就定死，改＝删+重发）")
     ap.add_argument("--author", help="作者署名")
