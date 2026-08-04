@@ -214,10 +214,19 @@ def test_warnings_anchor_and_too_many():
     assert gz.build_warnings(items[:1], cover_only=True, anchor_url=None) == []
 
 
-def test_warning_more_than_three_illus():
-    items = [{"slot": "illus", "num": n, "label": f"插图{n}", "prompt": "x"} for n in range(1, 5)]
-    w = gz.build_warnings(items, cover_only=False, anchor_url="https://x/a.png")
-    assert any("0~3 张" in x for x in w)
+def _illus(n):
+    return [{"slot": "illus", "num": i, "label": f"插图{i}", "prompt": "x"} for i in range(1, n + 1)]
+
+
+def test_按字数配的张数不再报警():
+    """口径已改成每 ~500 汉字一张：3500 字长文配 7 张是**正常**的，警告不能再拦它。"""
+    w = gz.build_warnings(_illus(7), cover_only=False, anchor_url="https://x/a.png")
+    assert w == []
+
+
+def test_超过上限才报警():
+    w = gz.build_warnings(_illus(gz.MAX_ILLUS + 1), cover_only=False, anchor_url="https://x/a.png")
+    assert any(str(gz.MAX_ILLUS) in x for x in w)
 
 
 # ---- 落盘命名 ----
