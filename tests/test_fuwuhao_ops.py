@@ -291,6 +291,30 @@ class Test菜单校验:
         assert any("截断" in x for x in w)
 
 
+class Test台账备注:
+    """备注是「同样三篇，哪批是对照组」的唯一线索——写错地方比没写更糟。"""
+
+    def test_写备注走patch并带note(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True,
+                                 "item": {"id": 5, "title": "某篇", "note": "AB 对照组"}}))
+        code, data, _ = run_cli(A, ["--set-note", "--id", "5", "--note", "AB 对照组"], capsys)
+        assert code == 0 and data["note"] == "AB 对照组"
+        call = net.calls[0]
+        assert call["method"] == "PATCH" and call["url"].endswith("/wechat/ledger/5")
+        assert call["body"] == {"note": "AB 对照组"}
+
+    def test_空串是清空不是漏填(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "item": {"id": 5, "title": "某篇", "note": None}}))
+        code, data, _ = run_cli(A, ["--set-note", "--id", "5", "--note", ""], capsys)
+        assert code == 0 and data["note"] is None and "清空" in data["hint"]
+
+    def test_缺id或缺note都拦下(self, net, capsys):
+        code, data, _ = run_cli(A, ["--set-note", "--note", "x"], capsys)
+        assert code == 1 and "--id" in data["error"] and net.calls == []
+        code, data, _ = run_cli(A, ["--set-note", "--id", "5"], capsys)
+        assert code == 1 and "--note" in data["error"] and net.calls == []
+
+
 class Test菜单diff:
     def test_逐条给出人话变更(self):
         new = [

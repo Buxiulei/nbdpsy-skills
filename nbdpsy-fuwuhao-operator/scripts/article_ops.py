@@ -340,6 +340,25 @@ def do_ledger(args, api_base, key):
     return ledger_view(data), 0
 
 
+def do_set_note(args, api_base, key):
+    """给台账某一行写运营备注。台账记得住机器字段，记不住「为什么发这条」——
+    同样三篇文章，哪批是仅发表的对照组、哪批是打包群发的，全靠这一句话分辨。"""
+    if args.id is None:
+        raise OpFailed("--set-note 需要 --id <台账 id>（从 --ledger 那一列取，不是 media_id）。")
+    note = args.note
+    if note is None:
+        raise OpFailed('--set-note 需要 --note "备注内容"；要清空备注请传 --note ""。')
+    data = wechat_api.request_json(
+        "PATCH", f"{api_base}/api/external/wechat/ledger/{args.id}", key,
+        {"note": note}, args.timeout)
+    item = data.get("item") or {}
+    saved = item.get("note")
+    return {"outcome": "done", "id": args.id, "note": saved,
+            "title": item.get("title"),
+            "hint": ("备注已清空。" if saved is None else f"备注已写入：{saved}")
+                    + " 备注只给人看，不影响微信侧任何东西。"}, 0
+
+
 def find_ledger_row(api_base, key, ledger_id, timeout, page=100, max_pages=20):
     """按台账 id 找单行——服务端只有分页端点，这里翻页找（台账按 id 倒序，翻过头就停）。"""
     for i in range(max_pages):
@@ -470,6 +489,8 @@ def main(argv=None):
                          "配 --id 时查单篇终态")
     ap.add_argument("--mass-send", dest="mass_send", action="store_true",
                     help="群发（高危：不可逆 + 每自然月仅 4 次）")
+    ap.add_argument("--set-note", dest="set_note", action="store_true",
+                    help="给台账某行写运营备注（配 --id 与 --note；--note \"\" 清空）")
     ap.add_argument("--delete-published", dest="delete_published", action="store_true",
                     help="删除已发布文章（高危：链接失效 + 数据清零，不可逆）")
 
@@ -503,11 +524,12 @@ def main(argv=None):
         (args.draft_update, do_draft_update), (args.publish, do_publish),
         (args.ledger, do_ledger), (args.status is not None and not args.ledger, do_status),
         (args.mass_send, do_mass_send), (args.delete_published, do_delete_published),
+        (args.set_note, do_set_note),
     ]
     chosen = [fn for flag, fn in actions if flag]
     if len(chosen) != 1:
-        ap.error("八选一：--draft-add / --draft-get / --draft-update / --publish / --ledger / "
-                 "--status --id N / --mass-send / --delete-published")
+        ap.error("九选一：--draft-add / --draft-get / --draft-update / --publish / --ledger / "
+                 "--status --id N / --mass-send / --delete-published / --set-note --id N --note ...")
 
     def action():
         api_base, key = wechat_api.credentials(args.api_base)

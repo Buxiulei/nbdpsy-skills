@@ -296,9 +296,16 @@ python3 SCHED --submit-publish <media_id> --at "2026-08-03T09:00:00+08:00"
 ### 第 6 步 · 查终态（台账是唯一权威）
 
 ```bash
-python3 ART --ledger --limit 20          # 台账分页：状态 / 链接 / 是否群发过
+python3 ART --ledger --limit 20          # 台账分页：状态 / 链接 / 是否群发过 / 运营备注
 python3 ART --status --id <台账 id>       # 单篇终态
+
+# 给某一行写运营备注（只给人看，不碰微信侧任何东西）
+python3 ART --set-note --id <台账 id> --note "AB 对照组·仅发表，未群发"
+python3 ART --set-note --id <台账 id> --note ""      # 空串 = 清空这条备注
 ```
+
+**备注是留给两周后的自己的**：同样三篇文章，哪一批是仅发表的对照组、哪一批是打包群发的，
+台账只记机器字段，认不出来。做 AB 对比、或一条群发带了多篇时，顺手写一句。
 
 `status` 语义：`publishing` 发布中（等轮询）/ `published` 已发布（有 url）/ `publish_failed` 失败（读
 `fail_reason`，常见是原创校验或内容审核不通过）/ `deleted` 已删除。
