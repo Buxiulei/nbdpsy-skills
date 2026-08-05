@@ -795,10 +795,10 @@ def test_batch_post_failure_does_not_lose_index_semantics(monkeypatch, tmp_path)
     assert all("worker 挂了" in r["error"] for r in out["results"])
 
 
-def test_batch_post_network_error_never_auto_resends(monkeypatch, tmp_path):
-    """批量端点的「逐镜 client_ref 去重」契约没验收过 —— ReadTimeout 意味着整批可能已入队，
-    自动重发就是在赌服务端幂等，赌输 = 8 镜 fast_vip 白烧 440 积分且排队中无法取消。
-    所以批量 POST 只发一次，把网络错误连同「先别重跑」的处置话术透给运营。"""
+def test_batch_post_network_error_resends_once_with_same_refs(monkeypatch, tmp_path):
+    """批量逐镜 ref 幂等已经 server 验收（2026-08-05 回执：同 refs 重放回原 clip_ids 零新增
+    零扣分），网络异常允许重发一次——但必须**复用同一份 payload（同一组 client_ref）**，
+    重新生成 ref 就等于新任务、双倍扣分。两次都失败时话术仍要点明幂等键保护。"""
     with_key(monkeypatch)
     posts = []
     holder = {}
@@ -815,10 +815,13 @@ def test_batch_post_network_error_never_auto_resends(monkeypatch, tmp_path):
     plan = write_plan(tmp_path, [{"operation": "text2video", "prompt": "a"},
                                  {"operation": "text2video", "prompt": "b"}])
     out = jg.batch(plan, str(tmp_path), submit_only=True)
-    assert len(posts) == 1                                   # 绝不重放整批
+    assert len(posts) == 2                                   # 恰好重发一次，不多不少
+    refs0 = [s["client_ref"] for s in posts[0]["shots"]]
+    refs1 = [s["client_ref"] for s in posts[1]["shots"]]
+    assert refs0 == refs1                                    # 同一组幂等键，绝不重新生成
     assert out["success"] is False and out["ok"] == 0
     assert [r["index"] for r in out["results"]] == [0, 1]
-    assert all("先别重跑本批" in r["error"] for r in out["results"])
+    assert all("不会重复扣分" in r["error"] for r in out["results"])
 
 
 def test_single_submit_still_retries_on_network_error(monkeypatch, tmp_path):

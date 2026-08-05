@@ -412,9 +412,10 @@ def _post_idempotent(url: str, key: str, payload: dict, *, timeout: int = 60,
     ——即同一个 client_ref，服务端按 ref 回已有 clip_id，不新建任务、不二次扣分。
     HTTP 4xx/5xx **一律不重发**：那是服务端已收到并明确拒绝，重发只会烧钱。
 
-    `retry_on_neterr=False`：服务端幂等**未经验收**的端点用它（批量，见 `_server_batch`）。
-    ReadTimeout 说明请求可能已到服务端并整批入队，此时自动重发是在赌批量端点也按每镜 ref 去重
-    ——契约没这条，赌输就是整批双倍扣分。宁可把网络错误透出，让运营查过再决策。
+    `retry_on_neterr=False` 保留给「服务端幂等未经验收」的端点：ReadTimeout 说明请求可能已
+    到服务端入队，此时自动重发是在赌服务端按 ref 去重，赌输就是双倍扣分。批量端点曾因此关闭
+    重发；2026-08-05 server 回执已验收「同 shots 同 refs 批量重放 → 原 clip_ids 零新增零扣分」
+    （逐镜 (created_by, client_ref) 唯一键 + 去重先于登录/积分闸），批量已恢复重发。
     """
     try:
         requests = _requests()
@@ -909,9 +910,9 @@ def _server_batch(plan: list, out_dir: str, *, api_base: Optional[str], submit_o
                 results[i] = dict(kerr, index=i)
         else:
             _err(f"[batch] 提交 {len(srv_idx)} 镜到 server（一次灌入，逐镜独立）…")
-            # 批量端点的逐镜 ref 幂等未经验收 → 网络异常不自动重发（重发可能整批双倍扣分）
-            resp, neterr = _post_idempotent(base + EP_BATCH_SUBMIT, key, {K_SHOTS: payloads},
-                                            retry_on_neterr=False)
+            # 批量逐镜 ref 幂等已经 server 验收（2026-08-05 回执：同 refs 重放回原 clip_ids
+            # 零新增零扣分），网络异常复用同一份 payload（同一组 client_ref）重发一次是安全的
+            resp, neterr = _post_idempotent(base + EP_BATCH_SUBMIT, key, {K_SHOTS: payloads})
             berr = neterr
             data = None
             if not berr and resp.status_code >= 400:

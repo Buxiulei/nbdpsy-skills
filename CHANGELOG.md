@@ -9,6 +9,20 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.61.3] — 2026-08-05
+
+### text-to-video：批量 POST 恢复网络超时重发——server 侧逐镜幂等已验收
+
+server 已上线即梦服务化并出回执（《2026-08-05-server回执-即梦视频生成服务化》）：批量端点按
+`shots[].client_ref` 逐镜去重、去重先于登录/积分闸，活体验收「同 shots 同 refs 重放 → 原
+clip_ids 零新增零扣分」。据此把 `_server_batch` 的 `retry_on_neterr` 从 False 恢复为默认
+True——网络异常复用同一组 client_ref 重发一次是安全的。回归测试改为断言「恰好重发一次 +
+两次 payload 的 ref 逐镜一致」。至此 server 模式全链贯通：探测自动切换已在生产实测
+（`backend: "server"`，fast_vip 单镜 skill 客户端全链 ~2.5 分钟出片、直链下载、积分对账精确）。
+
+另修版本文件回退：c723d37 误把 plugin.json / marketplace.json 写成 1.59.1（低于已发的
+1.60.0/1.61.x，破坏更新器的单调判断），本版一并纠正到 1.61.3。
+
 ## [1.61.2] — 2026-08-05
 
 ### fuwuhao-operator：修正关键口径——API 发表（freepublish）的内容不进公众号主页
