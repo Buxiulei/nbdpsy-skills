@@ -9,6 +9,13 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.61.1] — 2026-08-05
+
+### fuwuhao-operator：SKILL.md 触发描述补贴图关键词
+
+1.61.0 加了贴图能力但 frontmatter description 没带触发词——用户说「发贴图 / 发小绿书 /
+把小红书笔记发到服务号」时 skill 不会被唤起。description 补关键词，子场景五 → 六。
+
 ## [1.61.0] — 2026-08-05
 
 ### fuwuhao-operator：贴图（图片消息 newspic）——小红书笔记一条命令平移到服务号
