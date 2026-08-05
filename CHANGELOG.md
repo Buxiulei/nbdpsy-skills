@@ -9,6 +9,29 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.60.0] — 2026-08-05
+
+### text-to-video：jimeng_gen 双后端——即梦生成迁 nbdpsy-server（REST 优先、本机 CLI 兜底）
+
+配合《2026-08-05-server需求-即梦视频生成服务化》：`jimeng_gen.py` 从纯本机 dreamina CLI 封装
+改为**双后端薄客户端**。五个子命令（credits/gen/submit/fetch/batch）契约不变、旧输出键一个不少
+（新增 `backend` 等附加键），server 未上线前**零行为变化**。
+
+- **auto 探测**（默认）：本机有 `NBDPSY_XHS_API_KEY` 且 server `GET /api/dreamina-status` 回
+  `logged_in=true` → 走 nbdpsy-server（运营免装 CLI、免扫码、排队不用挂会话）；探测不通自动回落
+  本机 CLI。`--backend server|local|auto` / `NBDPSY_JIMENG_BACKEND` 可强制。
+- **资金安全**（submit 即占队列、success 即扣积分的事故背书条款）：单镜 POST 带 `client_ref`
+  幂等键，仅网络异常重发一次且复用同一 ref；HTTP 4xx/5xx 一律不重发；批量端点幂等未经服务端
+  验收前**不自动重发**；任何路径不对卡 querying 的任务自动重提；超时/失败均保留 submit_id。
+- **fetch auto 分派**：先免费问 server 认不认领该 id，再按 16 位 hex 形态兜底——防 server clip_id
+  形态碰撞把任务派给本机 CLI 空转 30 分钟诱导重跑 gen 双倍扣分。
+- **逐镜回落**：server 模式下参考图是本机路径 / 带 video·audio / 多图的镜整镜回落本机 CLI
+  （server 单镜契约只收图床直链或 `/uploads` 路径），混合批两后端并存、一镜失败不连坐。
+- **check_env**：server 模式下「dreamina CLI / 登录 & 积分」两查换成一条「即梦服务(server)」；
+  强制 local 不再发网络探测，强制 server 探测失败报真因（不误报「未登录」）。
+- 轮询健壮性：200+非 JSON 响应按瞬时失败计数（不再伪装「正常排队」空转）；下载 `.part` 原子落盘；
+  clip_id 消毒后才拼文件名。新增 tests/test_jimeng_gen.py 全离线 64 用例。
+
 ## [1.59.0] — 2026-08-04
 
 ### 新增 nbdpsy-strategy-report：月度战略报告生产线（管理员专用）

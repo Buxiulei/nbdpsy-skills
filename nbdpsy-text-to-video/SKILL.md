@@ -37,6 +37,7 @@ python3 {SKILL_DIR}/scripts/check_env.py --install  # 缺啥自动装(dreamina �
 ```
 
 读 stdout 的 `{"ready": true/false, "checks":[...]}`：
+- **即梦后端自动探测**：本机有 `NBDPSY_XHS_API_KEY`（与小红书自动发布同一把）且 server 已上线即梦能力（`GET /api/dreamina-status` 回 `logged_in=true`）→ 画面生成走 **nbdpsy-server**，运营**免装 dreamina CLI、免扫码**（登录态与积分在 server 一份，管理员维护）。此时自检里 `dreamina CLI` / `dreamina 登录 & 积分` 两条换成一条 `即梦服务(server)`，下面两条不适用。探测不通（没凭据 / server 未上线该能力 / 网络不通）自动回落本机 CLI，下面两条照旧。
 - `dreamina CLI` 缺 → 自动 `curl -fsSL https://jimeng.jianying.com/cli | bash`。
 - `dreamina 登录 & 积分` 失败 → **agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py`（后台运行或把 Bash 工具超时设 ≥5 分钟；实时把 stderr 进度转述给用户）。脚本会**自己把即梦登录页开到用户浏览器里**，用户唯一要做的是用**抖音 App 扫页面上那张二维码**。登录页的回调地址是 `127.0.0.1`，**必须在跑脚本的这台电脑上打开**——让用户拿手机扫脚本给的网址是死路（回调回不到他电脑）。浏览器没弹出时脚本会印一整行完整网址供本机手动粘贴。积分偏低会给警告。
 - `ffmpeg`/`ffprobe`/`Noto Sans CJK SC 字体` 缺 → 给 `sudo apt-get install -y ffmpeg fonts-noto-cjk`（macOS 用 brew；Windows 无 Noto 时字幕回退微软雅黑，或用 `FONT_PATH` 环境变量显式指定字体文件）。
@@ -57,7 +58,7 @@ check_env 报某项凭据缺失时，按下表**主动引导用户提供**，拿
 |---|---|---|
 | 豆包 TTS · 新版（`VOLC_TTS_API_KEY`，**优先**）| skill `.env` | 主动问用户要（火山控制台 `speech/new/setting/apikeys` 自建单一 API Key），写入 `.env`。不配也行 → 用 edge-tts 免费旁白（`--engine edge`） |
 | 豆包 TTS · 旧版（`VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` / `VOLC_TTS_CLUSTER`，向后兼容）| skill `.env` | 已有 `VOLC_TTS_API_KEY` 可不填；否则主动问用户要（火山控制台→语音合成大模型），写入 `.env` |
-| 即梦登录 | `~/.dreamina_cli/`（本地）| **agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py` 帮用户登录（脚本自己打开登录页，用户只需**抖音 App 扫页面上的二维码**）；凭据存本机 `~/.dreamina_cli/`、agent 不经手凭据本体，即梦登录无法进凭据配置包 |
+| 即梦登录 | `~/.dreamina_cli/`（本地）| **server 模式下本机不需要登录**——管理员在 server 侧配好公司号登录态后，运营只要有 `NBDPSY_XHS_API_KEY` 就零登录零安装（见第 0 步「即梦后端自动探测」）。回落本机 CLI 时才需要：**agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py` 帮用户登录（脚本自己打开登录页，用户只需**抖音 App 扫页面上的二维码**）；凭据存本机 `~/.dreamina_cli/`、agent 不经手凭据本体，即梦登录无法进凭据配置包 |
 | 首模型合规授权 | Dreamina 网页端 | 报 `AigcComplianceConfirmationRequired` 时引导用户去网页端一次性授权 |
 | sudo（装 ffmpeg/字体，如需）| 不留存 | 需要时即时问用户密码，用完不写进任何文件/日志 |
 
@@ -254,6 +255,7 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py gen --operation text2video \
   --duration 5 --ratio 9:16 --model seedance2.0fast --out-dir <workdir>
 ```
 
+- **后端参数（所有子命令通用）**：`--backend server|local|auto`（默认 `auto`，规则见第 0 步；环境变量 `NBDPSY_JIMENG_BACKEND` 可改默认，显式 `--backend` 优先）、`--api-base URL`（server 基址，默认 `NBDPSY_VIDEO_API_BASE` 或 `https://mcp.nbdpsy.com`）。输出 JSON 多一个 `backend` 键表明这次实际走了哪条；**服务化之前的字段两个后端一个不少**（`success`/`submit_id`/`status`/`videos`/`credit_count`/`meta`/`raw`/`error`），server 侧另附 `client_ref`/`video_url`/`expires_at`/`batch_id`/`low_threshold_hit` 等新键，老解析忽略即可。server 模式下 `--image` 只收**图床直链或 `/uploads` 路径**（server 取不到你本机的文件），给本机路径会自动整镜回落本地 CLI 并在 stderr 说明。
 - 模型可选：`seedance2.0` / `seedance2.0fast`（默认）/ `seedance2.0_vip` / `seedance2.0fast_vip`。
 - **积分 & 排队（实测，重要）**：5s/720p——普通 `fast` 25 积分、`fast_vip` 55 积分（+30 换插队）；扣费 success 才结算。**排队是真瓶颈**：实测高峰普通 `fast` 一条 5s 片排队**近 2 小时仍未出片**，而 `fast_vip` 加速通道 **~3 分钟出片**。→ **投放/急用务必走 `seedance2.0fast_vip`**（真实可用单条成本按 VIP 55 积分算）；不急的量才用普通档 + `--submit-only` 夜间错峰。
 - **失败/超时保留 submit_id，绝不重复提交扣分**；排队中任务无法取消（dreamina 无 cancel）。

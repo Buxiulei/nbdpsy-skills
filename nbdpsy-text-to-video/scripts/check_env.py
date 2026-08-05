@@ -2,7 +2,8 @@
 """nbdpsy-text-to-video skill 环境自检 / 自装。
 
 检测并(可选)自动安装整条文本转视频产线所需依赖：
-  dreamina CLI(+登录态+积分) / ffmpeg / ffprobe / Noto Sans CJK SC 字体
+  即梦画面生成（**后端感知**：server 模式查 /api/dreamina-status，local 模式查本机
+  dreamina CLI + 登录态 + 积分）/ ffmpeg / ffprobe / Noto Sans CJK SC 字体
   / edge-tts / requests(豆包TTS引擎) / 豆包 TTS 凭据(.env VOLC_TTS_*)。
   (gen_bgm.py 纯标准库+ffmpeg，无额外依赖)
 
@@ -24,6 +25,8 @@ from pathlib import Path
 
 # 导入 resolve_font 从同目录的 compose_video
 from compose_video import resolve_font
+# 即梦后端探测复用 jimeng_gen 那一套 auto 规则（同目录 import），不在这里重写一遍
+import jimeng_gen
 
 def _dreamina_path() -> str:
     """dreamina 可执行路径：PATH 优先，否则平台默认落地位置（POSIX ~/.local/bin/dreamina；Windows ~/bin/dreamina.exe）。"""
@@ -54,6 +57,33 @@ def _run(cmd: list[str], timeout: int = 120) -> tuple[int, str, str]:
         return 1, "", str(e)
 
 
+def probe_backend() -> tuple[str, dict]:
+    """本机这次会走哪个即梦后端 → (backend, probe_info)。
+
+    规则不在这里重写，直接问 jimeng_gen（auto：无 apikey / server 未上线该能力 / 网络不通 → local；
+    /api/dreamina-status 200 且 logged_in → server）。BackendError = server 有这能力但未登录、
+    本机也没 CLI —— 那按 server 报，让运营看到真正的问题（登录态要迁到 server），而不是
+    退化成一句"本机没装 CLI"。探测本身出任何意外都回落 local：自检不该因为探测失败而崩。
+
+    被 --backend/NBDPSY_JIMENG_BACKEND 定死时不走 auto 那套：强制 local 连探测都不发
+    （离线机器自检不该干等一次网络超时），强制 server 则探测结果原样交给 check() 判读
+    （探测失败要报「服务端不可用」，不能被下游误读成「未登录」）。
+    """
+    try:
+        choice = jimeng_gen._backend_choice()
+        if choice == "local":
+            return "local", {"reason": "已强制 local（--backend/NBDPSY_JIMENG_BACKEND）"}
+        info = jimeng_gen.probe_server()
+        if choice == "server":
+            return "server", info
+        try:
+            return jimeng_gen.resolve_backend(), info
+        except jimeng_gen.BackendError:
+            return "server", info
+    except Exception as e:  # noqa: BLE001
+        return "local", {"reason": str(e)}
+
+
 def check(install: bool) -> dict:
     checks = []
 
@@ -61,56 +91,84 @@ def check(install: bool) -> dict:
         checks.append({"name": name, "ok": bool(ok), "critical": critical,
                        "detail": detail, "fix": fix})
 
-    # 1) dreamina CLI
-    dreamina = DREAMINA if Path(DREAMINA).exists() else None
-    if not dreamina and install:
-        _err("[install] 安装 dreamina CLI …")
-        if os.name == "nt":
-            # Windows：官方脚本原生支持，需经 bash（Git Bash）命中 MINGW 分支；无 bash 则提示手动
-            bash = shutil.which("bash") or next(
-                (b for b in (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe")
-                 if Path(b).exists()), None)
-            if bash:
-                _run([bash, "-lc", "curl -fsSL https://jimeng.jianying.com/cli | bash"], timeout=300)
-            else:
-                _err("[install] 未找到 Git Bash，无法自动装 dreamina；请装 Git for Windows 后重试或跑 setup.py")
-        else:
-            _run(["bash", "-c", "curl -fsSL https://jimeng.jianying.com/cli | bash"], timeout=300)
-        dreamina = _dreamina_path()
-        dreamina = dreamina if Path(dreamina).exists() else None
-    if dreamina:
-        rc, out, _ = _run([dreamina, "version"], timeout=30)
-        ver = ""
-        try:
-            ver = (json.loads(out) or {}).get("version", "")
-        except Exception:  # noqa: BLE001
-            ver = out.strip()[:40]
-        add("dreamina CLI", True, f"{dreamina} (version {ver or '?'})")
-    else:
-        add("dreamina CLI", False, "未安装",
-            fix=("在 Git Bash 里跑 curl -fsSL https://jimeng.jianying.com/cli | bash（无 Git 先 winget install Git.Git）"
-                 if os.name == "nt"
-                 else "curl -fsSL https://jimeng.jianying.com/cli | bash"))
-
-    # 2) 登录态 + 积分（仅当 CLI 在）
-    if dreamina:
-        rc, out, serr = _run([dreamina, "user_credit"], timeout=60)
-        credit = None
-        try:
-            credit = (json.loads(out) or {}).get("total_credit")
-        except Exception:  # noqa: BLE001
-            credit = None
-        if isinstance(credit, int):
-            low = credit < MIN_CREDIT_WARN
-            add("dreamina 登录 & 积分", not low,
-                f"已登录，积分 {credit}" + ("（偏低，注意够不够本次产量）" if low else ""),
+    backend, probe = probe_backend()
+    if backend == "server":
+        # server 模式：本机三件事（装 CLI / 扫码登录 / 本机积分）全不需要，只查一条服务端健康
+        credit = probe.get("credit")
+        base = probe.get("base") or "nbdpsy-server"
+        low = isinstance(credit, int) and credit < MIN_CREDIT_WARN
+        if not probe.get("available"):
+            # 强制 server 但探测就没成（404/网络不通）——真因是服务端不可用，
+            # 不能落到下面那句"未登录"里把根因盖掉
+            add("即梦服务(server)", False, f"{base} 探测失败：{probe.get('reason')}",
+                fix="已强制 server 后端但服务端不可用——确认 nbdpsy-server 已上线即梦能力且网络可达，"
+                    "或去掉 NBDPSY_JIMENG_BACKEND=server 回 auto 自动回落")
+        elif probe.get("logged_in"):
+            add("即梦服务(server)", not low,
+                f"{base} 已登录"
+                + (f"，积分 {credit}" if credit is not None else "，积分未知")
+                + ("（偏低，注意够不够本次产量）" if low else ""),
                 fix="充值会员或减少本批产量" if low else "")
         else:
-            login_helper = Path(__file__).resolve().parent / "dreamina_login.py"
-            add("dreamina 登录 & 积分", False, "未登录或无法读取积分",
-                fix=f"agent 直接跑：python3 {login_helper}  # 脚本自己打开登录页，用户只需抖音 App 扫页面上的二维码")
+            add("即梦服务(server)", False, f"{base} 的即梦未登录（logged_in=false）",
+                fix="让管理员在任一台电脑跑 dreamina_login.py 扫码，把 ~/.dreamina_cli/ 整目录迁到 "
+                    "server 的 worker 用户家目录，并重启 API + worker 两个 systemd 单元；"
+                    "本机应急可加 --backend local 走自己的 dreamina CLI")
+        add("本机 dreamina CLI（server 模式下不需要）", True,
+            "画面生成走 nbdpsy-server 的即梦 REST 面：本机免装 CLI、免扫码、排队不用挂着会话"
+            "（要强制走本机 CLI 给 jimeng_gen.py 加 --backend local）",
+            critical=False)
     else:
-        add("dreamina 登录 & 积分", False, "CLI 未装，跳过", fix="先装 dreamina")
+        # 1) dreamina CLI
+        dreamina = DREAMINA if Path(DREAMINA).exists() else None
+        if not dreamina and install:
+            _err("[install] 安装 dreamina CLI …")
+            if os.name == "nt":
+                # Windows：官方脚本原生支持，需经 bash（Git Bash）命中 MINGW 分支；无 bash 则提示手动
+                bash = shutil.which("bash") or next(
+                    (b for b in (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe")
+                     if Path(b).exists()), None)
+                if bash:
+                    _run([bash, "-lc", "curl -fsSL https://jimeng.jianying.com/cli | bash"], timeout=300)
+                else:
+                    _err("[install] 未找到 Git Bash，无法自动装 dreamina；请装 Git for Windows 后重试或跑 setup.py")
+            else:
+                _run(["bash", "-c", "curl -fsSL https://jimeng.jianying.com/cli | bash"], timeout=300)
+            dreamina = _dreamina_path()
+            dreamina = dreamina if Path(dreamina).exists() else None
+        if dreamina:
+            rc, out, _ = _run([dreamina, "version"], timeout=30)
+            ver = ""
+            try:
+                ver = (json.loads(out) or {}).get("version", "")
+            except Exception:  # noqa: BLE001
+                ver = out.strip()[:40]
+            add("dreamina CLI", True, f"{dreamina} (version {ver or '?'})")
+        else:
+            add("dreamina CLI", False, "未安装",
+                fix=("在 Git Bash 里跑 curl -fsSL https://jimeng.jianying.com/cli | bash（无 Git 先 winget install Git.Git）"
+                     if os.name == "nt"
+                     else "curl -fsSL https://jimeng.jianying.com/cli | bash"))
+
+        # 2) 登录态 + 积分（仅当 CLI 在）
+        if dreamina:
+            rc, out, serr = _run([dreamina, "user_credit"], timeout=60)
+            credit = None
+            try:
+                credit = (json.loads(out) or {}).get("total_credit")
+            except Exception:  # noqa: BLE001
+                credit = None
+            if isinstance(credit, int):
+                low = credit < MIN_CREDIT_WARN
+                add("dreamina 登录 & 积分", not low,
+                    f"已登录，积分 {credit}" + ("（偏低，注意够不够本次产量）" if low else ""),
+                    fix="充值会员或减少本批产量" if low else "")
+            else:
+                login_helper = Path(__file__).resolve().parent / "dreamina_login.py"
+                add("dreamina 登录 & 积分", False, "未登录或无法读取积分",
+                    fix=f"agent 直接跑：python3 {login_helper}  # 脚本自己打开登录页，用户只需抖音 App 扫页面上的二维码")
+        else:
+            add("dreamina 登录 & 积分", False, "CLI 未装，跳过", fix="先装 dreamina")
 
     # 3) ffmpeg / ffprobe
     for tool in ("ffmpeg", "ffprobe"):
