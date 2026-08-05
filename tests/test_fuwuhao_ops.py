@@ -693,6 +693,15 @@ class Test贴图:
                                     "--text", self._text(tmp_path), "--images", str(p)], capsys)
         assert code == 1 and "jpg/png" in data["error"] and net.calls == []
 
+    def test_文案超1000字硬上限本地拦零调用(self, net, tmp_path, capsys):
+        """微信图片消息正文 1000 字硬上限（2026-08-05 实测：1001 起 errcode 45166）。
+        本地拦住，别等 20 张图传完才被微信打回。"""
+        code, data, _ = run_cli(A, ["--draft-add-newspic", "--title", "标题",
+                                    "--text", self._text(tmp_path, "字" * 1001),
+                                    "--images", self._imgs(tmp_path, 1)[0]], capsys)
+        assert code == 1 and "1000" in data["error"] and "45166" in data["error"]
+        assert net.calls == []
+
 
 class Test发布与台账:
     def test_发布成功给出异步与查终态的下一步(self, net, capsys):

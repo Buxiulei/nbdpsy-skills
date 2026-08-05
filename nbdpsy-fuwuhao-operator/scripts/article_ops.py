@@ -238,7 +238,10 @@ def do_draft_add(args, api_base, key):
 # 有独立的分发位（公众号主页【贴图】栏、看一看、搜一搜「贴图号」分类）。
 # 小红书笔记平移到服务号走这条命令：图直接复用，文案取笔记的发布文案。
 MAX_NEWSPIC_IMAGES = 20      # 微信图片消息上限 20 张，**首图即封面**
-NEWSPIC_TEXT_WARN = 1000     # 贴图文案超过这个字数就该反思是不是想发的是文章
+# 贴图正文 1000 字硬上限：官方文档没写，2026-08-05 实测二分得出（1000 过 / 1001 起
+# errcode 45166 invalid content）。本地拦住，别等传完 20 张图才被微信打回。
+MAX_NEWSPIC_TEXT = 1000
+NEWSPIC_TEXT_WARN = 800      # 超过这个字数先警告：贴图是图为主文为辅，文案太长会被折叠
 _NEWSPIC_EXTS = (".jpg", ".jpeg", ".png")
 
 
@@ -277,9 +280,13 @@ def read_newspic_text(path):
     if "**" in text or re.search(r"^#{1,6} ", text, re.M):
         warnings.append("文案里有 Markdown 记号（** 或行首 #）——贴图正文原样显示，"
                         "发布前先把记号清掉（话题标签 #xx 放在句中/结尾的不算）。")
+    if len(text) > MAX_NEWSPIC_TEXT:
+        raise OpFailed(f"文案 {len(text)} 字，超过微信图片消息正文 {MAX_NEWSPIC_TEXT} 字硬上限"
+                       "（实测超限即 errcode 45166 invalid content 拒收）——先删到千字内再来。"
+                       "真有这么多要说的，考虑发文章（--draft-add）。")
     if len(text) > NEWSPIC_TEXT_WARN:
         warnings.append(f"文案 {len(text)} 字：贴图的形态是「图为主、文为辅」，200-400 字最合适，"
-                        "太长会被折叠。真有这么多要说的，考虑发文章（--draft-add）。")
+                        f"太长会被折叠（{MAX_NEWSPIC_TEXT} 字是微信硬上限）。")
     return text, warnings
 
 
