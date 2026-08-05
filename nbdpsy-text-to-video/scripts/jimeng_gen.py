@@ -106,6 +106,7 @@ EP_BATCH_SUBMIT = "/api/video-clip-batches"               # POST {shots:[...]} �
 EP_BATCH_STATUS = "/api/video-clip-batches/{batch_id}"    # GET  → 逐镜状态汇总（本脚本按镜轮询，备用）
 EP_CREDITS = "/api/video-credits"                         # GET  → {credit, low_threshold_hit}
 EP_DREAMINA_STATUS = "/api/dreamina-status"               # GET  → {logged_in, credit, compliance_confirmed_models}
+EP_UPLOAD_IMAGES = "/api/uploads/images"                  # POST multipart(files) → {batch_id, urls, expires_at}
 
 K_CLIP_ID = "clip_id"
 K_CLIP_IDS = "clip_ids"
@@ -120,6 +121,7 @@ K_QUEUED_SECONDS = "queued_seconds"
 K_EXPIRES_AT = "expires_at"
 K_LOGGED_IN = "logged_in"
 K_COMPLIANCE_MODELS = "compliance_confirmed_models"
+K_URLS = "urls"
 # 服务端单镜状态机：queued|submitted|querying|done|error
 SRV_DONE = "done"
 SRV_ERROR = "error"
@@ -385,6 +387,90 @@ def _shot_server_capable(images: list, videos: list, audios: list) -> tuple[bool
     if images and not _is_remote(images[0]):
         return False, f"参考图是本机路径（{images[0]}），server 取不到"
     return True, ""
+
+
+# 图床按扩展名判 MIME（服务端另用 Pillow 真解字节流定落盘扩展名，这里只是 multipart 的申报值）
+_UPLOAD_MIME = {".png": "image/png", ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def _upload_ref_image(path: str, key: Optional[str], base: str,
+                      *, timeout: int = 60) -> tuple[Optional[str], Optional[str]]:
+    """本机参考图 → POST /api/uploads/images（multipart，字段名 `files`）换图床直链。
+    返回 (url, error)。
+
+    **网络异常直接重试一次，不需要幂等键** —— 与 `_post_idempotent` 的提交类 POST 语义相反：
+    上传免费、不占即梦队列、不扣积分，重复一次至多在图床多留一个批次（server 侧带 TTL 自清），
+    而提交类 POST 重复一次就是双倍扣分，所以那边只敢在复用 client_ref 的前提下重发。
+    """
+    if not key:
+        return None, f"未配 {nbdpsy_common.XHS_API_KEY}，无法上传图床"
+    p = Path(path)
+    if not p.is_file():
+        return None, f"参考图不存在：{path}"
+    mime = _UPLOAD_MIME.get(p.suffix.lower())
+    if not mime:
+        return None, f"图床只收 png/jpg/jpeg/webp，本图是 {p.suffix or '无扩展名'}：{path}"
+    try:
+        data = p.read_bytes()
+    except OSError as e:
+        return None, f"读取参考图失败（{path}）：{str(e)[:150]}"
+    try:
+        requests = _requests()
+    except ImportError as e:
+        return None, f"上传图床需要 requests（pip install requests）：{e}"
+
+    url = base + EP_UPLOAD_IMAGES
+    headers = {"Authorization": f"Bearer {key}"}
+    files = {"files": (p.name, data, mime)}   # 字段名固定 files（server multipart 契约，可多值）
+    neterrs = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+    last = None
+    for attempt in range(2):
+        try:
+            resp = requests.post(url, files=files, headers=headers, timeout=timeout)
+        except neterrs as e:
+            last = e
+            if attempt == 0:
+                _err(f"[upload] {p.name} 网络异常（{str(e)[:120]}），重试一次"
+                     "（上传免费无副作用，重试不会多花钱）…")
+            continue
+        except Exception as e:  # noqa: BLE001 — 非网络异常不重试
+            return None, f"上传失败：{str(e)[:200]}"
+        if resp.status_code >= 400:
+            return None, _api_error(resp)
+        data_j = _resp_json(resp)
+        if not isinstance(data_j, dict):
+            return None, f"{EP_UPLOAD_IMAGES} 返回的不是 JSON：{_resp_text(resp)}"
+        urls = data_j.get(K_URLS)
+        if not isinstance(urls, list) or not urls or not isinstance(urls[0], str) or not urls[0]:
+            return None, (f"上传回执没带可用的 {K_URLS}："
+                          f"{json.dumps(data_j, ensure_ascii=False)[:200]}")
+        _err(f"[upload] {p.name} → {urls[0]}")
+        return urls[0], None
+    return None, f"上传失败（网络异常，已重试 1 次）：{str(last)[:200]}"
+
+
+def _prepare_server_shot(operation: str, images: list, videos: list, audios: list,
+                         key: Optional[str], base: str) -> tuple[list, bool, str]:
+    """server 路径的媒体预处理：本机参考图先传图床换直链，让这一镜留在 server 上跑。
+    返回 (images, capable, why)。
+
+    只处理「image2video / multimodal2video + 恰 1 张本机图 + 无 video/audio」这一种——多图
+    或带 video/audio 的镜 server 单镜契约本来就表达不了，维持整镜回落本机 CLI 不变。
+    上传失败也回落（保留原有安全网），why 里写明是上传没成，不是「server 取不到」。
+    """
+    capable, why = _shot_server_capable(images, videos, audios)
+    if capable:
+        return images, True, ""
+    # 非字符串的 image（plan JSON 写歪了）交回原路：本地 CLI 那边会如实报错，
+    # 而不是在这里 Path(123) 裸抛把整批崩成 traceback（stdout 就没 JSON 信封了）
+    if (operation not in ("image2video", "multimodal2video")
+            or videos or audios or len(images) != 1 or not isinstance(images[0], str)):
+        return images, False, why
+    url, uerr = _upload_ref_image(images[0], key, base)
+    if uerr:
+        return images, False, f"参考图上传图床失败（{uerr}）"
+    return [url], True, ""
 
 
 def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
@@ -811,10 +897,13 @@ def submit(operation: str, prompt: str, *, backend: Optional[str] = None,
         return {"success": False, "error": str(e)}
     images, videos, audios = images or [], videos or [], audios or []
     if b == "server":
-        capable, why = _shot_server_capable(images, videos, audios)
+        # 本机参考图先传图床换直链（没凭据/上传失败才回落）；回落用的仍是原始本机路径
+        key, base, _ = _server_key_or_error(api_base)
+        srv_images, capable, why = _prepare_server_shot(operation, images, videos, audios,
+                                                        key, base)
         if capable:
             return _server_submit(operation, prompt, api_base=api_base, model=model,
-                                  duration=duration, ratio=ratio, images=images)
+                                  duration=duration, ratio=ratio, images=srv_images)
         _err(f"[backend] 本镜回落本机 dreamina CLI：{why}")
     return _tag(_local_submit(operation, prompt, model=model, duration=duration, ratio=ratio,
                               images=images, videos=videos, audios=audios, poll=poll), "local")
@@ -904,7 +993,10 @@ def _server_batch(plan: list, out_dir: str, *, api_base: Optional[str], submit_o
     srv_idx, payloads = [], []
     for i, shot in enumerate(plan):
         images, videos, audios = _shot_media(shot)
-        capable, why = _shot_server_capable(images, videos, audios)
+        # 上传发生在组 payload 之前：整批的 payload（含 client_ref 与已换好的图床 url）组好后
+        # 才 POST，网络异常重发复用同一份 payload —— 不会二次上传，也不会变出新的 ref
+        images, capable, why = _prepare_server_shot(shot.get("operation", "text2video"),
+                                                    images, videos, audios, key, base)
         if not capable:
             _err(f"[batch] 分镜 {i + 1}/{len(plan)} 回落本机 CLI：{why}")
             continue      # 留到 server 那批灌完队列后再跑，别让本地慢镜挡住排队

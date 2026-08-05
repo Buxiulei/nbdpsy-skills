@@ -18,6 +18,24 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.63.0] — 2026-08-05
+
+### text-to-video：image2video 本机图自动传图床（运营零本机依赖闭环）+ 登录脚本 Device Flow 重写 + 版本守卫测试
+
+- **本机参考图不再整镜回落本机 CLI**：server 路径上新增 `_prepare_server_shot()`——本机图先
+  `POST /api/uploads/images`（multipart）换直链再提交 server；上传免费无副作用故网络异常直接
+  重试 1 次（区别于提交类 POST 的复用 ref 幂等重发），仍失败才回落本机 CLI。多图/带
+  video·audio 的镜维持原回落。**至此十步产线的第 5-6 步对运营完全零本机依赖**（免装 CLI、
+  免登录、免图床手工操作）。
+- **`dreamina_login.py` 重写为 OAuth Device Flow**（CLI a857341 起旧回调流失效）：起
+  `dreamina login` 抓 `verification_uri` → 尽力弹浏览器 + stderr 打完整网址（**任何设备**可
+  授权，码约 10 分钟过期）→ 等 CLI 退出后以 `user_credit` 复核为准。旧「日志抓 port + 拼
+  callback 网址」整体删除并有测试守卫防复活。
+- **新增 tests/test_version_consistency.py**：plugin.json/marketplace.json 三处版本必须一致
+  且等于 CHANGELOG 全部版本节的最大号——把本文件顶部那两条铁律变成机器门禁（本次发版顺带
+  第四次纠正版本文件倒退：1.59.3 → 1.63.0）。
+- 交接文档《交接-2026-08-05-即梦视频生成服务化.md》待开发清单第 1、2 条标记完成。
+
 ## [1.62.1] — 2026-08-05
 
 ### seedance2.5 换代的文案收尾 + 版本号第三次倒退纠正

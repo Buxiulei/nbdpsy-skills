@@ -1,48 +1,36 @@
 #!/usr/bin/env python3
-"""nbdpsy-text-to-video skill · 即梦(dreamina) 一键登录助手。
+"""nbdpsy-text-to-video skill · 即梦(dreamina) 登录助手 —— OAuth Device Flow（CLI a857341 起）。
 
-**脚本负责把登录页开到用户面前，用户唯一动作是在页面上用抖音 App 扫码。**
+**脚本负责把授权网址送到用户面前，用户唯一动作是用抖音 App 扫码/点确认。**
 
-## 真实登录流（2026-07-29 实测取证，勿凭想象改回"设备流"）
+## 真实登录流（2026-08-05 实测新版 CLI，stdout 原样如下）
 
-`dreamina login` 起一个 `127.0.0.1:<回调端口>` 的服务器（实测三次都是 60713，但**不硬编码**：
-端口一律现取，被占用时官方换端口我们也不会跟丢），再调系统 opener 打开：
+    请使用浏览器完成 OAuth Device Flow 登录。
+    verification_uri: https://jimeng.jianying.com/ai-tool/cli-auth?verification_uri=...
+    user_code: bf065a38aa2909467cd784c523709763
+    poll_interval: 1s
+    expires_at: 2026-08-05T15:56:26+08:00
 
-    https://jimeng.jianying.com/ai-tool/login
-        ?callback=http%3A%2F%2F127.0.0.1%3A<端口>%2Fdreamina%2Fcallback%2Fsave_session
-        &from=cli&random_secret_key=<32位hex>
+打完这几行后 **CLI 自己按 poll_interval 轮询授权状态**，用户授权完成即落
+`~/.local/share/dreamina/byted_cli_user_token.json` 并退出（退出码 0）；码约 10 分钟不授权
+就退出并在尾行印「登录已过期，请重新执行 dreamina login」。
 
-用户在**这台电脑的浏览器**里扫页面上的抖音二维码 → 页面回调本地端口 → CLI 落
-`~/.dreamina_cli/credential.json`。CLI 终端只印一句「已尝试打开默认浏览器」，
-**不打印这个网址**，所以要自己开页面就得自己把网址弄到手。
+所以本脚本只做三件事：**抓网址开给用户 → 等 CLI 退出 → 用 `user_credit` 复核登录态**
+（退出码只是信号，登录态以能读到积分为准）。
 
-两条已作废的路（写清楚免得再走一遍）：
+## 与旧版（127.0.0.1 回调流）的差别 —— 别把老代码搬回来
 
-- ⛔ **没有 OAuth 设备流**：整个二进制 `strings` 全扫，`verification_uri` / `user_code`
-  出现 0 次。历史版本按这两个字段解析 CLI 输出，那段代码从未触发过——所谓"脚本自己开
-  浏览器"一直是空转，真正开浏览器的是 CLI 自己。
-- ⛔ **不再提供 `--headless`**：那是"无头 Chrome 载入登录页 + 终端画字符二维码"，要装
-  google-chrome，且字符画在 Windows 终端显示不全 —— 运营反复登录失败的事故根因。
-  用户都在有屏个人电脑上用，这条路整个删掉。
-
-## 拿网址的两条路（互为备份，谁先到用谁）
-
-A. **opener shim**（POSIX）：把假的 `xdg-open` / `open` 放进 PATH 最前，CLI 调它时把网址
-   写进捕获文件。shim **只记录不转发** → 浏览器由本脚本开，全程恰好开一次。
-B. **磁盘重建**（全平台兜底）：日志 `[RunLogin] start login flow ... port=<端口>` 取端口 +
-   `credential.json` 的 `random_secret_key`，按固定模板拼回同一个网址。Windows 没法 shim
-   系统 opener，走这条；此时 CLI 已自己开好浏览器，脚本只补网址文本，不重复弹窗。
-
-## 为什么不生成二维码
-
-网址里的 callback 是 `http://127.0.0.1:<端口>`。手机扫走这个网址 = 在手机浏览器登录，
-回调打的是**手机自己的** 127.0.0.1，永远回不到电脑上的 CLI —— 是条死路。要扫的二维码是
-即梦登录页**自己渲染的那张**，用户在电脑浏览器打开页面后用抖音扫它。
+- 授权页**任何设备都能打开**（手机也行）：网址里不再有 `callback=http://127.0.0.1:<端口>`，
+  旧版「必须在这台电脑的浏览器里打开」的死结没了。
+- 新 CLI **不起本地回调服务器、不写 `~/.dreamina_cli/`**，所以旧脚本那套 opener shim 拦
+  `xdg-open`、从日志抓 `port=`、读 `credential.json` 的 `random_secret_key` 拼网址，
+  对新 CLI 全部无效（网址是 CLI 自己印在 stdout 上的，直接读就行）。
+- 升级 CLI 会让旧登录态一次性失效，需重扫一次。
 
 约定同目录其他脚本：stdout=最终 JSON / stderr=中文进度。
 
 用法：
-  python3 dreamina_login.py               # 开登录页等扫码（超时自动重开）
+  python3 dreamina_login.py               # 起登录、开授权页、等用户授权
   python3 dreamina_login.py --check-only  # 只查登录态与积分，不发起登录
 """
 from __future__ import annotations
@@ -55,13 +43,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import webbrowser
-from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
 
 
 def _err(m: str) -> None:
@@ -69,7 +54,7 @@ def _err(m: str) -> None:
 
 
 def _dreamina_path() -> str:
-    """dreamina 可执行路径：PATH 优先，否则平台默认落地位置（POSIX ~/.local/bin/dreamina；Windows ~/bin/dreamina.exe）。"""
+    """dreamina 可执行路径：PATH 优先，否则平台默认落地位置（与 jimeng_gen.py 同法）。"""
     p = shutil.which("dreamina")
     if p:
         return p
@@ -81,143 +66,94 @@ def _dreamina_path() -> str:
 
 
 DREAMINA = _dreamina_path()
-POLL_INTERVAL = 4  # 轮询 user_credit 间隔（秒）
-URL_TEMPLATE = ("https://jimeng.jianying.com/ai-tool/login"
-                "?callback={callback}&from=cli&random_secret_key={secret}")
-CALLBACK_TEMPLATE = "http://127.0.0.1:{port}/dreamina/callback/save_session"
-# CLI 在 POSIX 上按序试这几个 opener，第一个成功就停；全 shim 掉才能保证由本脚本开页面
-OPENER_NAMES = ("xdg-open", "open", "x-www-browser", "www-browser", "sensible-browser")
-# 日志行样例：INFO 2026-07-29T11:27:34+08:00 service.go:199 [RunLogin] start login flow mode=... port=60713 ...
-LOG_PORT_RE = re.compile(r"^\w+\s+(\S+)\s+\S+\s+\[RunLogin\] start login flow\b.*?\bport=(\d+)")
+INSTALL_CMD = "curl -fsSL https://jimeng.jianying.com/cli | bash"
+URL_WAIT = 30       # 抓 verification_uri 的等待上限（秒）：正常一两秒就印出来
+COMPANION_WAIT = 2  # 抓到网址后再收 user_code / expires_at 的宽限（秒）：它们与网址同批印出
+LOGIN_WAIT = 900    # 等用户授权的上限（秒）：码本身约 10 分钟过期，留点余量给 CLI 自己收尾
+RERUN_HINT = "重跑本脚本生成新码"
 
-
-def cred_dir() -> Path:
-    """凭据与日志目录。每次现算（不做模块级常量）：测试与隔离环境靠改 HOME 生效。"""
-    return Path(os.path.expanduser("~")) / ".dreamina_cli"
+# 网址正则连 scheme 一起要，既锚住标签又挡掉噪声行（网址自身的查询参数里也有
+# verification_uri= ，用 `:` 分隔符区分，不会误截）
+FIELDS = (("verification_uri", re.compile(r"verification_uri:\s*(https?://\S+)")),
+          ("user_code", re.compile(r"user_code:\s*(\S+)")),
+          ("expires_at", re.compile(r"expires_at:\s*(\S+)")))
 
 
 def cli_installed() -> bool:
     return Path(DREAMINA).exists()
 
 
-def query_credit(timeout: int = 30) -> int | None:
-    """跑 dreamina user_credit，返回 total_credit（int）或 None（未登录/读不到）。"""
+def query_credit(timeout: int = 30) -> dict | None:
+    """跑 `dreamina user_credit` 复核登录态：返回回执 dict，未登录/读不到回 None。
+
+    登录成败以**能不能读到积分**为准（退出码只是信号）——这条在旧版就验过，别改成信退出码。
+    """
     try:
         p = subprocess.run([DREAMINA, "user_credit"], capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
     except Exception:  # noqa: BLE001 任何执行失败一律视作"读不到"
         return None
     try:
-        credit = (json.loads(p.stdout) or {}).get("total_credit")
+        data = json.loads(p.stdout)
     except Exception:  # noqa: BLE001
         return None
-    return credit if isinstance(credit, int) else None
-
-
-def build_login_url(port: int | str, secret: str) -> str:
-    """按实测模板拼登录网址。callback 整体百分号编码（safe="" 连 :// 一起编），
-    与 CLI 自己生成的字节级一致——改这里前先重新取证，别照 URL 直觉改。"""
-    callback = quote(CALLBACK_TEMPLATE.format(port=port), safe="")
-    return URL_TEMPLATE.format(callback=callback, secret=secret)
-
-
-def install_opener_shim(workdir: Path) -> tuple[dict, Path] | None:
-    """在 workdir 造一批假 opener 并返回 (环境变量补丁, 捕获文件路径)。
-
-    Windows 上 CLI 走系统 start/rundll32，没法用 PATH 拦（也不该拦——那儿默认浏览器
-    关联本来就可靠），返回 None 表示走磁盘重建那条路。
-    """
-    if os.name == "nt":
+    if not isinstance(data, dict) or not isinstance(data.get("total_credit"), int):
         return None
-    bindir = workdir / "opener-shim"
-    capture = workdir / "opened-url.txt"
+    return data
+
+
+def parse_login_line(line: str, info: dict) -> dict:
+    """把一行 CLI stdout 里的 device flow 字段抓进 info（就地更新并返回）。先到先得，不覆盖。"""
+    for key, pattern in FIELDS:
+        if key not in info:
+            m = pattern.search(line)
+            if m:
+                info[key] = m.group(1)
+    return info
+
+
+def present_url(info: dict) -> bool:
+    """把授权页送到用户面前：尽力弹本机浏览器（失败不致命），网址一律完整打进 stderr。"""
+    url = info["verification_uri"]
+    opened = False
     try:
-        bindir.mkdir(parents=True, exist_ok=True)
-        for name in OPENER_NAMES:
-            f = bindir / name
-            f.write_text('#!/bin/sh\nprintf \'%s\\n\' "$1" >> "$DREAMINA_LOGIN_CAPTURE"\n',
-                         encoding="utf-8")
-            f.chmod(0o755)
-    except Exception as e:  # noqa: BLE001 造不出来就降级，不算错误
-        _err(f"[login] 无法安装 opener 拦截（降级为读日志重建网址）：{e}")
-        return None
-    env = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
-           "DREAMINA_LOGIN_CAPTURE": str(capture)}
-    return env, capture
+        opened = bool(webbrowser.open(url))
+    except Exception as e:  # noqa: BLE001 没有图形环境很正常，用户自己打开就行
+        _err(f"[login] 打开浏览器失败（不影响，照下面网址手动打开即可）：{e}")
+    _err("[login] 已在本机浏览器打开即梦授权页。" if opened
+         else "[login] 没能自动打开浏览器，请照下面网址手动打开。")
+    _err("[login] 授权网址（**任何设备都能打开**，手机也行；用抖音 App 扫码/点确认完成授权）：")
+    _err(url)                      # 完整逻辑行单独一行，免疫终端折行截断（手抄 URL 丢参数是老事故）
+    if info.get("user_code"):
+        _err(f"[login] user_code：{info['user_code']}（页面要求核对时用）")
+    _err("[login] 授权码约 10 分钟过期"
+         + (f"（expires_at {info['expires_at']}）" if info.get("expires_at") else "")
+         + f"，过期就{RERUN_HINT}。等待授权中…")
+    return opened
 
 
-def read_captured_url(capture: Path) -> str | None:
-    """从 shim 捕获文件读第一条 http(s) 网址。"""
+def _reader(proc: subprocess.Popen, q: queue.Queue) -> None:
+    """后台逐行读子进程合并输出，读完投 None 哨兵。"""
     try:
-        text = capture.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("http"):
-            return line
-    return None
+        for line in proc.stdout:  # type: ignore[union-attr]
+            q.put(line)
+    finally:
+        q.put(None)
 
 
-def _recent_logs(logdir: Path, limit: int = 3) -> list[Path]:
-    """按 mtime 取最近几个日志文件（日志按 日期/小时.log 切分，跨小时会换文件）。"""
-    try:
-        files = [p for p in logdir.rglob("*.log") if p.is_file()]
-    except OSError:
-        return []
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[:limit]
-
-
-def find_login_port(since: datetime, logdir: Path | None = None) -> int | None:
-    """从日志里找**本次**登录流的回调端口。
-
-    只认时间戳 >= since 的行：同一个小时的日志文件里可能还压着上一次登录的旧端口，
-    照旧端口拼出来的网址回调打不到当前进程，会让用户扫完了却一直卡在等待。
-
-    ⚠️ since 先截到整秒再比：日志时间戳只精确到秒，而调用方给的是带微秒的启动时刻，
-    直接比会把「与启动同一秒写下的本次端口」误判成旧行整条丢掉——兜底路会静默失效
-    （2026-07-29 端到端实测踩到，单元测试因用自造时间戳而看不见）。
-    """
-    since = since.replace(microsecond=0)
-    logdir = (cred_dir() / "logs") if logdir is None else logdir
-    port: int | None = None
-    for path in _recent_logs(logdir):
+def _lines(q: queue.Queue, deadline: float):
+    """按 deadline 产出子进程输出行；产出 None 表示 stdout 已关闭（进程结束）。超时即停止产出。"""
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            item = q.get(timeout=min(0.5, remaining))
+        except queue.Empty:
             continue
-        for line in text.splitlines():
-            m = LOG_PORT_RE.match(line.strip())
-            if not m:
-                continue
-            try:
-                ts = datetime.fromisoformat(m.group(1))
-            except ValueError:
-                continue
-            if ts >= since:
-                port = int(m.group(2))  # 同一文件内后出现的更新，直接覆盖
-    return port
-
-
-def read_secret_key(cred_file: Path | None = None) -> str | None:
-    """读 credential.json 里的 random_secret_key（登录流开始时由 CLI 写入）。"""
-    cred_file = (cred_dir() / "credential.json") if cred_file is None else cred_file
-    try:
-        data = json.loads(cred_file.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 文件不存在/半写入/非 JSON 都当"还没就绪"
-        return None
-    secret = (data or {}).get("random_secret_key")
-    return secret if isinstance(secret, str) and secret else None
-
-
-def rebuild_login_url(since: datetime) -> str | None:
-    """磁盘重建登录网址：日志给端口，credential.json 给 secret，两者齐全才算数。"""
-    port = find_login_port(since)
-    secret = read_secret_key()
-    if port is None or secret is None:
-        return None
-    return build_login_url(port, secret)
+        yield item
+        if item is None:
+            return
 
 
 def _terminate(proc: subprocess.Popen) -> None:
@@ -234,187 +170,128 @@ def _terminate(proc: subprocess.Popen) -> None:
             pass
 
 
-def _reader(proc: subprocess.Popen, q: queue.Queue) -> None:
-    """后台逐行读子进程合并输出，读完投 None 哨兵。"""
+def _tail(lines: list[str], n: int = 8) -> list[str]:
+    return [l.rstrip()[:200] for l in lines if l.strip()][-n:]
+
+
+def _dump_tail(lines: list[str]) -> None:
+    tail = _tail(lines)
+    if tail:
+        _err("[login] dreamina 输出尾部（排障用）：")
+        for l in tail:
+            _err("  " + l)
+
+
+def _ok(data: dict) -> dict:
+    return {"success": True, "total_credit": data.get("total_credit"),
+            "vip_level": data.get("vip_level")}
+
+
+def _fail(error: str, hint: str = RERUN_HINT) -> dict:
+    return {"success": False, "error": error, "hint": hint}
+
+
+def login(url_wait: int = URL_WAIT, login_wait: int = LOGIN_WAIT) -> dict:
+    """跑完整 device flow，返回对外 JSON 结果字典。"""
+    _err("[login] 正在启动即梦 OAuth Device Flow 登录…")
     try:
-        for line in proc.stdout:  # type: ignore[union-attr]
-            q.put(line)
+        proc = subprocess.Popen([DREAMINA, "login"], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                errors="replace", bufsize=1)
+    except Exception as e:  # noqa: BLE001
+        return _fail(f"启动 dreamina login 失败：{e}",
+                     hint=f"确认 {DREAMINA} 可执行，或重装：{INSTALL_CMD}")
+
+    q: queue.Queue = queue.Queue()
+    threading.Thread(target=_reader, args=(proc, q), daemon=True).start()
+    lines: list[str] = []
+    info: dict = {}
+    stream_done = False
+
+    try:
+        # 阶段一：抓 verification_uri（正常一两秒就印出来）
+        for item in _lines(q, time.monotonic() + url_wait):
+            if item is None:
+                stream_done = True
+                break
+            lines.append(item)
+            if parse_login_line(item, info).get("verification_uri"):
+                break
+
+        if not info.get("verification_uri"):
+            _dump_tail(lines)
+            if stream_done:
+                # CLI 没出网址就自己退了：可能本来就登录着（幂等重跑），复核一下再判
+                data = query_credit()
+                if data:
+                    _err(f"[login] 无需授权：已是登录态，积分 {data.get('total_credit')}。")
+                    return _ok(data)
+                return _fail("dreamina login 没打印 verification_uri 就退出了，登录态也没建立",
+                             hint=f"多半是 CLI 版本过旧（Device Flow 是 a857341 起）；升级：{INSTALL_CMD}")
+            return _fail(f"{url_wait}s 内没等到 verification_uri —— 这版 CLI 不是 OAuth Device Flow",
+                         hint=f"升级即梦 CLI 后重试：{INSTALL_CMD}")
+
+        # user_code / expires_at 与网址是同一批输出，抓到网址就收工会把它们丢掉，
+        # 用户既看不到要核对的码、也不知道还剩多久过期
+        if not stream_done:
+            for item in _lines(q, time.monotonic() + COMPANION_WAIT):
+                if item is None:
+                    stream_done = True
+                    break
+                lines.append(item)
+                if all(k in parse_login_line(item, info) for k, _ in FIELDS):
+                    break
+
+        present_url(info)
+
+        # 阶段二：CLI 自己轮询授权状态，我们等它退出（stdout 已关就是已经退了，不用再等）
+        if not stream_done:
+            for item in _lines(q, time.monotonic() + login_wait):
+                if item is None:      # stdout 关闭 = 进程已结束或正在收尾
+                    stream_done = True
+                    break
+                lines.append(item)
+            if not stream_done:
+                return _fail(f"等待授权超过 {login_wait}s 仍未完成（授权码约 10 分钟过期）",
+                             hint=RERUN_HINT)
+        try:
+            rc = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            rc = None             # stdout 关了却迟迟不退，罕见；下面照样以积分为准判成败
     finally:
-        q.put(None)
+        _terminate(proc)
 
+    data = query_credit()
+    if data:
+        _err(f"[login] 登录成功！积分 {data.get('total_credit')}"
+             + (f"，会员等级 {data['vip_level']}" if data.get("vip_level") is not None else "") + "。")
+        return _ok(data)
 
-def _present_url(url: str, shimmed: bool) -> None:
-    """把登录页送到用户眼前。
-
-    shimmed=True：CLI 的 opener 已被拦下，浏览器必须由我们开。
-    shimmed=False：CLI 自己已经开过一次（Windows），再开就是第二个窗口，只补文本。
-    """
-    if shimmed:
-        opened = False
-        try:
-            opened = webbrowser.open(url)
-        except Exception as e:  # noqa: BLE001
-            _err(f"[login] 打开浏览器失败：{e}")
-        if opened:
-            _err("[login] 已在你的浏览器打开即梦登录页，请用**抖音 App 扫页面上的二维码**完成登录…")
-        else:
-            _err("[login] 没能自动打开浏览器，请手动复制下面的网址在本机浏览器打开。")
-    else:
-        _err("[login] 即梦已打开默认浏览器，请用**抖音 App 扫页面上的二维码**完成登录…")
-    # 完整逻辑行输出，天然免疫终端折行截断（Windows 手抄 URL 丢参数是老事故）
-    _err("[login] 登录网址（没弹出就复制这一整行，**必须在这台电脑上打开**）：")
-    _err(url)
-
-
-def _run_attempt(timeout: int) -> dict:
-    """单次登录尝试：起 dreamina login，拿到网址就开页面，轮询 user_credit 判成功
-    （不依赖退出码）。返回内部结果字典。"""
-    result: dict = {"logged_in": False, "credit": None, "login_url": None,
-                    "url_source": None, "timed_out": False, "launch_error": None}
-    started = datetime.now().astimezone()
-
-    with tempfile.TemporaryDirectory(prefix="dreamina-login-") as tmp:
-        shim = install_opener_shim(Path(tmp))
-        env = dict(os.environ)
-        capture: Path | None = None
-        if shim:
-            env.update(shim[0])
-            capture = shim[1]
-        try:
-            proc = subprocess.Popen([DREAMINA, "login"], stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                    errors="replace", bufsize=1, env=env)
-        except Exception as e:  # noqa: BLE001
-            _err(f"[login] 启动 dreamina login 失败：{e}")
-            result["launch_error"] = str(e)
-            return result
-
-        q: queue.Queue = queue.Queue()
-        threading.Thread(target=_reader, args=(proc, q), daemon=True).start()
-
-        raw_lines: list[str] = []
-        start = time.monotonic()
-        last_poll = 0.0
-        stream_done = False
-        try:
-            while True:
-                if time.monotonic() - start > timeout:
-                    result["timed_out"] = True
-                    break
-                # 排空管道已到达的行（只为失败时回显排障，网址不从这里来——CLI 不印）
-                drained = False
-                while True:
-                    try:
-                        line = q.get_nowait()
-                    except queue.Empty:
-                        break
-                    drained = True
-                    if line is None:
-                        stream_done = True
-                        continue
-                    raw_lines.append(line)
-
-                if not result["login_url"]:
-                    url = read_captured_url(capture) if capture else None
-                    source = "opener 拦截" if url else None
-                    if not url:
-                        url = rebuild_login_url(started)
-                        source = "日志重建" if url else None
-                    if url:
-                        result["login_url"], result["url_source"] = url, source
-                        _err(f"[login] 已取到登录网址（{source}）。")
-                        _present_url(url, shimmed=bool(capture))
-
-                # 轮询 user_credit：拿到 total_credit 即登录成功（权威判据）
-                now = time.monotonic()
-                if now - last_poll >= POLL_INTERVAL:
-                    last_poll = now
-                    credit = query_credit()
-                    if credit is not None:
-                        result["logged_in"], result["credit"] = True, credit
-                        break
-                # 子进程先正常退出：立即复查一次再结束本次尝试
-                if proc.poll() is not None and stream_done:
-                    credit = query_credit()
-                    if credit is not None:
-                        result["logged_in"], result["credit"] = True, credit
-                    break
-                if not drained:
-                    time.sleep(0.5)
-        finally:
-            _terminate(proc)
-
-    if not result["logged_in"]:
-        tail = [l.rstrip()[:200] for l in raw_lines if l.strip()][-8:]
-        if tail:
-            _err("[login] dreamina 输出尾部（排障用）：")
-            for l in tail:
-                _err("  " + l)
-    return result
-
-
-def login(timeout: int, retries: int) -> dict:
-    """驱动整套登录流程。返回对外 JSON 结果字典。"""
-    credit = query_credit()  # 幂等：已登录直接返回
-    if credit is not None:
-        _err(f"[login] 检测到已登录，积分 {credit}，无需重新登录。")
-        return {"logged_in": True, "credit": credit, "login_url": None,
-                "url_source": "already", "attempts": 0, "error": None}
-
-    last: dict = {}
-    for attempt in range(1, retries + 1):
-        if attempt > 1:
-            _err(f"[login] 页面二维码已过期，自动开一张新的重试（第 {attempt}/{retries} 次）…")
-        _err("[login] 正在启动即梦登录流程，拿到网址后会自动在你的浏览器打开…")
-
-        last = _run_attempt(timeout)
-
-        if last["logged_in"]:
-            _err(f"[login] 登录成功！积分 {last['credit']}。")
-            return {"logged_in": True, "credit": last["credit"],
-                    "login_url": last["login_url"], "url_source": last["url_source"],
-                    "attempts": attempt, "error": None}
-        if last["launch_error"]:
-            return {"logged_in": False, "credit": None, "login_url": None,
-                    "url_source": None, "attempts": attempt,
-                    "error": f"启动 dreamina login 失败：{last['launch_error']}"}
-
-    err = f"等待扫码超时（{retries} 次尝试均未完成）"
-    if not last.get("login_url"):
-        # 网址一次都没取到：两条路同时哑火，多半是 CLI 输出/日志格式变了，得重新取证
-        err += "；且始终没能取到登录网址（opener 拦截与日志重建均无结果），请检查即梦 CLI 是否升级过"
-    return {"logged_in": False, "credit": None, "login_url": last.get("login_url"),
-            "url_source": last.get("url_source"), "attempts": retries, "error": err}
+    _dump_tail(lines)
+    tail = _tail(lines)
+    reason = tail[-1] if tail else f"dreamina login 异常退出（退出码 {rc}）"
+    return _fail(f"授权未完成：{reason}", hint=RERUN_HINT)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="即梦(dreamina) 一键登录：脚本自己打开登录页，用户只需抖音 App 扫页面二维码")
-    ap.add_argument("--timeout", type=int, default=240, help="单次尝试等待扫码秒数（默认 240，页面二维码几分钟过期）")
-    ap.add_argument("--retries", type=int, default=3, help="超时后自动重开登录页的次数（默认 3）")
+        description="即梦(dreamina) 登录：脚本抓 OAuth Device Flow 授权网址开给用户，"
+                    "用户在任何设备上用抖音 App 扫码/确认")
     ap.add_argument("--check-only", action="store_true", help="只查登录态与积分，不发起登录")
     a = ap.parse_args()
 
     if not cli_installed():
-        fix = str(Path(__file__).resolve().parent / "check_env.py")
-        _err(f"[login] 未检测到 dreamina CLI。请先跑：python3 {fix} --install")
-        print(json.dumps({"logged_in": False, "credit": None, "login_url": None,
-                          "url_source": None, "attempts": 0, "error": "CLI 未安装"},
-                         ensure_ascii=False))
-        sys.exit(2)
+        _err(f"[login] 未检测到 dreamina CLI（{DREAMINA}）。安装：{INSTALL_CMD}")
+        result = _fail("dreamina CLI 未安装", hint=f"装 CLI 后重跑本脚本：{INSTALL_CMD}")
+    elif a.check_only:
+        data = query_credit()
+        _err(f"[login] {'已登录，积分 ' + str(data.get('total_credit')) if data else '未登录'}")
+        result = _ok(data) if data else _fail("未登录", hint="跑 dreamina_login.py（不带 --check-only）授权")
+    else:
+        result = login()
 
-    if a.check_only:
-        credit = query_credit()
-        logged = credit is not None
-        _err(f"[login] {'已登录，积分 ' + str(credit) if logged else '未登录'}")
-        print(json.dumps({"logged_in": logged, "credit": credit, "login_url": None,
-                          "url_source": "already" if logged else None, "attempts": 0,
-                          "error": None}, ensure_ascii=False))
-        sys.exit(0 if logged else 1)
-
-    result = login(a.timeout, a.retries)
     print(json.dumps(result, ensure_ascii=False))
-    sys.exit(0 if result["logged_in"] else 1)
+    sys.exit(0 if result["success"] else 1)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import jimeng_gen as jg
 
 BASE = "https://mcp.nbdpsy.com"
 LOCAL_SID = "3d64c2221c0e07da"      # 本机 CLI 的 submit_id 形态：16 位 hex
+UPLOADED_URL = BASE + "/uploads/b-test/01.png"   # 图床回执里的直链（save_images 拼的绝对 URL）
 
 
 # ---------- 夹具与假件 ----------
@@ -64,9 +65,11 @@ class FakeDownload:
         yield self._data
 
 
-def fake_requests(monkeypatch, handler, *, downloader=None):
+def fake_requests(monkeypatch, handler, *, downloader=None, uploader=None):
     """把假 requests 模块塞进 jimeng_gen 的惰性 import 点。返回 (calls, mod)。
-    mod.exceptions.Timeout / ConnectionError 供用例主动抛出，复刻网络抖动。"""
+    mod.exceptions.Timeout / ConnectionError 供用例主动抛出，复刻网络抖动。
+    mod.uploads 记 multipart 上传（requests.post(files=...)）——图床走的是这个入口，
+    不经 mod.request（那个只发 json 体）。"""
     mod = types.ModuleType("requests")
 
     class Timeout(Exception):
@@ -78,6 +81,7 @@ def fake_requests(monkeypatch, handler, *, downloader=None):
     mod.exceptions = types.SimpleNamespace(Timeout=Timeout, ConnectionError=ConnErr)
     calls = []
     downloads = []
+    uploads = []
 
     def request(method, url, json=None, headers=None, timeout=None):
         calls.append({"method": method, "url": url, "payload": json,
@@ -88,9 +92,19 @@ def fake_requests(monkeypatch, handler, *, downloader=None):
         downloads.append(url)
         return (downloader or FakeDownload)()
 
+    def post(url, files=None, headers=None, timeout=None):
+        """multipart 上传入口。默认回一份合法图床回执，uploader 可改写（含主动抛网络异常）。"""
+        uploads.append({"url": url, "files": files, "headers": headers, "timeout": timeout})
+        if uploader is None:
+            return FakeResp(200, {"batch_id": "b-test", "urls": [UPLOADED_URL],
+                                  "expires_at": "2026-08-12T00:00:00+08:00"})
+        return uploader(url, files)
+
     mod.request = request
     mod.get = get
+    mod.post = post
     mod.downloads = downloads
+    mod.uploads = uploads
     monkeypatch.setattr(jg, "_requests", lambda: mod)
     return calls, mod
 
@@ -517,13 +531,152 @@ def test_cli_model_choices_follow_the_model_set(monkeypatch):
     assert exc.value.code == 2
 
 
-def test_server_submit_local_image_falls_back_to_local_cli(monkeypatch):
-    """参考图在本机（server 取不到）→ 整镜回落本地 CLI，而不是把 server 拿不到的路径发过去。"""
+def test_server_submit_missing_local_image_falls_back_to_local_cli(monkeypatch):
+    """参考图文件根本不存在 → 上传这步在本地就判败（一个请求都不发），整镜回落本地 CLI，
+    而不是把 server 拿不到的路径发过去。"""
     with_key(monkeypatch)
-    fake_requests(monkeypatch, submit_handler([]))
+    calls, mod = fake_requests(monkeypatch, submit_handler([]))
     fake_local_cli(monkeypatch)
     r = jg.submit("image2video", "推近", backend="server", images=["./images/P01.png"])
     assert r["success"] is True and r["backend"] == "local" and r["submit_id"] == LOCAL_SID
+    assert mod.uploads == []                                   # 文件不存在，本地拦下不打网络
+    assert [c for c in calls if c["method"] == "POST"] == []
+
+
+# ---------- 2c. 本机参考图先传图床再提交 server ----------
+
+def local_image(tmp_path, name="P01.png", data=b"\x89PNG\r\n\x1a\nFAKE"):
+    """造一张真实存在的本机参考图（内容不必是合法 PNG——服务端才解字节流，客户端只按扩展名判 MIME）。"""
+    p = tmp_path / name
+    p.write_bytes(data)
+    return str(p)
+
+
+def test_server_image2video_uploads_local_image_then_submits(monkeypatch, tmp_path):
+    """主力图生流程：本机参考图先传图床换直链，这一镜就留在 server 上跑，不再整镜回落本机 CLI。"""
+    with_key(monkeypatch)
+    seen = []
+    calls, mod = fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "c1"})], seen))
+    cli_calls = fake_local_cli(monkeypatch)
+    img = local_image(tmp_path)
+
+    r = jg.submit("image2video", "镜头缓慢推近", backend="server", images=[img], duration=8)
+
+    assert r["success"] is True and r["backend"] == "server" and r["submit_id"] == "c1"
+    assert len(mod.uploads) == 1                               # 恰好上传一次
+    up = mod.uploads[0]
+    assert up["url"] == BASE + jg.EP_UPLOAD_IMAGES
+    assert up["headers"]["Authorization"] == "Bearer k-test"   # 家规：Bearer 鉴权
+    assert up["timeout"] == 60
+    name, data, mime = up["files"]["files"]                    # 字段名固定 files（server 契约）
+    assert name == "P01.png" and mime == "image/png" and data == b"\x89PNG\r\n\x1a\nFAKE"
+    assert seen[0]["image"] == UPLOADED_URL                    # 提交用的是图床直链
+    assert "ratio" not in seen[0]                              # image2video 照旧不带 ratio
+    assert cli_calls == [], "已换成直链就不该再跑本机 CLI"
+
+
+def test_server_multimodal_uploads_local_image_too(monkeypatch, tmp_path):
+    """multimodal2video 的单张本机图同样先传图床（它的 image 字段是唯一媒体位）。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "m1"})], seen))
+    r = jg.submit("multimodal2video", "轻轻点头", backend="server",
+                  images=[local_image(tmp_path, "P02.jpg")], duration=6)
+    assert r["success"] is True and r["submit_id"] == "m1"
+    assert seen[0]["image"] == UPLOADED_URL
+
+
+def test_gen_single_shot_path_uploads_too(monkeypatch, tmp_path):
+    """gen（generate → submit）走的是同一条线，别只在 submit 上接线。"""
+    with_key(monkeypatch)
+    seen = []
+    _, mod = fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "g1"})], seen))
+    r = jg.generate("image2video", "推近", out_dir=str(tmp_path), submit_only=True,
+                    backend="server", images=[local_image(tmp_path)], duration=5)
+    assert r["success"] is True and r["submit_id"] == "g1" and r["backend"] == "server"
+    assert len(mod.uploads) == 1 and seen[0]["image"] == UPLOADED_URL
+
+
+def test_upload_retries_once_on_network_error_then_falls_back_without_collateral(
+        monkeypatch, tmp_path):
+    """上传免费无副作用 → 网络异常重试一次（与提交类 POST 的幂等重发是两回事）；两次都挂就
+    回落本机 CLI，且**不连坐**同批其他镜。"""
+    with_key(monkeypatch)
+    holder = {}
+
+    def boom(url, files):
+        raise holder["mod"].exceptions.ConnectionError("connection reset")
+
+    def handler(method, url, body):
+        if url.endswith(jg.EP_DREAMINA_STATUS):
+            return FakeResp(200, {"logged_in": True})
+        return FakeResp(202, {"batch_id": 7, "clip_ids": [401]})
+
+    _, mod = fake_requests(monkeypatch, handler, uploader=boom)
+    holder["mod"] = mod
+    fake_local_cli(monkeypatch)
+    plan = write_plan(tmp_path, [
+        {"operation": "image2video", "prompt": "a", "image": local_image(tmp_path)},
+        {"operation": "text2video", "prompt": "b", "duration": 5},
+    ])
+    out = jg.batch(plan, str(tmp_path), submit_only=True)
+    res = out["results"]
+    assert len(mod.uploads) == 2, "网络异常只重试一次，不多不少"
+    assert res[0]["backend"] == "local" and res[0]["submit_id"] == LOCAL_SID
+    assert res[1]["backend"] == "server" and res[1]["submit_id"] == "401"
+    assert [r["index"] for r in res] == [0, 1] and out["ok"] == 2
+
+
+def test_multi_image_or_video_shot_never_tries_upload(monkeypatch, tmp_path):
+    """多图 / 带 video·audio 的镜 server 单镜契约本来就表达不了 —— 维持整镜回落，连传都不传。"""
+    with_key(monkeypatch)
+    calls, mod = fake_requests(monkeypatch, submit_handler([]))
+    fake_local_cli(monkeypatch)
+    a, b = local_image(tmp_path, "A.png"), local_image(tmp_path, "B.png")
+
+    multi = jg.submit("multimodal2video", "x", backend="server", images=[a, b])
+    withvid = jg.submit("multimodal2video", "x", backend="server", images=[a],
+                        videos=[str(tmp_path / "v.mp4")])
+    assert multi["backend"] == "local" and withvid["backend"] == "local"
+    assert mod.uploads == []
+    assert [c for c in calls if c["method"] == "POST"] == []
+
+
+def test_malformed_image_field_stays_a_json_envelope(monkeypatch, tmp_path):
+    """plan 里 image 写成数字（人手写歪）不许在上传这步裸抛 —— 崩了 stdout 就一行 JSON 都没有。"""
+    with_key(monkeypatch)
+
+    def handler(method, url, body):
+        if url.endswith(jg.EP_DREAMINA_STATUS):
+            return FakeResp(200, {"logged_in": True})
+        return pytest.fail("这一镜该回落本机 CLI，不该发提交")
+
+    _, mod = fake_requests(monkeypatch, handler)
+    fake_local_cli(monkeypatch)
+    plan = write_plan(tmp_path, [{"operation": "image2video", "prompt": "a", "image": 123}])
+    out = jg.batch(plan, str(tmp_path), submit_only=True)
+    assert out["results"][0]["backend"] == "local"
+    assert mod.uploads == []
+    json.dumps(out, ensure_ascii=False)      # 信封必须可序列化
+
+
+def test_upload_receipt_without_urls_falls_back_with_human_error(monkeypatch, tmp_path, capsys):
+    """回执缺 urls / 不是 JSON —— 给人话原因后回落本机 CLI，不许拿 None 当直链发出去。"""
+    with_key(monkeypatch)
+    fake_local_cli(monkeypatch)
+
+    for uploader, want in (
+        (lambda url, files: FakeResp(200, {"batch_id": "b1"}), "urls"),
+        (lambda url, files: FakeResp(200, None, text="<html>502</html>"), "不是 JSON"),
+        (lambda url, files: FakeResp(413, {"error": "单张图片超过 10MB 上限"}), "413"),
+    ):
+        calls, _ = fake_requests(monkeypatch, submit_handler([]), uploader=uploader)
+        r = jg.submit("image2video", "推近", backend="server",
+                      images=[local_image(tmp_path)])
+        assert r["success"] is True and r["backend"] == "local"     # 安全网还在
+        assert [c for c in calls if c["method"] == "POST"] == []    # 没拿空直链去提交
+        err = capsys.readouterr().err
+        assert "上传图床失败" in err and want in err
 
 
 # ---------- 3. server 取片 ----------

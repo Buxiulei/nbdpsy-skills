@@ -114,7 +114,7 @@ def check(install: bool) -> dict:
                 fix="让管理员在 server 上跑 `dreamina login`（CLI a857341 起为 OAuth Device Flow，"
                     "从 stdout 抓 verification_uri 在**任何设备**打开、抖音 App 授权即可，授权码约 "
                     "10 分钟过期）；新凭据落 server 的 ~/.local/share/dreamina/。"
-                    "⚠️ 别再用 dreamina_login.py / 迁 ~/.dreamina_cli/——那是旧回调流，对新 CLI 无效。"
+                    "⚠️ 别再迁 ~/.dreamina_cli/——那是旧回调流的凭据位，对新 CLI 无效。"
                     "本机应急可加 --backend local 走自己的 dreamina CLI")
         add("本机 dreamina CLI（server 模式下不需要）", True,
             "画面生成走 nbdpsy-server 的即梦 REST 面：本机免装 CLI、免扫码、排队不用挂着会话"
@@ -168,7 +168,7 @@ def check(install: bool) -> dict:
             else:
                 login_helper = Path(__file__).resolve().parent / "dreamina_login.py"
                 add("dreamina 登录 & 积分", False, "未登录或无法读取积分",
-                    fix=f"agent 直接跑：python3 {login_helper}  # 脚本自己打开登录页，用户只需抖音 App 扫页面上的二维码")
+                    fix=f"agent 直接跑：python3 {login_helper}  # 脚本抓 OAuth Device Flow 授权网址，用户在任何设备上用抖音 App 扫码/确认")
         else:
             add("dreamina 登录 & 积分", False, "CLI 未装，跳过", fix="先装 dreamina")
 
