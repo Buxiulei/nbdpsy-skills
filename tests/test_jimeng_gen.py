@@ -311,16 +311,43 @@ def test_server_submit_text2video_never_sends_image(monkeypatch):
     assert seen[0]["ratio"] == "9:16"          # text2video 的 ratio 照旧带
 
 
-def test_server_submit_multimodal2video_sends_single_remote_image(monkeypatch):
-    """multimodal2video 反过来：image 是它唯一能表达媒体的字段，必须带。"""
+def test_server_submit_multimodal2video_sends_images_array(monkeypatch):
+    """multimodal2video 走 images[]（server 2026-08-06 起支持多图），媒体必须带。"""
     with_key(monkeypatch)
     seen = []
     fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "m1"})], seen))
     r = jg.submit("multimodal2video", "轻轻点头", backend="server",
                   images=["/uploads/clips/p02.png"], duration=6, ratio="9:16")
     assert r["success"] is True and r["submit_id"] == "m1"
-    assert seen[0]["image"] == "/uploads/clips/p02.png"
+    assert seen[0]["images"] == ["/uploads/clips/p02.png"]
     assert seen[0]["ratio"] == "9:16"
+
+
+def test_multimodal_images_keep_order_and_duplicates(monkeypatch):
+    """**顺序即语义**：数组第 N 张就是提示词里的 @图片N。绝不去重、绝不重排——
+    同一张图传两次是合法用法（@图片1 锁人物、@图片3 借它的色调），去重会让编号整体错位，
+    而且不报错、只默默出错图。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "m2"})], seen))
+    refs = ["/uploads/a.png", "/uploads/b.png", "/uploads/a.png"]
+    r = jg.submit("multimodal2video", "@图片1 人物 @图片2 场景 @图片3 色调",
+                  backend="server", images=refs, duration=8)
+    assert r["success"] is True
+    assert seen[0]["images"] == refs          # 三张，顺序不变，重复的那张还在
+
+
+def test_multimodal_image_cap_by_model(monkeypatch):
+    """图片张数按模型分档拦在本地：2.5 是 30、2.0 家族是 9，超了当场拒，不白跑一趟提交。"""
+    with_key(monkeypatch)
+    calls, _ = fake_requests(monkeypatch, submit_handler([]))
+    r = jg.submit("multimodal2video", "x", backend="server",
+                  images=[f"/uploads/{i}.png" for i in range(31)], duration=8)
+    assert r["success"] is False and "30" in r["error"]
+    r2 = jg.submit("multimodal2video", "x", backend="server", model="seedance2.0fast",
+                   images=[f"/uploads/{i}.png" for i in range(10)], duration=8)
+    assert r2["success"] is False and "9" in r2["error"]
+    assert [c for c in calls if c["method"] == "POST"] == []
 
 
 def test_server_submit_multimodal2video_without_media_is_rejected_locally(monkeypatch):
@@ -583,7 +610,7 @@ def test_server_multimodal_uploads_local_image_too(monkeypatch, tmp_path):
     r = jg.submit("multimodal2video", "轻轻点头", backend="server",
                   images=[local_image(tmp_path, "P02.jpg")], duration=6)
     assert r["success"] is True and r["submit_id"] == "m1"
-    assert seen[0]["image"] == UPLOADED_URL
+    assert seen[0]["images"] == [UPLOADED_URL]
 
 
 def test_gen_single_shot_path_uploads_too(monkeypatch, tmp_path):
@@ -627,19 +654,31 @@ def test_upload_retries_once_on_network_error_then_falls_back_without_collateral
     assert [r["index"] for r in res] == [0, 1] and out["ok"] == 2
 
 
-def test_multi_image_or_video_shot_never_tries_upload(monkeypatch, tmp_path):
-    """多图 / 带 video·audio 的镜 server 单镜契约本来就表达不了 —— 维持整镜回落，连传都不传。"""
+def test_video_audio_shot_still_falls_back_and_never_uploads(monkeypatch, tmp_path):
+    """带 --video/--audio 的镜 server 契约仍表达不了 —— 维持整镜回落，连传都不传。
+    （多图自 2026-08-06 起 server 已支持，不再回落，见下一条。）"""
     with_key(monkeypatch)
     calls, mod = fake_requests(monkeypatch, submit_handler([]))
     fake_local_cli(monkeypatch)
-    a, b = local_image(tmp_path, "A.png"), local_image(tmp_path, "B.png")
+    a = local_image(tmp_path, "A.png")
 
-    multi = jg.submit("multimodal2video", "x", backend="server", images=[a, b])
     withvid = jg.submit("multimodal2video", "x", backend="server", images=[a],
                         videos=[str(tmp_path / "v.mp4")])
-    assert multi["backend"] == "local" and withvid["backend"] == "local"
+    assert withvid["backend"] == "local"
     assert mod.uploads == []
     assert [c for c in calls if c["method"] == "POST"] == []
+
+
+def test_multi_local_images_now_upload_and_stay_on_server(monkeypatch, tmp_path):
+    """多张本机图：逐张换直链后留在 server 跑（不再整镜回落本地 CLI）。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "m4"})], seen))
+    a, b = local_image(tmp_path, "A.png"), local_image(tmp_path, "B.png")
+    r = jg.submit("multimodal2video", "@图片1 人物 @图片2 场景", backend="server",
+                  images=[a, b], duration=8)
+    assert r["success"] is True and r["backend"] == "server"
+    assert len(seen[0]["images"]) == 2
 
 
 def test_malformed_image_field_stays_a_json_envelope(monkeypatch, tmp_path):
@@ -1264,3 +1303,20 @@ def test_check_env_local_mode_keeps_original_checks(monkeypatch):
     assert "dreamina CLI" in names and "dreamina 登录 & 积分" in names
     assert "即梦服务(server)" not in names
     assert result["ready"] is False
+
+
+def test_multimodal_mixed_local_and_remote_images_keep_positions(monkeypatch, tmp_path):
+    """混合本机图与直链时，本机的换成直链、已是直链的原位保留，**位次一个不动**——
+    位次就是 @图片N 的编号，错位不会报错、只会默默出错图。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "m3"})], seen))
+    refs = ["/uploads/remote-a.png", local_image(tmp_path, "P02.jpg"), "https://x/remote-b.png"]
+    r = jg.submit("multimodal2video", "@图片1 场景 @图片2 人物 @图片3 道具",
+                  backend="server", images=refs, duration=8)
+    assert r["success"] is True
+    sent = seen[0]["images"]
+    assert len(sent) == 3
+    assert sent[0] == "/uploads/remote-a.png"     # 直链原位
+    assert sent[1] == UPLOADED_URL                # 本机图换成了直链，位次没变
+    assert sent[2] == "https://x/remote-b.png"

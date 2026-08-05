@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,67 @@ def probe_duration(path: Path) -> float:
     return float(data["format"]["duration"])
 
 
+def run_beats(data: dict, shots_path: Path, audio_dir: Path, *,
+              min_d: float, max_d: float) -> dict[str, Any]:
+    """v2 电影格式：把每条旁白的实测时长分配给该 beat 下的各个 cut。
+
+    两个时长分开，别混：
+      `use` —— 成片里这一刀实际用多少秒（可以 <4，电影感就靠它切得碎）；
+      `gen` —— 提交给即梦生成多少秒（**最短 4 秒是平台硬约束**），默认 5。
+    分配按各 cut 的 `weight`（缺省 1）等比切分 `旁白时长 + 0.3s`，再四舍五入到 0.1s，
+    尾差补给最后一刀——保证 sum(use) 与 beat 时长严丝合缝，拼完不会与旁白错位。
+    """
+    report: dict[str, Any] = {"updated": [], "overflow": [], "missing": [], "ok": True}
+    for beat in data["beats"]:
+        idx = beat.get("index")
+        narr_file = audio_dir / f"narr-{idx:02d}.mp3"
+        if not narr_file.exists():
+            report["missing"].append({"index": idx, "expect": narr_file.name,
+                                      "reason": "file not found"})
+            report["ok"] = False
+            print(f"  beat{idx} 缺音频 {narr_file.name}", file=sys.stderr)
+            continue
+        try:
+            narr_sec = probe_duration(narr_file)
+        except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, ValueError):
+            report["missing"].append({"index": idx, "expect": narr_file.name,
+                                      "reason": "ffprobe failed"})
+            report["ok"] = False
+            continue
+
+        total = round(narr_sec + 0.3, 2)
+        cuts = beat.get("cuts") or []
+        if not cuts:
+            report["missing"].append({"index": idx, "expect": "cuts[]", "reason": "no cuts"})
+            report["ok"] = False
+            continue
+        weights = [float(c.get("weight") or 1) for c in cuts]
+        wsum = sum(weights) or 1.0
+        acc = 0.0
+        for c, w in zip(cuts[:-1], weights[:-1]):
+            use = round(total * w / wsum, 1)
+            c["use"] = use
+            acc += use
+        cuts[-1]["use"] = round(total - acc, 1)  # 尾差全给最后一刀，避免累计误差
+        for c in cuts:
+            # gen 是提交给即梦的时长：至少 4s（平台下限），且不小于要用的秒数
+            c["gen"] = int(max(min_d, math.ceil(c["use"]), c.get("gen") or 0)) or int(min_d)
+            if c["gen"] > max_d:
+                report["overflow"].append({"index": idx, "cut": c.get("n"),
+                                           "hint": f"单刀 {c['use']}s 超出模型上限 {max_d}s，拆刀"})
+                report["ok"] = False
+        report["updated"].append({
+            "index": idx, "narration_sec": round(narr_sec, 1), "duration": total,
+            "cuts": [{"n": c.get("n"), "use": c["use"], "gen": c["gen"]} for c in cuts],
+        })
+        shown = " + ".join(f"{c['use']}s" for c in cuts)
+        print(f"  beat{idx} narr={narr_sec:.1f}s → {total}s = {shown}（{len(cuts)} 刀）",
+              file=sys.stderr)
+
+    shots_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
 def run(shots_path: Path, audio_dir: Path, *, min_d: float, max_d: float) -> dict[str, Any]:
     """
     同步旁白时长到 shots.json。
@@ -45,6 +107,9 @@ def run(shots_path: Path, audio_dir: Path, *, min_d: float, max_d: float) -> dic
     """
     # 读取 shots.json
     shots_content = json.loads(shots_path.read_text(encoding="utf-8"))
+    if shots_content.get("beats"):
+        # v2 电影格式：一条旁白（beat）挂多个分镜（cut），按 cut 权重把旁白时长分下去
+        return run_beats(shots_content, shots_path, audio_dir, min_d=min_d, max_d=max_d)
     shots = shots_content.get("shots", [])
 
     report = {

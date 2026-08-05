@@ -95,6 +95,11 @@ def max_duration(model: str) -> int:
     CLI/服务端必拒的镜白跑一趟提交。"""
     return _DUR_MAX_BY_MODEL.get(model, _DUR_MAX_DEFAULT)
 
+# 图片参考张数上限（server 2026-08-06 回执确认，与 CLI help 一致）：2.5 是 30，2.0 家族是 9。
+# 未知档按 9 判——宁可窄不宜宽，放宽只会让一镜白跑一趟提交。
+_MULTI_IMAGE_CAP = {"seedance2.5": 30}
+_MULTI_IMAGE_CAP_DEFAULT = 9
+
 _SUBMIT_ID_RE = re.compile(r"[0-9a-f]{16}")
 _COMPLIANCE_HINT = "AigcComplianceConfirmationRequired"
 
@@ -381,11 +386,11 @@ def _is_remote(ref: Any) -> bool:
 def _shot_server_capable(images: list, videos: list, audios: list) -> tuple[bool, str]:
     """这一镜能否交给 server 跑。不能跑的**整镜回落本地 CLI**（而不是静默丢掉媒体）。"""
     if videos or audios:
-        return False, "server 单镜契约只带 image，本镜有 --video/--audio"
-    if len(images) > 1:
-        return False, f"server 单镜契约只带 1 张 image，本镜有 {len(images)} 张"
-    if images and not _is_remote(images[0]):
-        return False, f"参考图是本机路径（{images[0]}），server 取不到"
+        return False, "server 契约目前只带 image（多视频/多音频参考未开放），本镜有 --video/--audio"
+    # 多图自 2026-08-06 起 server 已支持（images[] 1–30，保序不去重），不再因张数回落本地
+    bad = [r for r in images if not _is_remote(r)]
+    if bad:
+        return False, f"参考图是本机路径（{bad[0]}），server 取不到"
     return True, ""
 
 
@@ -455,9 +460,11 @@ def _prepare_server_shot(operation: str, images: list, videos: list, audios: lis
     """server 路径的媒体预处理：本机参考图先传图床换直链，让这一镜留在 server 上跑。
     返回 (images, capable, why)。
 
-    只处理「image2video / multimodal2video + 恰 1 张本机图 + 无 video/audio」这一种——多图
-    或带 video/audio 的镜 server 单镜契约本来就表达不了，维持整镜回落本机 CLI 不变。
-    上传失败也回落（保留原有安全网），why 里写明是上传没成，不是「server 取不到」。
+    处理「image2video / multimodal2video + 本机图 + 无 video/audio」：本机图逐张换直链，
+    **顺序原样保持**（数组第 N 张 = 提示词里的 @图片N，换成直链后编号不能变）。
+    带 video/audio 的镜 server 契约还表达不了，维持整镜回落本机 CLI 不变。
+    任一张上传失败即整镜回落（保留原有安全网）——半数换成直链、半数还是本机路径的混合态
+    会让 @图片N 编号对不上，比回落更糟。
     """
     capable, why = _shot_server_capable(images, videos, audios)
     if capable:
@@ -465,12 +472,21 @@ def _prepare_server_shot(operation: str, images: list, videos: list, audios: lis
     # 非字符串的 image（plan JSON 写歪了）交回原路：本地 CLI 那边会如实报错，
     # 而不是在这里 Path(123) 裸抛把整批崩成 traceback（stdout 就没 JSON 信封了）
     if (operation not in ("image2video", "multimodal2video")
-            or videos or audios or len(images) != 1 or not isinstance(images[0], str)):
+            or videos or audios or not images
+            or not all(isinstance(x, str) for x in images)):
         return images, False, why
-    url, uerr = _upload_ref_image(images[0], key, base)
-    if uerr:
-        return images, False, f"参考图上传图床失败（{uerr}）"
-    return [url], True, ""
+    if operation == "image2video" and len(images) != 1:
+        return images, False, why      # image2video 就该只有 1 张，多的交回原路报错
+    out = []
+    for ref in images:
+        if _is_remote(ref):
+            out.append(ref)             # 已是直链的原位保留，不重复上传
+            continue
+        url, uerr = _upload_ref_image(ref, key, base)
+        if uerr:
+            return images, False, f"参考图上传图床失败（{ref}：{uerr}）"
+        out.append(url)
+    return out, True, ""
 
 
 def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
@@ -496,8 +512,13 @@ def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
         if operation == "multimodal2video":
             if not images:
                 return None, "multimodal2video 至少需要 1 个 --image 或 --video"
-            # multimodal2video 只能靠 image 字段表达媒体（server 单镜契约就这一个媒体位）
-            payload["image"] = images[0]
+            cap = _MULTI_IMAGE_CAP.get(model, _MULTI_IMAGE_CAP_DEFAULT)
+            if len(images) > cap:
+                return None, (f"{model} 的图片参考上限 {cap} 张，本镜给了 {len(images)} 张"
+                              f"（2.5 是 30、2.0 家族是 9）")
+            # **顺序即语义**：数组第 N 张就是提示词里的 @图片N。server 2026-08-06 回执承诺
+            # 保序、不去重、不重排（同一 URL 传两次也物化两份），所以这里也**绝不去重排序**。
+            payload["images"] = list(images)
         # text2video **一律不带 image**：本地 CLI 的 text2video 完全忽略 images（远程图也照样忽略），
         # 契约里 image 字段也只标了「image2video 用」，带上去 server 可能 422
         if ratio:
@@ -1070,10 +1091,23 @@ def batch(plan_path: str, out_dir: str, *, submit_only: bool = False,
         plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     except Exception as e:
         return {"success": False, "error": f"读取 plan 失败：{e}"}
-    if isinstance(plan, dict) and "shots" in plan:
+    seg_index: list[int] = []   # v3 专用：results 下标 → segment 序号
+    if isinstance(plan, dict) and plan.get("segments"):
+        # v3 电影格式：一段 = 一次生成（≤30s），时间轴提示词让**模型在段内自己切镜**。
+        # 不在这里把镜头拆开逐条提交——那样镜间的人物/光线一致性要靠运气，
+        # 同一次生成里则是天然一致的（这是即梦这条产线最关键的用法差异）。
+        flat = []
+        for seg in plan["segments"]:
+            shot = dict(seg)
+            shot["duration"] = int(seg.get("gen") or 30)
+            shot.setdefault("operation", "image2video" if seg.get("image") else "text2video")
+            flat.append(shot)
+            seg_index.append(int(seg["index"]))
+        plan = flat
+    elif isinstance(plan, dict) and "shots" in plan:
         plan = plan["shots"]
     if not isinstance(plan, list) or not plan:
-        return {"success": False, "error": "plan 应为分镜数组（或 {shots:[...]})"}
+        return {"success": False, "error": "plan 应为分镜数组（或 {shots:[...]} / {beats:[...]}）"}
     try:
         b = resolve_backend(backend, api_base)
     except BackendError as e:
@@ -1088,6 +1122,11 @@ def batch(plan_path: str, out_dir: str, *, submit_only: bool = False,
             _err(f"\n=== 分镜 {i + 1}/{len(plan)} ===")
             results.append(_local_shot(i, shot, out_dir, submit_only=submit_only,
                                        max_wait=max_wait, interval=interval))
+    if seg_index:
+        # 回填段号：取片后按 segment-NN.mp4 改名，cut_assemble 再按旁白边界切开
+        for r, si in zip(results, seg_index):
+            r["segment"] = si
+            r["target_name"] = f"segment-{si:02d}.mp4"
     ok = sum(1 for r in results if r.get("success"))
     return {"success": ok == len(results), "total": len(results), "ok": ok,
             "results": results, "backend": b}

@@ -433,7 +433,7 @@ def main():
     ap.add_argument("--api-base", help="API base（默认 NBDPSY_VIDEO_API_BASE 或 https://mcp.nbdpsy.com）")
     ap.add_argument("--no-wait", action="store_true", help="提交后不等结果（稍后 --job 复查）")
     ap.add_argument("--wait-timeout", type=float,
-                    help="轮询等待上限秒数（默认 max(180, 页数×90)）")
+                    help="轮询等待上限秒数（默认 max(600, 页数×90)）")
     ap.add_argument("--dry-run", action="store_true", help="只打 payload 摘要与目标 URL，不发请求")
     ap.add_argument("--job", type=int, help="复查该已入队任务并补下载（配 --note 或 --images-dir 定位目录）")
     ap.add_argument("--session", help="--job 复查用的 session_id（缺省则从状态文件恢复）")
@@ -507,7 +507,10 @@ def main():
             print(json.dumps(pending_envelope(sid, jid, anchor, warnings), ensure_ascii=False))
             return
 
-        timeout = args.wait_timeout if args.wait_timeout is not None else max(180, len(selected) * 90)
+        # 下限 600s 是 server 2026-08-06 回执点名要求的：上游超时后服务端会重试 2 次
+        # （退避 5s/15s），"接了连接又挂住"的最坏情况能跨过原来的 360s 窗口——那时轮询
+        # 提前放弃会误判成任务卡死，而服务端其实还在重试。宁可多等，不要误判。
+        timeout = args.wait_timeout if args.wait_timeout is not None else max(600, len(selected) * 90)
         view = poll_job(api_base, key, sid, jid, timeout=timeout)
         if view.get("status") == "gone":  # 极小概率：刚入队 server 就重启
             print(json.dumps(gone_envelope(sid, jid), ensure_ascii=False))
