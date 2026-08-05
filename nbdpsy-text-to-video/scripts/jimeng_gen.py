@@ -20,9 +20,9 @@ operation / status / videos / credit_count / meta / raw / error），server 侧�
   - 每次 submit 生成一个 `client_ref`(uuid4) 幂等键；**单镜 POST** 只有 requests 网络异常才重发一次，
     且**复用同一个 client_ref**（服务端按 ref 回已有 clip_id，不新建、不二次扣分）；
     HTTP 4xx/5xx 一律不重发，把 detail/error 原文透出。
-  - **批量 POST（/api/video-clip-batches）不自动重发**：契约只验收了单镜 POST 的 ref 幂等，
-    批量端点「逐镜 ref 去重」没有验收条款。ReadTimeout 恰恰意味着整批可能已入队，赌它幂等
-    = 8 镜 fast_vip 白烧 440 积分且排队中无法取消。网络异常原样透出，重发是运营的决策。
+  - **批量 POST（/api/video-clip-batches）同样只在网络异常时重发一次且复用同一组 ref**：
+    批量端点的逐镜 ref 去重已经 server 验收（2026-08-05 回执：同 shots 同 refs 重放 →
+    原 clip_ids 零新增零扣分，且去重先于登录/积分闸），重发是安全的。
   - 任何代码路径都**不会**对卡 querying 的任务自动重提；fetch 超时保留 submit_id、提示稍后再取
     （不重复扣分）。重提是运营的决策，不是脚本的。
 
@@ -32,14 +32,16 @@ operation / status / videos / credit_count / meta / raw / error），server 侧�
   - `query_result --submit_id=X --download_dir=Y` 成功后返回
     `result_json.videos[].path`（已下载到本地的真实路径，命名 {submit_id}_video_N.mp4），
     并带 `credit_count`（该任务消耗的积分）；
-  - Seedance 2.0 family 在 CLI 里只有 720p；image2video 的画幅由输入图推断（无 --ratio）。
+  - `--video_resolution` 必填且逐档严格校验，各档支持的分辨率并不一致（2.5 只有 480p/720p、
+    seedance2.0_vip 到 4k、其余只有 720p），**720p 是唯一对全家族都合法的一档**，故统一传它；
+    image2video 的画幅由输入图推断（无 --ratio）。
 
 所有结构化结果打到 **stdout(JSON)**，人类可读进度打到 **stderr**，方便上层 agent 解析。
 
 用法示例：
   python jimeng_gen.py credits
   python jimeng_gen.py gen --operation text2video --prompt "温暖诊室空镜，晨光缓缓移过沙发" \
-      --duration 5 --ratio 9:16 --model seedance2.0fast --out-dir ./clips
+      --duration 5 --ratio 9:16 --model seedance2.5 --out-dir ./clips
   python jimeng_gen.py gen --operation image2video --image ./counselor.png \
       --prompt "镜头缓慢推近，人物轻轻点头" --duration 8 --out-dir ./clips
   python jimeng_gen.py submit --operation text2video --prompt "..." --duration 5   # 只提交，拿 submit_id
@@ -68,19 +70,30 @@ import nbdpsy_common
 
 DREAMINA = shutil.which("dreamina") or os.path.expanduser("~/.local/bin/dreamina")
 
-# Seedance 2.0 家族（CLI 暴露的四个档位）。standard 质量最高，fast 性价比高，
-# _vip 走加速通道（额外积分换更短排队）。
+# Seedance 家族（CLI 暴露的六个档位）。2.0 系：standard 质量最高，fast 性价比高，
+# _vip 走加速通道（额外积分换更短排队），mini 是轻量档；**seedance2.5 是新一代，没有
+# fast / vip 变体**，且是 VIP-only。
 SEEDANCE_MODELS = {
     "seedance2.0",
     "seedance2.0fast",
     "seedance2.0_vip",
     "seedance2.0fast_vip",
+    "seedance2.0mini",
+    "seedance2.5",
 }
-DEFAULT_MODEL = "seedance2.0fast"
+DEFAULT_MODEL = "seedance2.5"
 RATIOS = {"1:1", "3:4", "16:9", "4:3", "9:16", "21:9"}
 OPERATIONS = ("text2video", "image2video", "multimodal2video")
-# duration 合法区间（Seedance 家族 4-15s）
-DUR_MIN, DUR_MAX = 4, 15
+# duration 合法区间：下限全家族 4s；上限**只有 seedance2.5 到 30s**，其余仍是 15s。
+DUR_MIN, DUR_MAX = 4, 30
+_DUR_MAX_DEFAULT = 15
+_DUR_MAX_BY_MODEL = {"seedance2.5": 30}
+
+
+def max_duration(model: str) -> int:
+    """该模型的单镜时长上限（秒）。未知档按家族默认 15s 判——宁可窄不宜宽，放宽只会让一条
+    CLI/服务端必拒的镜白跑一趟提交。"""
+    return _DUR_MAX_BY_MODEL.get(model, _DUR_MAX_DEFAULT)
 
 _SUBMIT_ID_RE = re.compile(r"[0-9a-f]{16}")
 _COMPLIANCE_HINT = "AigcComplianceConfirmationRequired"
@@ -348,8 +361,10 @@ def _validate_basics(model: str, duration: int, ratio: Optional[str]) -> Optiona
     """model / duration / ratio 三项通用校验（两个后端共用，话术与本地 CLI 版逐字一致）。"""
     if model not in SEEDANCE_MODELS:
         return f"model 必须是 {sorted(SEEDANCE_MODELS)} 之一，收到 {model!r}"
-    if not (DUR_MIN <= duration <= DUR_MAX):
-        return f"duration 必须在 {DUR_MIN}-{DUR_MAX}s（Seedance 家族），收到 {duration}"
+    ceiling = max_duration(model)
+    if not (DUR_MIN <= duration <= ceiling):
+        return (f"duration 必须在 {DUR_MIN}-{ceiling}s（{model}），收到 {duration}。"
+                f"仅 seedance2.5 支持到 {DUR_MAX}s，其余模型上限 {_DUR_MAX_DEFAULT}s")
     if ratio and ratio not in RATIOS:
         return f"ratio 必须是 {sorted(RATIOS)} 之一，收到 {ratio!r}"
     return None
@@ -675,7 +690,7 @@ def _build_gen_args(operation: str, prompt: str, *, model: str, duration: int,
         f"--prompt={prompt}",
         f"--duration={duration}",
         f"--model_version={model}",
-        f"--video_resolution=720p",   # Seedance 家族仅 720p
+        f"--video_resolution=720p",   # 必填且逐档校验；720p 是唯一对全家族都合法的一档
         f"--poll={poll}",
     ]
     if operation == "text2video":

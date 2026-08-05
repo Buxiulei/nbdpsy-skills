@@ -429,6 +429,94 @@ def test_server_submit_validates_locally_before_spending(monkeypatch):
     assert [c for c in calls if c["method"] == "POST"] == []
 
 
+# ---------- 2b. 模型面（六档 / 默认 2.5 / 时长上限按模型分档）----------
+
+def test_default_model_is_seedance25(monkeypatch, tmp_path):
+    """不指定 model 时，单镜与批量的 payload 都落 seedance2.5。"""
+    assert jg.DEFAULT_MODEL == "seedance2.5"
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "c1"})], seen))
+    r = jg.submit("text2video", "温暖诊室空镜", backend="server", duration=5)
+    assert r["success"] is True
+    assert seen[0]["model"] == "seedance2.5"
+
+    def handler(method, url, body):
+        if url.endswith(jg.EP_DREAMINA_STATUS):
+            return FakeResp(200, {"logged_in": True})
+        seen.append(body)
+        return FakeResp(202, {"batch_id": "b1", "clip_ids": ["c2", "c3"]})
+
+    fake_requests(monkeypatch, handler)
+    plan = write_plan(tmp_path, [
+        {"operation": "text2video", "prompt": "a", "duration": 5},
+        {"operation": "text2video", "prompt": "b", "duration": 5},
+    ])
+    out = jg.batch(plan, str(tmp_path), submit_only=True)
+    assert out["ok"] == 2
+    assert [s["model"] for s in seen[-1]["shots"]] == ["seedance2.5", "seedance2.5"]
+
+
+def test_seedance25_allows_thirty_second_shot(monkeypatch):
+    """2.5 到 30s：这是本次放宽的唯一一档，客户端不许自己先拦下来。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "c1"})], seen))
+    r = jg.submit("text2video", "长镜头", backend="server", duration=30, model="seedance2.5")
+    assert r["success"] is True, r.get("error")
+    assert seen[0]["duration"] == 30 and seen[0]["model"] == "seedance2.5"
+
+
+def test_non_25_models_capped_at_fifteen_seconds(monkeypatch):
+    """其余五档仍是 15s 上限，**两条后端路径都在本地拦**：一个请求不发、CLI 一次不跑。
+
+    上限是按模型分档的，字段界（30s）只对 2.5 有意义——不逐模型收紧，一条 20s 的 fast 镜会
+    白跑一趟提交才被服务端/CLI 拒。
+    """
+    with_key(monkeypatch)
+    calls, _ = fake_requests(monkeypatch, submit_handler([]))
+    r = jg.submit("text2video", "x", backend="server", duration=16, model="seedance2.0fast")
+    assert r["success"] is False
+    assert "duration" in r["error"] and "仅 seedance2.5" in r["error"]
+    assert [c for c in calls if c["method"] == "POST"] == []
+
+    cli_calls = fake_local_cli(monkeypatch)
+    local = jg.submit("text2video", "x", backend="local", duration=16, model="seedance2.0mini")
+    assert local["success"] is False and "仅 seedance2.5" in local["error"]
+    assert cli_calls == [], "非法时长不该真去跑 CLI"
+
+
+def test_cli_model_choices_follow_the_model_set(monkeypatch):
+    """argparse 的 --model choices 跟着 SEEDANCE_MODELS 走：新增两档开箱可用、缺省落 2.5、
+    家族外的档在参数解析阶段就被拒（exit 2），一个请求都不发。"""
+    seen = {}
+
+    def _fake_generate(*_a, **kw):
+        seen.update(kw)
+        return {"success": True}
+
+    monkeypatch.setattr(jg, "generate", _fake_generate)
+    for model in ("seedance2.0mini", "seedance2.5"):
+        monkeypatch.setattr(sys, "argv",
+                            ["jimeng_gen.py", "submit", "--prompt", "x", "--model", model])
+        with pytest.raises(SystemExit) as exc:
+            jg.main()
+        assert exc.value.code == 0
+        assert seen["model"] == model
+
+    seen.clear()
+    monkeypatch.setattr(sys, "argv", ["jimeng_gen.py", "submit", "--prompt", "x"])
+    with pytest.raises(SystemExit):
+        jg.main()
+    assert seen["model"] == "seedance2.5"
+
+    monkeypatch.setattr(sys, "argv",
+                        ["jimeng_gen.py", "submit", "--prompt", "x", "--model", "seedance3.0"])
+    with pytest.raises(SystemExit) as exc:
+        jg.main()
+    assert exc.value.code == 2
+
+
 def test_server_submit_local_image_falls_back_to_local_cli(monkeypatch):
     """参考图在本机（server 取不到）→ 整镜回落本地 CLI，而不是把 server 拿不到的路径发过去。"""
     with_key(monkeypatch)

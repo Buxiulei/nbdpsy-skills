@@ -9,6 +9,22 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.62.0] — 2026-08-05
+
+### text-to-video：默认模型切 seedance2.5 + 新版 CLI 适配 + 服务化交接文档
+
+- **默认模型 seedance2.5**（CLI a857341 起可用）：130 积分/5s（生产实测对账精确）、**秒级出片
+  无排队**、时长 4–30s、VIP-only。模型集合扩到六档（另新增 seedance2.0mini）；时长校验按模型
+  分档（仅 2.5 到 30s，其余 15s，超档当场拦不白跑提交）。`--video_resolution` 统一 720p
+  （全家族唯一通吃档）。server 侧同步上线（nbdpsy-server `0e1c334`），**必须先于本版部署**。
+- **新版 CLI 登录换 OAuth Device Flow**：凭据迁 `~/.local/share/dreamina/`，授权链接任何设备
+  可开（不再受 127.0.0.1 回调限制）；SKILL.md 登录指引已重写，旧 `dreamina_login.py` 对新 CLI
+  失效待重写。⚠️ 升级 CLI 会让旧登录态一次性失效，需重扫一次。
+- 新增《交接-2026-08-05-即梦视频生成服务化.md》：server 端点速查、资金语义六条铁律、模型
+  经济学（2.5=130 秒出 / fast_vip=55 ~3min / fast=25 可排 15h+）、待开发清单（image2video
+  先传图床、登录脚本重写）。模块 docstring 的「批量不自动重发」陈旧表述同步修正（v1.61.3
+  起已开重发）。
+
 ## [1.61.4] — 2026-08-05
 
 ### fuwuhao-operator：第 5 步改为「先选路径」——文章进主页也走后台点发表

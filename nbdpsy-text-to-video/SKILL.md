@@ -23,7 +23,7 @@ description: >-
 ## 关键事实（已实测验证）
 
 - 即梦 CLI 是**字节官方**工具（`dreamina`），走会员积分（`dreamina user_credit` 可查）。
-- **Seedance 2.0 在 CLI 里只有 720p**；单段 `duration` 4–15s（整数）；`image2video` 画幅由输入图推断（不接受 `--ratio`），`text2video`/`multimodal2video` 可设 `--ratio`（1:1 / 3:4 / 4:3 / 9:16 / 16:9 / 21:9）。
+- **本产线统一出 720p**（`--video_resolution` 必填且逐档校验，各档支持的分辨率并不一致，720p 是唯一对全家族都合法的一档）；单段 `duration` 取整数秒，**`seedance2.5` 4–30s、其余模型 4–15s**；`image2video` 画幅由输入图推断（不接受 `--ratio`），`text2video`/`multimodal2video` 可设 `--ratio`（1:1 / 3:4 / 4:3 / 9:16 / 16:9 / 21:9）。
 - 生成**异步、排队可能数小时**（会员单账号串行）。→ 大批量用「`--submit-only` 先灌队列、并行 `fetch` 取回」，submit_id 不丢、不重复扣分。
 - `{SKILL_DIR}/scripts/` 下所有脚本输出统一 **stdout=JSON / stderr=进度**，便于解析。
 
@@ -39,7 +39,7 @@ python3 {SKILL_DIR}/scripts/check_env.py --install  # 缺啥自动装(dreamina �
 读 stdout 的 `{"ready": true/false, "checks":[...]}`：
 - **即梦后端自动探测**：本机有 `NBDPSY_XHS_API_KEY`（与小红书自动发布同一把）且 server 已上线即梦能力（`GET /api/dreamina-status` 回 `logged_in=true`）→ 画面生成走 **nbdpsy-server**，运营**免装 dreamina CLI、免扫码**（登录态与积分在 server 一份，管理员维护）。此时自检里 `dreamina CLI` / `dreamina 登录 & 积分` 两条换成一条 `即梦服务(server)`，下面两条不适用。探测不通（没凭据 / server 未上线该能力 / 网络不通）自动回落本机 CLI，下面两条照旧。
 - `dreamina CLI` 缺 → 自动 `curl -fsSL https://jimeng.jianying.com/cli | bash`。
-- `dreamina 登录 & 积分` 失败 → **agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py`（后台运行或把 Bash 工具超时设 ≥5 分钟；实时把 stderr 进度转述给用户）。脚本会**自己把即梦登录页开到用户浏览器里**，用户唯一要做的是用**抖音 App 扫页面上那张二维码**。登录页的回调地址是 `127.0.0.1`，**必须在跑脚本的这台电脑上打开**——让用户拿手机扫脚本给的网址是死路（回调回不到他电脑）。浏览器没弹出时脚本会印一整行完整网址供本机手动粘贴。积分偏低会给警告。
+- `dreamina 登录 & 积分` 失败 → **CLI a857341 起登录改为 OAuth Device Flow**：agent 后台跑 `dreamina login`，从 stdout 抓 `verification_uri` 网址开给用户（**任何设备打开授权都行**，不再有旧版 127.0.0.1 回调「必须本机打开」的限制），用户抖音 App 扫码/确认即可；授权码约 10 分钟过期，过期重跑一次再给新链接。新凭据在 `~/.local/share/dreamina/`。⚠️ 旧脚本 `dreamina_login.py` 是给老回调流写的、对新 CLI 无效（待重写，见交接文档）。积分偏低会给警告。
 - `ffmpeg`/`ffprobe`/`Noto Sans CJK SC 字体` 缺 → 给 `sudo apt-get install -y ffmpeg fonts-noto-cjk`（macOS 用 brew；Windows 无 Noto 时字幕回退微软雅黑，或用 `FONT_PATH` 环境变量显式指定字体文件）。
 - `edge-tts 旁白(可选)` 缺 → `pip install edge-tts`（要 TTS 配音才需要；纯字幕+BGM 可不装）。
 - `requests(豆包TTS依赖)` 缺 → `pip install requests`（用豆包高音质旁白才需要；edge 引擎不需要）。
@@ -58,7 +58,7 @@ check_env 报某项凭据缺失时，按下表**主动引导用户提供**，拿
 |---|---|---|
 | 豆包 TTS · 新版（`VOLC_TTS_API_KEY`，**优先**）| skill `.env` | 主动问用户要（火山控制台 `speech/new/setting/apikeys` 自建单一 API Key），写入 `.env`。不配也行 → 用 edge-tts 免费旁白（`--engine edge`） |
 | 豆包 TTS · 旧版（`VOLC_TTS_APPID` / `VOLC_TTS_ACCESS_TOKEN` / `VOLC_TTS_CLUSTER`，向后兼容）| skill `.env` | 已有 `VOLC_TTS_API_KEY` 可不填；否则主动问用户要（火山控制台→语音合成大模型），写入 `.env` |
-| 即梦登录 | `~/.dreamina_cli/`（本地）| **server 模式下本机不需要登录**——管理员在 server 侧配好公司号登录态后，运营只要有 `NBDPSY_XHS_API_KEY` 就零登录零安装（见第 0 步「即梦后端自动探测」）。回落本机 CLI 时才需要：**agent 自己跑** `python3 {SKILL_DIR}/scripts/dreamina_login.py` 帮用户登录（脚本自己打开登录页，用户只需**抖音 App 扫页面上的二维码**）；凭据存本机 `~/.dreamina_cli/`、agent 不经手凭据本体，即梦登录无法进凭据配置包 |
+| 即梦登录 | `~/.local/share/dreamina/`（本地，CLI a857341 起；旧版在 `~/.dreamina_cli/`）| **server 模式下本机不需要登录**——管理员在 server 侧配好公司号登录态后，运营只要有 `NBDPSY_XHS_API_KEY` 就零登录零安装（见第 0 步「即梦后端自动探测」）。回落本机 CLI 时才需要：agent 后台跑 `dreamina login` 抓 `verification_uri` 开给用户，**任何设备**抖音 App 扫码授权即可（Device Flow，码约 10 分钟过期）；agent 不经手凭据本体，即梦登录无法进凭据配置包 |
 | 首模型合规授权 | Dreamina 网页端 | 报 `AigcComplianceConfirmationRequired` 时引导用户去网页端一次性授权 |
 | sudo（装 ffmpeg/字体，如需）| 不留存 | 需要时即时问用户密码，用完不写进任何文件/日志 |
 
@@ -252,12 +252,12 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py credits
 # 新题材先试水 1 镜，确认观感 + 实测排队时长（关键决策变量！）
 python3 {SKILL_DIR}/scripts/jimeng_gen.py gen --operation text2video \
   --prompt "温暖咨询室空镜，晨光移过沙发，镜头极慢推近，画面中无任何文字" \
-  --duration 5 --ratio 9:16 --model seedance2.0fast --out-dir <workdir>
+  --duration 5 --ratio 9:16 --model seedance2.5 --out-dir <workdir>
 ```
 
 - **后端参数（所有子命令通用）**：`--backend server|local|auto`（默认 `auto`，规则见第 0 步；环境变量 `NBDPSY_JIMENG_BACKEND` 可改默认，显式 `--backend` 优先）、`--api-base URL`（server 基址，默认 `NBDPSY_VIDEO_API_BASE` 或 `https://mcp.nbdpsy.com`）。输出 JSON 多一个 `backend` 键表明这次实际走了哪条；**服务化之前的字段两个后端一个不少**（`success`/`submit_id`/`status`/`videos`/`credit_count`/`meta`/`raw`/`error`），server 侧另附 `client_ref`/`video_url`/`expires_at`/`batch_id`/`low_threshold_hit` 等新键，老解析忽略即可。server 模式下 `--image` 只收**图床直链或 `/uploads` 路径**（server 取不到你本机的文件），给本机路径会自动整镜回落本地 CLI 并在 stderr 说明。
-- 模型可选：`seedance2.0` / `seedance2.0fast`（默认）/ `seedance2.0_vip` / `seedance2.0fast_vip`。
-- **积分 & 排队（实测，重要）**：5s/720p——普通 `fast` 25 积分、`fast_vip` 55 积分（+30 换插队）；扣费 success 才结算。**排队是真瓶颈**：实测高峰普通 `fast` 一条 5s 片排队**近 2 小时仍未出片**，而 `fast_vip` 加速通道 **~3 分钟出片**。→ **投放/急用务必走 `seedance2.0fast_vip`**（真实可用单条成本按 VIP 55 积分算）；不急的量才用普通档 + `--submit-only` 夜间错峰。
+- 模型可选：`seedance2.5`（**默认**）/ `seedance2.0` / `seedance2.0fast` / `seedance2.0_vip` / `seedance2.0fast_vip` / `seedance2.0mini`。**`seedance2.5` 是新一代，没有 fast / vip 变体，是 VIP-only**，时长 4–30s（其余模型 4–15s，超了当场被拦、不会白跑一趟提交）。⚠️ **2.5 首次使用可能需要先到即梦网页端手动生成一次**做账号级合规授权（否则回 `AigcComplianceConfirmationRequired`）——那是要人去点的一次性动作，脚本重试无意义。
+- **积分 & 排队（实测，重要）**：5s/720p 实测——**`seedance2.5` 130 积分、秒级出片无排队**（2026-08-05 生产实测，maestro 会员）；普通 `fast` 25 积分但排队极长（实测队列可 15 小时+）；`fast_vip` 55 积分 ~3 分钟出片。扣费 success 才结算。`seedance2.0mini` 未实测（服务端对它不估算不 warning，跑前自己看 `credits`）。→ 默认 2.5 = 质量+速度换 5 倍于 fast 的积分；**预算敏感的批量**用 `fast_vip`（55 分/条）或夜间 `fast` + `--submit-only` 错峰；急用不差钱走默认。
 - **失败/超时保留 submit_id，绝不重复提交扣分**；排队中任务无法取消（dreamina 无 cancel）。
 - **并行生产（关键提速）**：`batch` 不带 `--submit-only` 时是**串行** submit+fetch（等一镜下完才提交下一镜）很慢。正解 = 十步流程的 5–6 步：**先全部 `--submit-only` 灌队列、再并行 fetch**，即梦后端同时排队渲染，墙钟≈最慢单镜而非 N 镜相加。
 - **卡 querying 重提**：个别任务卡 `querying` 数小时 → 重新提交拿新 submit_id（走 VIP）、新旧并行谁先渲染好用谁（旧积分已沉没，不因等待翻倍损失时间）。
