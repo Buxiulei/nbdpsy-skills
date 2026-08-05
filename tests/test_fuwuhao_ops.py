@@ -58,6 +58,18 @@ class FakeRequests:
             raise nxt
         return nxt
 
+    def post(self, url, headers=None, files=None, timeout=None):
+        """multipart 上传走 requests.post（wechat_api.upload_material_image）——
+        与 request() 共用同一条响应队列，files 也记下来供断言。"""
+        self.calls.append({"method": "POST", "url": url, "body": None,
+                           "files": files, "timeout": timeout})
+        if not self.queue:
+            raise AssertionError(f"没有预置更多响应，但脚本又发了一次请求：POST {url}")
+        nxt = self.queue.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+
     def paths(self):
         """透传调用里的微信 path（其余端点回 None），用来断言「到底动了哪个接口」。"""
         return [(c["body"] or {}).get("path") for c in self.calls]
@@ -600,6 +612,86 @@ class Test草稿:
         net.serve(FakeResp(200, {"success": True, "data": {"news_item": []}}))
         code, data, _ = run_cli(A, ["--draft-get", "--media-id", "错的"], capsys)
         assert code == 1 and "台账 id" in data["error"]
+
+
+class Test贴图:
+    """贴图（图片消息 newspic）：传图 + 建稿一条龙。2026-08-05 生产实测通过
+    （台账 9「总在照顾别人的8个信号」，8 图小红书笔记平移，published）。"""
+
+    def _imgs(self, tmp_path, n=2):
+        paths = []
+        for i in range(1, n + 1):
+            p = tmp_path / f"P0{i}.png"
+            p.write_bytes(b"\x89PNG-fake")
+            paths.append(str(p))
+        return paths
+
+    def _text(self, tmp_path, content="八个信号，讲清那只先伸出去的手。#亲职化"):
+        p = tmp_path / "copy.txt"
+        p.write_text(content, encoding="utf-8")
+        return str(p)
+
+    def test_传图建稿一条龙且图序即成稿序(self, net, tmp_path, capsys):
+        """首图即封面：上传顺序、image_list 顺序必须与 --images 给的顺序逐一对齐。"""
+        net.serve(FakeResp(200, {"success": True, "media_id": "IMG1"}),
+                  FakeResp(200, {"success": True, "media_id": "IMG2"}),
+                  FakeResp(200, {"success": True, "data": {"media_id": "NP1"}}))
+        imgs = self._imgs(tmp_path)
+        code, data, _ = run_cli(A, ["--draft-add-newspic", "--title", "标题",
+                                    "--text", self._text(tmp_path),
+                                    "--images", ",".join(imgs)], capsys)
+        assert code == 0 and data["media_id"] == "NP1" and data["image_count"] == 2
+        assert data["image_order"] == ["P01.png", "P02.png"]
+        # 前两跳是 multipart 上传，第三跳才是透传建稿
+        assert [c["files"]["file"][0] for c in net.calls[:2]] == ["P01.png", "P02.png"]
+        art = net.calls[2]["body"]["body"]["articles"][0]
+        assert art["article_type"] == "newspic"
+        assert [x["image_media_id"] for x in art["image_info"]["image_list"]] == ["IMG1", "IMG2"]
+        assert art["content"].startswith("八个信号") and art["need_open_comment"] == 1
+        assert "首图 P01.png 即封面" in data["hint"] and "--publish --media-id NP1" in data["hint"]
+
+    def test_目录形态按文件名排序取图(self, net, tmp_path, capsys):
+        net.serve(FakeResp(200, {"success": True, "media_id": "A"}),
+                  FakeResp(200, {"success": True, "media_id": "B"}),
+                  FakeResp(200, {"success": True, "data": {"media_id": "NP2"}}))
+        self._imgs(tmp_path)
+        (tmp_path / "notes.md").write_text("不是图", encoding="utf-8")   # 非图文件要被无视
+        code, data, _ = run_cli(A, ["--draft-add-newspic", "--title", "标题",
+                                    "--text", self._text(tmp_path),
+                                    "--images", str(tmp_path)], capsys)
+        assert code == 0 and data["image_order"] == ["P01.png", "P02.png"]
+
+    def test_超过20张本地就拦零调用(self, net, tmp_path, capsys):
+        imgs = ",".join(f"P{i:02}.png" for i in range(1, 22))
+        code, data, _ = run_cli(A, ["--draft-add-newspic", "--title", "标题",
+                                    "--text", self._text(tmp_path), "--images", imgs], capsys)
+        assert code == 1 and "20" in data["error"] and net.calls == []
+
+    def test_文案是HTML产物时警告不拦(self, net, tmp_path, capsys):
+        """贴图正文纯文本原样显示——错灌 --html-out 产物是最可能的事故，要在警告里点破。"""
+        net.serve(FakeResp(200, {"success": True, "media_id": "A"}),
+                  FakeResp(200, {"success": True, "data": {"media_id": "NP3"}}))
+        code, data, _ = run_cli(A, ["--draft-add-newspic", "--title", "标题",
+                                    "--text", self._text(tmp_path, "<p>正文</p>"),
+                                    "--images", self._imgs(tmp_path, 1)[0]], capsys)
+        assert code == 0 and any("原样显示" in w for w in data["warnings"])
+
+    def test_贴图草稿拒绝draft_update指去重建(self, net, capsys):
+        """ARTICLE_FIELDS 是图文的字段表，整篇替换会把 image_info 抹掉——必须拒。"""
+        net.serve(FakeResp(200, {"success": True, "data": {"news_item": [
+            {"article_type": "newspic", "title": "贴图", "content": "文案",
+             "image_info": {"image_list": [{"image_media_id": "A"}]}}]}}))
+        code, data, _ = run_cli(A, ["--draft-update", "--media-id", "M1",
+                                    "--title", "新标题"], capsys)
+        assert code == 1 and "draft-add-newspic" in data["error"]
+        assert A and len(net.calls) == 1        # 只读了草稿，没发 update
+
+    def test_图片不是jpg_png时确定失败(self, net, tmp_path, capsys):
+        p = tmp_path / "x.webp"
+        p.write_bytes(b"fake")
+        code, data, _ = run_cli(A, ["--draft-add-newspic", "--title", "标题",
+                                    "--text", self._text(tmp_path), "--images", str(p)], capsys)
+        assert code == 1 and "jpg/png" in data["error"] and net.calls == []
 
 
 class Test发布与台账:

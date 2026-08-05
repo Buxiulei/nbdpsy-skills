@@ -13,6 +13,11 @@
     python3 article_ops.py --draft-get --media-id <media_id>        # 看草稿现状（正文不打印）
     python3 article_ops.py --draft-update --media-id <id> --content new.html [--title ...]
 
+    # 建贴图草稿（图片消息，原「小绿书」：图为主+纯文本短文案，传图+建稿一条龙。
+    # 发表后进公众号主页【贴图】栏，微信对贴图有独立推荐流量。小红书笔记平移用它）
+    python3 article_ops.py --draft-add-newspic --title "标题" --text 文案.txt \\
+        --images 图目录或P01.png,P02.png,...     # ≤20 张，首图即封面；贴图不支持 --draft-update
+
     # 发布（不推送粉丝、不占群发次数）
     python3 article_ops.py --publish --media-id <media_id>
 
@@ -228,6 +233,89 @@ def do_draft_add(args, api_base, key):
             "article_count": len(articles), "warnings": warnings, "hint": hint}, 0
 
 
+# ── 贴图（图片消息 newspic）────────────────────────────────────────────────
+# 「贴图」= 原「小绿书」（图片/文字消息）2026 年的升级版：图为主、短文为辅，
+# 有独立的分发位（公众号主页【贴图】栏、看一看、搜一搜「贴图号」分类）。
+# 小红书笔记平移到服务号走这条命令：图直接复用，文案取笔记的发布文案。
+MAX_NEWSPIC_IMAGES = 20      # 微信图片消息上限 20 张，**首图即封面**
+NEWSPIC_TEXT_WARN = 1000     # 贴图文案超过这个字数就该反思是不是想发的是文章
+_NEWSPIC_EXTS = (".jpg", ".jpeg", ".png")
+
+
+def resolve_newspic_images(spec: str):
+    """--images 解析：一个目录（取其中全部 jpg/png，按文件名排序）或逗号分隔的文件列表
+    （给出的顺序就是成稿顺序）。顺序很重要——**首图即封面**，发出去就定死了。"""
+    p = Path(spec)
+    if p.is_dir():
+        files = sorted(q for q in p.iterdir() if q.suffix.lower() in _NEWSPIC_EXTS)
+        if not files:
+            raise OpFailed(f"目录 {p} 里没有 jpg/png 图片。")
+    else:
+        files = [Path(s.strip()) for s in spec.split(",") if s.strip()]
+        if not files:
+            raise OpFailed("--images 要么给一个图片目录，要么给逗号分隔的图片文件列表。")
+    if len(files) > MAX_NEWSPIC_IMAGES:
+        raise OpFailed(f"给了 {len(files)} 张图，超过微信图片消息的上限 {MAX_NEWSPIC_IMAGES} 张"
+                       "——挑一遍再来，别指望微信替你截断。")
+    return files
+
+
+def read_newspic_text(path):
+    """贴图文案是**纯文本**：微信原样展示，HTML/Markdown 记号都会变成字面量怼在读者脸上。
+    这里与 read_content 正好相反——那边拒收非 HTML，这边警告疑似 HTML。"""
+    p = Path(path)
+    if not p.is_file():
+        raise OpFailed(f"文案文件不存在：{p}——`--text` 要的是**原始文案**纯文本"
+                       "（小红书笔记的发布文案那段），不是 md2wechat.py 的编译产物。")
+    text = p.read_text(encoding="utf-8-sig").strip()
+    if not text:
+        raise OpFailed(f"文案文件是空的：{p}")
+    warnings = []
+    if re.search(r"<[a-zA-Z][^>]*>", text):
+        warnings.append("文案里有 HTML 标签——贴图正文是纯文本，标签会**原样显示**给读者。"
+                        "这多半是错把 --html-out 的编译产物当文案了，贴图要的是原始文案。")
+    if "**" in text or re.search(r"^#{1,6} ", text, re.M):
+        warnings.append("文案里有 Markdown 记号（** 或行首 #）——贴图正文原样显示，"
+                        "发布前先把记号清掉（话题标签 #xx 放在句中/结尾的不算）。")
+    if len(text) > NEWSPIC_TEXT_WARN:
+        warnings.append(f"文案 {len(text)} 字：贴图的形态是「图为主、文为辅」，200-400 字最合适，"
+                        "太长会被折叠。真有这么多要说的，考虑发文章（--draft-add）。")
+    return text, warnings
+
+
+def do_draft_add_newspic(args, api_base, key):
+    title = require(args.title, "--draft-add-newspic 需要 --title（发出去就定死，改＝删+重发）。")
+    text, warnings = read_newspic_text(require(args.text, "--draft-add-newspic 需要 --text <文案文件>"
+                                                          "（纯文本，不是 HTML）。"))
+    files = resolve_newspic_images(require(args.images, "--draft-add-newspic 需要 --images "
+                                                        "<图片目录 或 逗号分隔的文件列表>。"))
+    # 逐张传永久素材。上传幂等（失败重跑只是多占素材），所以中途失败直接整条重跑即可
+    media_ids = []
+    for i, f in enumerate(files, 1):
+        media_ids.append(wechat_api.upload_material_image(api_base, key, f, args.timeout))
+        wechat_api.warn(f"  图 {i}/{len(files)} 已传：{f.name}")
+    article = {
+        "article_type": "newspic",
+        "title": title,
+        "content": text,
+        "need_open_comment": 0 if args.no_comment else 1,
+        "only_fans_can_comment": 0,
+        "image_info": {"image_list": [{"image_media_id": m} for m in media_ids]},
+    }
+    data = wechat_api.proxy_call(api_base, key, "/cgi-bin/draft/add",
+                                 {"articles": [article]}, args.timeout)
+    media_id = data.get("media_id")
+    if not media_id:
+        raise OpFailed(f"微信没回 media_id：{json.dumps(data, ensure_ascii=False)[:200]}")
+    return {"outcome": "done", "media_id": media_id, "title": title,
+            "image_count": len(files), "image_order": [f.name for f in files],
+            "warnings": warnings,
+            "hint": f"贴图草稿已建（{len(files)} 张图，**首图 {files[0].name} 即封面**）。"
+                    f"确认图序与文案后 `--publish --media-id {media_id}`——发表后进公众号主页"
+                    "【贴图】栏，不推送粉丝、不占群发次数、无次数限制。"
+                    "贴图草稿**不支持 --draft-update**：要改，改完源材料重跑本命令重建一份即可。"}, 0
+
+
 def fetch_draft(api_base, key, media_id, timeout):
     """读草稿，返回 news_item 数组（微信原始结构）。"""
     data = wechat_api.proxy_call(api_base, key, "/cgi-bin/draft/get",
@@ -277,6 +365,12 @@ def do_draft_update(args, api_base, key):
     index = args.index or 0
     if not 0 <= index < len(items):
         raise OpFailed(f"--index {index} 超出范围：这份草稿只有 {len(items)} 篇（下标 0 起）。")
+    # 贴图草稿整篇替换会把 image_info/article_type 抹掉（ARTICLE_FIELDS 是图文的字段表），
+    # 「更新」出来的必然是一篇丢了所有图的坏草稿——直接拒，重建才是对的动作
+    if items[index].get("article_type") == "newspic":
+        raise OpFailed("这篇是**贴图**（图片消息），--draft-update 的字段级更新只适用于图文。"
+                       "改贴图请改好源材料后用 --draft-add-newspic 重建一份（一条命令的事），"
+                       "旧草稿留着或删掉都无妨。")
     # 先读回原文再覆盖：draft/update 是整篇替换，漏给的字段会被清空（作者、封面最容易中招）
     merged = {k: v for k, v in items[index].items() if k in ARTICLE_FIELDS}
     merged.update(overrides)
@@ -479,6 +573,8 @@ def require(value, message):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="服务号文章：草稿 / 发布 / 台账 / 群发 / 删除")
     ap.add_argument("--draft-add", dest="draft_add", action="store_true", help="新建草稿")
+    ap.add_argument("--draft-add-newspic", dest="draft_add_newspic", action="store_true",
+                    help="新建贴图草稿（图片消息：传图 + 建稿一条龙，小红书笔记平移用）")
     ap.add_argument("--draft-get", dest="draft_get", action="store_true", help="查草稿（正文不打印）")
     ap.add_argument("--draft-update", dest="draft_update", action="store_true",
                     help="改草稿（先读回原文再覆盖指定字段）")
@@ -501,6 +597,11 @@ def main(argv=None):
     ap.add_argument("--index", type=int, help="多图文的下标（默认 0）")
     ap.add_argument("--articles", help="多图文清单 JSON（数组，最多 8 篇；每篇 title/content 必填）——与 --content/--title 二选一")
     ap.add_argument("--content", help="正文 HTML 文件（md2wechat.py --html-out 那份）")
+    ap.add_argument("--text", help="--draft-add-newspic 的文案文件（**纯文本**，非 HTML）")
+    ap.add_argument("--images", help="--draft-add-newspic 的图：目录（按文件名排序）"
+                                     "或逗号分隔文件列表（≤20 张，首图即封面）")
+    ap.add_argument("--no-comment", dest="no_comment", action="store_true",
+                    help="--draft-add-newspic 关闭评论（默认开启）")
     ap.add_argument("--title", help="文章标题（发出去就定死，改＝删+重发）")
     ap.add_argument("--author", help="作者署名")
     ap.add_argument("--digest", help="摘要")
@@ -520,7 +621,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     actions = [
-        (args.draft_add, do_draft_add), (args.draft_get, do_draft_get),
+        (args.draft_add, do_draft_add), (args.draft_add_newspic, do_draft_add_newspic),
+        (args.draft_get, do_draft_get),
         (args.draft_update, do_draft_update), (args.publish, do_publish),
         (args.ledger, do_ledger), (args.status is not None and not args.ledger, do_status),
         (args.mass_send, do_mass_send), (args.delete_published, do_delete_published),
@@ -528,8 +630,9 @@ def main(argv=None):
     ]
     chosen = [fn for flag, fn in actions if flag]
     if len(chosen) != 1:
-        ap.error("九选一：--draft-add / --draft-get / --draft-update / --publish / --ledger / "
-                 "--status --id N / --mass-send / --delete-published / --set-note --id N --note ...")
+        ap.error("十选一：--draft-add / --draft-add-newspic / --draft-get / --draft-update / "
+                 "--publish / --ledger / --status --id N / --mass-send / --delete-published / "
+                 "--set-note --id N --note ...")
 
     def action():
         api_base, key = wechat_api.credentials(args.api_base)

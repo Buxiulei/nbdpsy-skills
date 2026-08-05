@@ -30,6 +30,7 @@ menu_ops.py / article_ops.py（后续 schedule_ops.py / stats_ops.py 同）共�
 """
 import json
 import sys
+from pathlib import Path
 
 # 同目录 vendored 副本
 import nbdpsy_common
@@ -297,3 +298,40 @@ def proxy_call(api_base: str, key: str, path: str, body=None,
                         timeout, irreversible)
     inner = data.get("data")
     return inner if isinstance(inner, dict) else data
+
+
+# ── 永久图片素材上传（贴图/图片消息用）────────────────────────────────────
+# 封面 thumb 的上传住在 md2wechat.py（编译链路的一环）；这里是给**贴图（newspic）**用的
+# image 类型——贴图的图不进正文 HTML，直接以 media_id 列表进 image_info，与编译链路无关。
+IMAGE_MIMES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+MAX_MATERIAL_BYTES = 10 * 1024 * 1024   # material/add_material?type=image 微信侧上限 10MB
+
+
+def upload_material_image(api_base: str, key: str, path,
+                          timeout=DEFAULT_TIMEOUT) -> str:
+    """传一张永久图片素材，返回 media_id。上传是幂等的（重传只是多占一张素材），
+    失败一律按确定失败处理（OpFailed），直接重试安全。"""
+    p = Path(path)
+    if not p.is_file():
+        raise OpFailed(f"图片文件不存在：{p}")
+    mime = IMAGE_MIMES.get(p.suffix.lower())
+    if not mime:
+        raise OpFailed(f"图片 {p.name} 不是 jpg/png——微信素材只收这两种，先转格式再来。")
+    data = p.read_bytes()
+    if not data:
+        raise OpFailed(f"图片文件是空的：{p}")
+    if len(data) > MAX_MATERIAL_BYTES:
+        raise OpFailed(f"图片 {p.name} 有 {len(data) / 1024 / 1024:.1f}MB，"
+                       "超过微信永久素材 10MB 上限——先压缩再来，别硬传。")
+    requests = _requests()
+    try:
+        resp = requests.post(f"{api_base}/api/external/wechat/upload-material?type=image",
+                             headers={"Authorization": f"Bearer {key}"},
+                             files={"file": (p.name, data, mime)}, timeout=timeout)
+    except Exception as e:                     # noqa: BLE001 —— 同 request_json，统一分桶
+        raise _net_error(e, False)
+    payload = read_response(resp)
+    media_id = payload.get("media_id")
+    if not isinstance(media_id, str) or not media_id:
+        raise OpFailed(f"服务端响应缺 media_id：{json.dumps(payload, ensure_ascii=False)[:200]}")
+    return media_id

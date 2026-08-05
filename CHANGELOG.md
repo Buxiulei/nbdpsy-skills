@@ -9,6 +9,24 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.61.0] — 2026-08-05
+
+### fuwuhao-operator：贴图（图片消息 newspic）——小红书笔记一条命令平移到服务号
+
+「贴图」= 原「小绿书」2026 年升级版（图为主 + 纯文本短文案，对标小红书），微信给独立分发位
+（公众号主页【贴图】栏、看一看、搜一搜「贴图号」分类）。生产实测全链路通过
+（台账 9：8 图笔记平移 → published）。
+
+- **`article_ops.py --draft-add-newspic`**：`--title` + `--text 文案.txt`（纯文本）+
+  `--images 目录或逗号列表`（≤20 张，首图即封面），传永久素材 + 建 newspic 草稿一条龙；
+  发布/台账/备注/删除与文章共用既有命令。
+- **`wechat_api.upload_material_image()`**：永久图片素材上传公共层（jpg/png、10MB 本地闸门，
+  幂等可重试）。
+- **守卫**：`--draft-update` 遇贴图草稿直接拒（图文字段表整篇替换会抹掉全部图），指去重建；
+  文案疑似 HTML/Markdown 产物时警告点破；>20 张本地拦。
+- SKILL.md 新增「贴图（独立线）」一节；capabilities.md 八项 → 九项。
+- 测试 +6（顺序对齐/目录排序/20 张闸门/HTML 文案警告/update 拒绝/格式闸门），156 全过。
+
 ## [1.60.0] — 2026-08-05
 
 ### text-to-video：jimeng_gen 双后端——即梦生成迁 nbdpsy-server（REST 优先、本机 CLI 兜底）
