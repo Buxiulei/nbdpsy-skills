@@ -311,8 +311,10 @@ def do_draft_add_newspic(args, api_base, key):
             "image_count": len(files), "image_order": [f.name for f in files],
             "warnings": warnings,
             "hint": f"贴图草稿已建（{len(files)} 张图，**首图 {files[0].name} 即封面**）。"
-                    f"确认图序与文案后 `--publish --media-id {media_id}`——发表后进公众号主页"
-                    "【贴图】栏，不推送粉丝、不占群发次数、无次数限制。"
+                    "⚠ API 发表的内容**不进公众号主页**（2026-08-05 实证）——贴图要进主页"
+                    "【贴图】栏与推荐池，请运营在公众平台后台 → 草稿箱 → 打开这份草稿 → 点「发表」"
+                    "（后台发表的内容**台账不会自动记录**，贴图线上有什么以后台发表记录为准）。"
+                    f"只需要一条可分享链接时才用 `--publish --media-id {media_id}`。"
                     "贴图草稿**不支持 --draft-update**：要改，改完源材料重跑本命令重建一份即可。"}, 0
 
 
