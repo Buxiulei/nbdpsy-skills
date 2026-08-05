@@ -2,7 +2,8 @@
 name: nbdpsy-text-to-video
 description: >-
   把一段文本 / 一篇官网博客长文 / 一个心理科普主题，丝滑地转成一条带中文字幕的竖屏短视频，
-  用字节官方「即梦(Dreamina)CLI + Seedance 2.0」生成画面（走会员积分）、纯 ffmpeg 合成（零 Remotion 依赖）。
+  用字节官方即梦(Dreamina) Seedance 系列（默认 seedance2.5）生成画面——主路走 nbdpsy-server 的即梦
+  REST 面（运营零安装零登录），server 不可用时回落本机 dreamina CLI；纯 ffmpeg 合成（零 Remotion 依赖）。
   agent 全程自检依赖、缺啥自动装、再跑生成与合成任务。只要用户提到「文本转视频 / 文章转视频 /
   博客转视频 / 把这篇长文做成视频 / 做个科普短视频 / 出条视频号(抖音/B站)视频 / 用即梦/Seedance 生成视频 /
   把文章做成视频」，或给一篇小红书笔记+参考图要求直接出片，即使没说「skill」字样也应使用本 skill。
@@ -10,9 +11,9 @@ description: >-
   可选把成片回写到 blog_posts.video_url。
 ---
 
-# 文本转视频（即梦 Seedance 2.0 + ffmpeg）
+# 文本转视频（即梦 Seedance + ffmpeg，默认 seedance2.5）
 
-把文本/长文/小红书笔记 → 一条**带中文字幕的竖屏短视频**。画面用字节官方 **即梦 Dreamina CLI** 调 **Seedance 2.0**（消耗你已购的会员积分，现金边际≈0），合成用**纯 ffmpeg**（中文字幕烧录 + AI 生成合规角标），全程零 Remotion/Node 依赖。
+把文本/长文/小红书笔记 → 一条**带中文字幕的竖屏短视频**。画面用字节官方**即梦 Seedance 系列**（默认 `seedance2.5`，消耗你已购的会员积分，现金边际≈0）——**主路走 nbdpsy-server 的即梦 REST 面**（零安装零登录、排队不用挂会话），server 不可用自动回落本机 dreamina CLI；合成用**纯 ffmpeg**（中文字幕烧录 + AI 生成合规角标），全程零 Remotion/Node 依赖。
 
 **一句话心智**：这是「**你当导演、脚本跑腿、每条人工终审**」的半自动产线，不是一键批量出片机。质量取决于分镜脚本的用心 + 中文打磨，不是堆钱。
 
@@ -64,7 +65,7 @@ check_env 报某项凭据缺失时，按下表**主动引导用户提供**，拿
 
 > 豆包凭据也可由管理后台「博客 → API Keys → 生成凭据配置包」统一下发（工作室已集中配置时，包里会自动带上 `VOLC_TTS_*`，含新版 `VOLC_TTS_API_KEY`）；即梦登录仍需本机扫码，无法进包。
 
-配好后 `python3 {SKILL_DIR}/scripts/check_env.py` 复检到全绿再开跑。用户想撤销时，删 `.env` 对应行 / `~/.dreamina_cli/` 即可。
+配好后 `python3 {SKILL_DIR}/scripts/check_env.py` 复检到全绿再开跑。用户想撤销时，删 `.env` 对应行 / `~/.local/share/dreamina/`（旧版 CLI 是 `~/.dreamina_cli/`）即可。
 
 ---
 

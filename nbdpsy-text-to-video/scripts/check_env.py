@@ -111,8 +111,10 @@ def check(install: bool) -> dict:
                 fix="充值会员或减少本批产量" if low else "")
         else:
             add("即梦服务(server)", False, f"{base} 的即梦未登录（logged_in=false）",
-                fix="让管理员在任一台电脑跑 dreamina_login.py 扫码，把 ~/.dreamina_cli/ 整目录迁到 "
-                    "server 的 worker 用户家目录，并重启 API + worker 两个 systemd 单元；"
+                fix="让管理员在 server 上跑 `dreamina login`（CLI a857341 起为 OAuth Device Flow，"
+                    "从 stdout 抓 verification_uri 在**任何设备**打开、抖音 App 授权即可，授权码约 "
+                    "10 分钟过期）；新凭据落 server 的 ~/.local/share/dreamina/。"
+                    "⚠️ 别再用 dreamina_login.py / 迁 ~/.dreamina_cli/——那是旧回调流，对新 CLI 无效。"
                     "本机应急可加 --backend local 走自己的 dreamina CLI")
         add("本机 dreamina CLI（server 模式下不需要）", True,
             "画面生成走 nbdpsy-server 的即梦 REST 面：本机免装 CLI、免扫码、排队不用挂着会话"

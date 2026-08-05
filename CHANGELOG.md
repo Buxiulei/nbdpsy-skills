@@ -6,6 +6,35 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 **Feature = Minor（1.x.0）｜Bugfix = Patch（1.0.x）｜Breaking = Major（x.0.0）**。
 
 > 每次发版：改 `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` 的版本号（共 3 处），在本文件顶部追加一节，然后 `git push`。
+>
+> ⚠️ **多条线并行发版的两条铁律**（已出过三次事故）：
+> ① **新版本号 = 本文件顶部第一个版本节的号 +1**，不是"你这条线上一个号 +1"——仓库只有一个
+> 版本序列，各线各排各的号会把全局版本号越写越小（1.62.0 → 1.61.5 → 1.59.2 都真实发生过），
+> 装了新版的机器会被判成"版本过旧"。发版前先看本文件第一节或 `git log` 最近一次发版号。
+> ② 你的 CHANGELOG 新节**必须插在本文件最顶部**（`---` 分隔线之后）；commit 前 `git pull` 一把，
+> 确认没有别的线刚发过版把你的节顶下去。
+> ③ 顺带核对 `nbdpsy-guide`：新增/升级的能力若影响运营入口（新技能、新触发语、新红线），
+> 向导要同步——guide 是唯一的公共汇合处，已两次被所有线漏掉。
+
+---
+
+## [1.62.1] — 2026-08-05
+
+### seedance2.5 换代的文案收尾 + 版本号第三次倒退纠正
+
+**四处换代残留**（v1.62.0 切了默认模型与 Device Flow，但这几处文案还停在旧世界）：
+
+- `check_env.py` 的 server 未登录 fix 文案还在教人「跑 dreamina_login.py 扫码、迁 `~/.dreamina_cli/`」
+  ——**那是旧回调流，对新 CLI（a857341+）完全无效**，照做等于白忙一场。改为 Device Flow 指引
+  （server 上跑 `dreamina login`，verification_uri 任何设备可开，凭据落 `~/.local/share/dreamina/`）；
+- SKILL.md frontmatter description 与标题还写「Seedance 2.0」且只提本机 CLI——改为 Seedance 系列
+  （默认 seedance2.5）+ 主路 server REST、回落本机 CLI 的真实架构；
+- 凭据撤销指引里的旧路径 `~/.dreamina_cli/` 补上新路径。
+
+**版本号纠正**：`c5ba7ba`（strategy-report v1.59.2）把 plugin.json / marketplace.json 从 1.62.0
+写回 1.59.2——**第三次版本倒退**（前两次：1.61.5、1.59.1）。根因是各线按"自己上一个号 +1"发版。
+本版恢复单调递增，并把两条发版铁律写进本文件顶部说明：**新号 = 顶部第一节的号 +1**；
+新节必须插最顶。
 
 ---
 
