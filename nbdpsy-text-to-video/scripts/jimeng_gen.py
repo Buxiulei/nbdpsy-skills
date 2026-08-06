@@ -102,6 +102,7 @@ _MULTI_IMAGE_CAP_DEFAULT = 9
 # 视频/音频参考条数上限（同 images 的宁窄勿宽原则）
 _MULTI_AV_CAP = {"seedance2.5": 10}
 _MULTI_AV_CAP_DEFAULT = 3
+PROMPT_MAX = 2000        # server 契约：prompt 1-2000 字符，超了 422
 
 _SUBMIT_ID_RE = re.compile(r"[0-9a-f]{16}")
 _COMPLIANCE_HINT = "AigcComplianceConfirmationRequired"
@@ -506,6 +507,11 @@ def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
     否则同一次提交会在服务端变成两个任务、双倍扣积分。
     """
     videos, audios = videos or [], audios or []
+    # prompt 长度硬限 2000 字符（server 契约）——本地先拦，别白跑一趟提交。
+    # 分镜型 prompt 很容易在补充约束时悄悄超线，超了服务端 422 才发现就晚了。
+    if prompt and len(prompt) > PROMPT_MAX:
+        return None, (f"prompt {len(prompt)} 字符超上限 {PROMPT_MAX}——"
+                      f"按方法论压缩：先砍潜台词与重复的禁止项，别砍画面描述精度")
     berr = _validate_basics(model, duration, ratio)
     if berr:
         return None, berr
@@ -839,6 +845,11 @@ def _build_gen_args(operation: str, prompt: str, *, model: str, duration: int,
                     audios: list[str], poll: int) -> tuple[Optional[list[str]], Optional[str]]:
     """组装生成子命令参数；返回 (args, error)。"""
     videos, audios = videos or [], audios or []
+    # prompt 长度硬限 2000 字符（server 契约）——本地先拦，别白跑一趟提交。
+    # 分镜型 prompt 很容易在补充约束时悄悄超线，超了服务端 422 才发现就晚了。
+    if prompt and len(prompt) > PROMPT_MAX:
+        return None, (f"prompt {len(prompt)} 字符超上限 {PROMPT_MAX}——"
+                      f"按方法论压缩：先砍潜台词与重复的禁止项，别砍画面描述精度")
     berr = _validate_basics(model, duration, ratio)
     if berr:
         return None, berr

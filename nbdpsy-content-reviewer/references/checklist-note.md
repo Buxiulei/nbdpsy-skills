@@ -253,6 +253,7 @@ grep -nE "\[\[|\]\(http|参考文献|References" <note_dir>/body.md
 
    ⚠️ **判「查无出处」之前必须查权威源，不是查任务提示词里的摘要。** 提示词给你的事实清单常是节选，**节选之外 ≠ 不存在**。各类事实的权威源：科普结论与数字 → 源 pillar 长文原文（`drafts/*.md`）；咨询师的资历、擅长议题、受训取向、执业经历、咨询小时数、同行与督导评价 → `python3 ../nbdpsy-xiaohongshu-creator/scripts/fetch_counselor.py --emp <emp_no>` 的实时返回（字段路径：`profile_sections.experience.credentials/hours/work_history`、`profile_sections.methods[].name`、`profile_sections.philosophy.styles[].label`、`profile_sections.testimonials.supervisor/peer/client`、`profile_sections.training[]`）。只有在权威源里**确实检索不到**，才写 blocker，并在 issue 里写明「查了哪个源、用什么关键词、返回为空」。给真实存在的事实判 blocker，代价是产线把可用的专业背书删掉。
 2. **每页提示词含本批次风格档案的调色板与人物卡，且图内文字已写入提示词**（2026-07-26 下午改：比对基准从写死的品牌三色改为**当前用户的风格档案**）。逐页核对：提示词含该批次档案 `profile.visual.palette` 的主色与 `text_color`；出现人物的页含 `profile.visual.character_card` 那一句人物卡；该页"页面文字"里要显示在图上的中文，已用引号逐字写进提示词。缺主色/人物卡/文字入图任一项 = 该页 FAIL。
+   - ⚠️ **封面 P1 额外判字重层级**（2026-08-06 运营选定，档案有 `visual.cover_typography` 时按档案判、没有则按此默认）：封面提示词必须把**三级层级写死**——第一级（最扎心那句）超粗 Heavy + 字号约 1.6 倍 + 强调色 `visual.accent_color`；第二级（主标题其余行）Bold + `text_color`；第三级（副标题）细体 + 小一档 + 字距略拉开。**只写「大标题」而无三级描述 = FAIL**（模型会退回通用粗黑体、三行同粗同色，正是「AI 一眼假」的头号特征）。成图侧同类问题在 `checklist-images.md` 判。
 
    - **默认配置的取值（示例，不是常量）**：主色 **#A8B5C4 / #E8D8C4 / #C9D6CE**、文字色 #5A6B7B、人物卡「**圆脸、齐肩微卷短发的东亚年轻女性，穿燕麦色针织衫**」。留痕行写「默认配置」（含旧写法「管理员默认」）「内置兜底」或留痕行缺失时按这组判；**写「本人档案」时一律按那一版档案里的取值判——拿这组去判自带配色的运营，会把达标产出整批判成假 FAIL**。
    - 强调赭红 #A34B3A / 标题深色 #2B3A4A 是**可选**设计工具，用不用都不影响达标，别拿它当 FAIL 理由；该版档案的 `character_card` 为空 / 写着"不固定人物"时，**不判"缺人物卡"**。
