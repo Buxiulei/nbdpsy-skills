@@ -1320,3 +1320,48 @@ def test_multimodal_mixed_local_and_remote_images_keep_positions(monkeypatch, tm
     assert sent[0] == "/uploads/remote-a.png"     # 直链原位
     assert sent[1] == UPLOADED_URL                # 本机图换成了直链，位次没变
     assert sent[2] == "https://x/remote-b.png"
+
+
+# ---- frames2video / multiframe2video（server 2026-08-06 晚上线）----
+
+def test_frames2video_payload_pairs_first_last(monkeypatch):
+    """首尾帧按图序成对；ratio 由首帧推断，payload 不带 ratio。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "f1"})], seen))
+    r = jg.submit("frames2video", "从深夜过渡到清晨", backend="server",
+                  images=["/uploads/a.png", "/uploads/b.png"], duration=8)
+    assert r["success"] is True
+    assert seen[0]["first_image"] == "/uploads/a.png"
+    assert seen[0]["last_image"] == "/uploads/b.png"
+    assert "ratio" not in seen[0] and "image" not in seen[0]
+    # 张数不对本地拦
+    r2 = jg.submit("frames2video", "x", backend="server", images=["/uploads/a.png"])
+    assert r2["success"] is False and "2 张" in r2["error"]
+
+
+def test_multiframe2video_transitions_must_be_n_minus_1(monkeypatch):
+    """N 张故事帧恰好 N-1 段转场；model/prompt 长式不下发（平台固定/不收）。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "mf1"})], seen))
+    imgs = ["/uploads/a.png", "/uploads/b.png", "/uploads/c.png"]
+    r = jg.submit("multiframe2video", "", backend="server", images=imgs,
+                  transition_prompts=["溶解到B", "硬切到C"], transition_durations=[3, 2])
+    assert r["success"] is True
+    assert seen[0]["images"] == imgs
+    assert seen[0]["transition_prompts"] == ["溶解到B", "硬切到C"]
+    assert seen[0]["transition_durations"] == [3.0, 2.0]
+    assert "model" not in seen[0] and "prompt" not in seen[0] and "duration" not in seen[0]
+    # 段数不符本地拦
+    r2 = jg.submit("multiframe2video", "", backend="server", images=imgs,
+                   transition_prompts=["只有一段"])
+    assert r2["success"] is False and "2 段" in r2["error"]
+
+
+def test_server_only_ops_fail_clearly_on_local(monkeypatch, tmp_path):
+    """本机 CLI 封装未实现的 operation 在 local 后端明确报错，绝不静默走错命令。"""
+    fake_local_cli(monkeypatch)
+    r = jg.submit("frames2video", "x", backend="local",
+                  images=[str(tmp_path / "a.png"), str(tmp_path / "b.png")])
+    assert r["success"] is False and "server" in r["error"]

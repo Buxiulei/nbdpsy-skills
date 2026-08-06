@@ -83,7 +83,7 @@ SEEDANCE_MODELS = {
 }
 DEFAULT_MODEL = "seedance2.5"
 RATIOS = {"1:1", "3:4", "16:9", "4:3", "9:16", "21:9"}
-OPERATIONS = ("text2video", "image2video", "multimodal2video")
+OPERATIONS = ("text2video", "image2video", "multimodal2video", "frames2video", "multiframe2video")
 # duration 合法区间：下限全家族 4s；上限**只有 seedance2.5 到 30s**，其余仍是 15s。
 DUR_MIN, DUR_MAX = 4, 30
 _DUR_MAX_DEFAULT = 15
@@ -490,7 +490,10 @@ def _prepare_server_shot(operation: str, images: list, videos: list, audios: lis
 
 
 def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
-                  ratio: Optional[str], images: list) -> tuple[Optional[dict], Optional[str]]:
+                  ratio: Optional[str], images: list,
+                  transition_prompts: Optional[list] = None,
+                  transition_durations: Optional[list] = None,
+                  ) -> tuple[Optional[dict], Optional[str]]:
     """组装单镜 server payload；返回 (payload, error)。
 
     `client_ref` 在这里生成一次（uuid4 幂等键）——重发时**整份 payload 原样复用**，绝不重新生成，
@@ -500,7 +503,30 @@ def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
     if berr:
         return None, berr
     if operation not in OPERATIONS:
-        return None, f"未知 operation：{operation!r}（text2video/image2video/multimodal2video）"
+        return None, f"未知 operation：{operation!r}（{'/'.join(OPERATIONS)}）"
+    if operation == "frames2video":
+        # 首尾帧：first/last 成对必填；ratio 由首帧图推断，传了 server 422
+        if len(images) != 2:
+            return None, "frames2video 需要恰好 2 张图：首帧 + 尾帧（按顺序传 --image 两次）"
+        return {"operation": operation, "prompt": prompt, "duration": duration,
+                "model": model, "client_ref": uuid.uuid4().hex,
+                "first_image": images[0], "last_image": images[1]}, None
+    if operation == "multiframe2video":
+        # 多帧故事：2–20 张故事帧 + N-1 段转场；模型平台固定（传 model 422）、长式不收 prompt
+        if not 2 <= len(images) <= 20:
+            return None, f"multiframe2video 需要 2–20 张故事帧，收到 {len(images)} 张"
+        payload = {"operation": operation, "client_ref": uuid.uuid4().hex,
+                   "images": list(images)}
+        if transition_prompts:
+            if len(transition_prompts) != len(images) - 1:
+                return None, (f"transition_prompts 须恰好 {len(images)-1} 段"
+                              f"（N 张图 N-1 段），收到 {len(transition_prompts)}")
+            payload["transition_prompts"] = list(transition_prompts)
+        if transition_durations:
+            if len(transition_durations) != len(images) - 1:
+                return None, f"transition_durations 须恰好 {len(images)-1} 段"
+            payload["transition_durations"] = [float(x) for x in transition_durations]
+        return payload, None
     payload = {"operation": operation, "prompt": prompt, "duration": duration,
                "model": model, "client_ref": uuid.uuid4().hex}
     if operation == "image2video":
@@ -563,14 +589,18 @@ def _post_idempotent(url: str, key: str, payload: dict, *, timeout: int = 60,
 
 
 def _server_submit(operation: str, prompt: str, *, api_base: Optional[str], model: str,
-                   duration: int, ratio: Optional[str], images: list) -> dict:
+                   duration: int, ratio: Optional[str], images: list,
+                   transition_prompts: Optional[list] = None,
+                   transition_durations: Optional[list] = None) -> dict:
     """POST /api/video-clips 提交单镜 → {success, submit_id(=clip_id 字符串), operation, backend}。
     submit_id 对上层保持**不透明句柄**语义：本地是 16 位 hex、server 是 clip_id，都只用于 fetch。"""
     key, base, kerr = _server_key_or_error(api_base)
     if kerr:
         return kerr
     payload, perr = _shot_payload(operation, prompt, model=model, duration=duration,
-                                  ratio=ratio, images=images)
+                                  ratio=ratio, images=images,
+                                  transition_prompts=transition_prompts,
+                                  transition_durations=transition_durations)
     if perr:
         return {"success": False, "error": perr, "backend": "server"}
     _err(f"[submit] {operation} model={model} dur={duration}s "
@@ -829,11 +859,18 @@ def _build_gen_args(operation: str, prompt: str, *, model: str, duration: int,
     return args, None
 
 
+_SERVER_ONLY_OPS = ("frames2video", "multiframe2video")   # 本地 CLI 封装未实现，走 server
+
+
 def _local_submit(operation: str, prompt: str, *, model: str = DEFAULT_MODEL, duration: int = 5,
                   ratio: Optional[str] = "9:16", images: Optional[list[str]] = None,
                   videos: Optional[list[str]] = None, audios: Optional[list[str]] = None,
                   poll: int = 0) -> dict:
     """提交一个生成任务，返回 {success, submit_id, ...}。poll=0 即纯提交不等待。"""
+    if operation in _SERVER_ONLY_OPS:
+        return {"success": False, "backend": "local",
+                "error": f"{operation} 的本机 CLI 封装未实现，请走 server 后端"
+                         "（--backend server；server 已于 2026-08-06 上线该能力）"}
     err = _check_cli()
     if err:
         return {"success": False, "error": err}
@@ -910,6 +947,8 @@ def submit(operation: str, prompt: str, *, backend: Optional[str] = None,
            api_base: Optional[str] = None, model: str = DEFAULT_MODEL, duration: int = 5,
            ratio: Optional[str] = "9:16", images: Optional[list[str]] = None,
            videos: Optional[list[str]] = None, audios: Optional[list[str]] = None,
+           transition_prompts: Optional[list[str]] = None,
+           transition_durations: Optional[list[float]] = None,
            poll: int = 0) -> dict:
     """提交一个生成任务，返回 {success, submit_id, ...}。poll=0 即纯提交不等待（server 恒异步）。"""
     try:
@@ -924,7 +963,9 @@ def submit(operation: str, prompt: str, *, backend: Optional[str] = None,
                                                         key, base)
         if capable:
             return _server_submit(operation, prompt, api_base=api_base, model=model,
-                                  duration=duration, ratio=ratio, images=srv_images)
+                                  duration=duration, ratio=ratio, images=srv_images,
+                                  transition_prompts=transition_prompts,
+                                  transition_durations=transition_durations)
         _err(f"[backend] 本镜回落本机 dreamina CLI：{why}")
     return _tag(_local_submit(operation, prompt, model=model, duration=duration, ratio=ratio,
                               images=images, videos=videos, audios=audios, poll=poll), "local")
@@ -1024,7 +1065,9 @@ def _server_batch(plan: list, out_dir: str, *, api_base: Optional[str], submit_o
         payload, perr = _shot_payload(shot.get("operation", "text2video"), shot.get("prompt", ""),
                                       model=shot.get("model", DEFAULT_MODEL),
                                       duration=int(shot.get("duration", 5)),
-                                      ratio=shot.get("ratio", "9:16"), images=images)
+                                      ratio=shot.get("ratio", "9:16"), images=images,
+                                      transition_prompts=shot.get("transition_prompts"),
+                                      transition_durations=shot.get("transition_durations"))
         if perr:
             results[i] = {"success": False, "error": perr, "index": i, "backend": "server"}
             continue
