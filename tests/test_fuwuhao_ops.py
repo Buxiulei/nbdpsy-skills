@@ -693,6 +693,22 @@ class Test贴图:
                                     "--text", self._text(tmp_path), "--images", str(p)], capsys)
         assert code == 1 and "jpg/png" in data["error"] and net.calls == []
 
+    def test_中文终审剥frontmatter与配图区块(self, tmp_path):
+        """zh_review 只把给读者看的正文喂给 DeepSeek——frontmatter 与提示词不该被审。"""
+        import zh_review as Z
+        md = "---\ntitle: 测\n---\n\n# 标题\n\n正文第一段。\n\n## 配图\n\n### 封面\n\n```\n提示词\n```\n"
+        body = Z.extract_body(md)
+        assert "正文第一段" in body and "提示词" not in body and "title:" not in body
+
+    def test_中文终审缺key确定失败(self, tmp_path, capsys, monkeypatch):
+        import zh_review as Z
+        monkeypatch.setattr(Z.nbdpsy_common, "get_secret", lambda k: None)
+        p = tmp_path / "a.md"
+        p.write_text("# 标题\n\n正文。\n", encoding="utf-8")
+        code = Z.main([str(p)])
+        err = capsys.readouterr().err
+        assert code == 1 and "DEEPSEEK_API_KEY" in err
+
     def test_文案超1000字硬上限本地拦零调用(self, net, tmp_path, capsys):
         """微信图片消息正文 1000 字硬上限（2026-08-05 实测：1001 起 errcode 45166）。
         本地拦住，别等 20 张图传完才被微信打回。"""

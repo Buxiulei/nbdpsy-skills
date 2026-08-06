@@ -835,6 +835,17 @@ PUT 成功、`dropped_keys` 也确认过之后两件事：① **把 `00-overview
 python3 {SKILL_DIR}/scripts/check_compliance.py {note_dir}/post-01.md
 ```
 
+```bash
+# 中文本土化表达审核（DeepSeek 独立审核员，2026-08-06 运营定案新增，逐篇跑）
+# 审标题+发布文案+每页图内文字；exit 0=pass / 1=有 issues / 2=缺 DEEPSEEK_API_KEY（降级人工自审并留痕）
+python3 {SKILL_DIR}/scripts/zh_native_review.py {note_dir}/post-01.md
+```
+
+> **为什么要独立模型审**：自审会漏——写的人闻不出自己的术语腔。两次运营点名返工都是自审全绿后被人抓的：
+> 「强烈9分」（形容词冒充概念名，七篇返工）、「爱轰炸期的奶茶」（术语直译+生造比喻）。
+> **处置纪律**：issues 逐条改掉，或在报告里写明驳回理由（审核员偶有误伤，可驳但要留痕）；审核输出**原样贴进报告**。
+> 判据五条与 `xiaohongshu-spec.md` §1「中文本土化表达」同源，脚本内 SYSTEM prompt 是执行态。
+
 脚本测不出的**语义自检**（见 `references/xiaohongshu-spec.md` 的禁用词替换表）：
 
 - 禁用「治疗/诊断/治愈/医院/医生」做自我描述或承诺 → 改「陪伴/梳理/觉察/自我调节/缓解」。
