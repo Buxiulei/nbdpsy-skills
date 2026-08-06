@@ -99,6 +99,9 @@ def max_duration(model: str) -> int:
 # 未知档按 9 判——宁可窄不宜宽，放宽只会让一镜白跑一趟提交。
 _MULTI_IMAGE_CAP = {"seedance2.5": 30}
 _MULTI_IMAGE_CAP_DEFAULT = 9
+# 视频/音频参考条数上限（同 images 的宁窄勿宽原则）
+_MULTI_AV_CAP = {"seedance2.5": 10}
+_MULTI_AV_CAP_DEFAULT = 3
 
 _SUBMIT_ID_RE = re.compile(r"[0-9a-f]{16}")
 _COMPLIANCE_HINT = "AigcComplianceConfirmationRequired"
@@ -385,9 +388,11 @@ def _is_remote(ref: Any) -> bool:
 
 def _shot_server_capable(images: list, videos: list, audios: list) -> tuple[bool, str]:
     """这一镜能否交给 server 跑。不能跑的**整镜回落本地 CLI**（而不是静默丢掉媒体）。"""
-    if videos or audios:
-        return False, "server 契约目前只带 image（多视频/多音频参考未开放），本镜有 --video/--audio"
-    # 多图自 2026-08-06 起 server 已支持（images[] 1–30，保序不去重），不再因张数回落本地
+    # videos[]/audios[] 自 2026-08-06 晚起 server 已开放（multimodal2video），不再回落。
+    # 与图不同：视频/音频没有「本机文件换直链」的上传端点，本机路径仍须回落本地 CLI。
+    bad_av = [r for r in (list(videos) + list(audios)) if not _is_remote(r)]
+    if bad_av:
+        return False, f"参考视频/音频是本机路径（{bad_av[0]}），server 取不到（图床只收图片）"
     bad = [r for r in images if not _is_remote(r)]
     if bad:
         return False, f"参考图是本机路径（{bad[0]}），server 取不到"
@@ -491,6 +496,7 @@ def _prepare_server_shot(operation: str, images: list, videos: list, audios: lis
 
 def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
                   ratio: Optional[str], images: list,
+                  videos: Optional[list] = None, audios: Optional[list] = None,
                   transition_prompts: Optional[list] = None,
                   transition_durations: Optional[list] = None,
                   ) -> tuple[Optional[dict], Optional[str]]:
@@ -499,6 +505,7 @@ def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
     `client_ref` 在这里生成一次（uuid4 幂等键）——重发时**整份 payload 原样复用**，绝不重新生成，
     否则同一次提交会在服务端变成两个任务、双倍扣积分。
     """
+    videos, audios = videos or [], audios or []
     berr = _validate_basics(model, duration, ratio)
     if berr:
         return None, berr
@@ -536,15 +543,26 @@ def _shot_payload(operation: str, prompt: str, *, model: str, duration: int,
         # image2video 画幅由输入图推断，**一律不带 ratio 字段**（服务端收到就 422）
     else:
         if operation == "multimodal2video":
-            if not images:
-                return None, "multimodal2video 至少需要 1 个 --image 或 --video"
+            if not (images or videos or audios):
+                return None, "multimodal2video 至少需要一个参考（--image/--video/--audio）"
+            if not images and not videos and model != "seedance2.5":
+                return None, "纯音频输入仅 seedance2.5 支持（2.0 家族至少要 1 个 image 或 video）"
             cap = _MULTI_IMAGE_CAP.get(model, _MULTI_IMAGE_CAP_DEFAULT)
             if len(images) > cap:
                 return None, (f"{model} 的图片参考上限 {cap} 张，本镜给了 {len(images)} 张"
                               f"（2.5 是 30、2.0 家族是 9）")
-            # **顺序即语义**：数组第 N 张就是提示词里的 @图片N。server 2026-08-06 回执承诺
-            # 保序、不去重、不重排（同一 URL 传两次也物化两份），所以这里也**绝不去重排序**。
-            payload["images"] = list(images)
+            av_cap = _MULTI_AV_CAP.get(model, _MULTI_AV_CAP_DEFAULT)
+            if len(videos) > av_cap:
+                return None, f"{model} 的视频参考上限 {av_cap} 条，本镜给了 {len(videos)}"
+            if len(audios) > av_cap:
+                return None, f"{model} 的音频参考上限 {av_cap} 条，本镜给了 {len(audios)}"
+            # **顺序即语义**：@图片N/@视频N/@音频N 各按数组序号；保序不去重（server 回归锁）。
+            if images:
+                payload["images"] = list(images)
+            if videos:
+                payload["videos"] = list(videos)
+            if audios:
+                payload["audios"] = list(audios)
         # text2video **一律不带 image**：本地 CLI 的 text2video 完全忽略 images（远程图也照样忽略），
         # 契约里 image 字段也只标了「image2video 用」，带上去 server 可能 422
         if ratio:
@@ -590,6 +608,7 @@ def _post_idempotent(url: str, key: str, payload: dict, *, timeout: int = 60,
 
 def _server_submit(operation: str, prompt: str, *, api_base: Optional[str], model: str,
                    duration: int, ratio: Optional[str], images: list,
+                   videos: Optional[list] = None, audios: Optional[list] = None,
                    transition_prompts: Optional[list] = None,
                    transition_durations: Optional[list] = None) -> dict:
     """POST /api/video-clips 提交单镜 → {success, submit_id(=clip_id 字符串), operation, backend}。
@@ -598,7 +617,7 @@ def _server_submit(operation: str, prompt: str, *, api_base: Optional[str], mode
     if kerr:
         return kerr
     payload, perr = _shot_payload(operation, prompt, model=model, duration=duration,
-                                  ratio=ratio, images=images,
+                                  ratio=ratio, images=images, videos=videos, audios=audios,
                                   transition_prompts=transition_prompts,
                                   transition_durations=transition_durations)
     if perr:
@@ -819,6 +838,7 @@ def _build_gen_args(operation: str, prompt: str, *, model: str, duration: int,
                     ratio: Optional[str], images: list[str], videos: list[str],
                     audios: list[str], poll: int) -> tuple[Optional[list[str]], Optional[str]]:
     """组装生成子命令参数；返回 (args, error)。"""
+    videos, audios = videos or [], audios or []
     berr = _validate_basics(model, duration, ratio)
     if berr:
         return None, berr
@@ -964,6 +984,7 @@ def submit(operation: str, prompt: str, *, backend: Optional[str] = None,
         if capable:
             return _server_submit(operation, prompt, api_base=api_base, model=model,
                                   duration=duration, ratio=ratio, images=srv_images,
+                                  videos=videos, audios=audios,
                                   transition_prompts=transition_prompts,
                                   transition_durations=transition_durations)
         _err(f"[backend] 本镜回落本机 dreamina CLI：{why}")
@@ -1047,7 +1068,7 @@ def _local_shot(i: int, shot: dict, out_dir: str, *, submit_only: bool,
 
 
 def _server_batch(plan: list, out_dir: str, *, api_base: Optional[str], submit_only: bool,
-                  max_wait: int, interval: int) -> list:
+                  max_wait: int, interval: int, max_credits: Optional[int] = None) -> list:
     """server 批量：能交 server 的镜**一次 POST 全灌进队列**（不串行等待），媒体在本机的镜整镜
     回落本地 CLI。逐镜独立、一镜失败不连坐；结果按传入顺序（index）映射，与本地路径语义一致。"""
     results: list[Optional[dict]] = [None] * len(plan)
@@ -1066,6 +1087,7 @@ def _server_batch(plan: list, out_dir: str, *, api_base: Optional[str], submit_o
                                       model=shot.get("model", DEFAULT_MODEL),
                                       duration=int(shot.get("duration", 5)),
                                       ratio=shot.get("ratio", "9:16"), images=images,
+                                      videos=shot.get("videos"), audios=shot.get("audios"),
                                       transition_prompts=shot.get("transition_prompts"),
                                       transition_durations=shot.get("transition_durations"))
         if perr:
@@ -1083,7 +1105,12 @@ def _server_batch(plan: list, out_dir: str, *, api_base: Optional[str], submit_o
             _err(f"[batch] 提交 {len(srv_idx)} 镜到 server（一次灌入，逐镜独立）…")
             # 批量逐镜 ref 幂等已经 server 验收（2026-08-05 回执：同 refs 重放回原 clip_ids
             # 零新增零扣分），网络异常复用同一份 payload（同一组 client_ref）重发一次是安全的
-            resp, neterr = _post_idempotent(base + EP_BATCH_SUBMIT, key, {K_SHOTS: payloads})
+            body = {K_SHOTS: payloads}
+            if max_credits is not None:
+                # 预算护栏（server 2026-08-06 上线）：整批预估超限 → 409 整批拒绝、零任务零扣分。
+                # 花钱的决定必须显式——调用方带上老板核准的数，而不是靠余额撞墙。
+                body["max_credits"] = int(max_credits)
+            resp, neterr = _post_idempotent(base + EP_BATCH_SUBMIT, key, body)
             berr = neterr
             data = None
             if not berr and resp.status_code >= 400:
@@ -1128,7 +1155,7 @@ def _server_batch(plan: list, out_dir: str, *, api_base: Optional[str], submit_o
 
 def batch(plan_path: str, out_dir: str, *, submit_only: bool = False,
           max_wait: int = 1800, interval: int = 15, backend: Optional[str] = None,
-          api_base: Optional[str] = None) -> dict:
+          api_base: Optional[str] = None, max_credits: Optional[int] = None) -> dict:
     """批量执行分镜计划。plan = [{operation, prompt, duration, ratio, model, images?, ...}, ...]"""
     try:
         plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
@@ -1158,7 +1185,7 @@ def batch(plan_path: str, out_dir: str, *, submit_only: bool = False,
 
     if b == "server":
         results = _server_batch(plan, out_dir, api_base=api_base, submit_only=submit_only,
-                                max_wait=max_wait, interval=interval)
+                                max_wait=max_wait, interval=interval, max_credits=max_credits)
     else:
         results = []
         for i, shot in enumerate(plan):
@@ -1233,6 +1260,9 @@ def main() -> None:
     b.add_argument("--submit-only", action="store_true")
     b.add_argument("--max-wait", type=int, default=1800)
     b.add_argument("--interval", type=int, default=15)
+    b.add_argument("--max-credits", type=int, default=None,
+                   help="预算护栏：整批预估积分超过它就整批 409 拒绝（零任务零扣分）。"
+                        "批量提交前先与老板核准预算，不传=不设限")
     _add_backend_flags(b)
 
     a = p.parse_args()
@@ -1250,7 +1280,7 @@ def main() -> None:
     elif a.cmd == "batch":
         _emit(batch(a.plan, a.out_dir, submit_only=a.submit_only,
                     max_wait=a.max_wait, interval=a.interval,
-                    backend=a.backend, api_base=a.api_base))
+                    backend=a.backend, api_base=a.api_base, max_credits=a.max_credits))
 
 
 if __name__ == "__main__":

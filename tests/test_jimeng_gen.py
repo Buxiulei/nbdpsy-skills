@@ -1365,3 +1365,76 @@ def test_server_only_ops_fail_clearly_on_local(monkeypatch, tmp_path):
     r = jg.submit("frames2video", "x", backend="local",
                   images=[str(tmp_path / "a.png"), str(tmp_path / "b.png")])
     assert r["success"] is False and "server" in r["error"]
+
+
+# ---- videos[] / audios[] 参考 与 max_credits 预算护栏（server 2026-08-06 深夜上线）----
+
+def test_multimodal_videos_audios_pass_through_in_order(monkeypatch):
+    """@视频N/@音频N 同样顺序即语义；远程直链不回落、原序下发。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "av1"})], seen))
+    r = jg.submit("multimodal2video", "@图片1 人物 @视频1 运镜 @音频1 节奏",
+                  backend="server", images=["/uploads/p.png"],
+                  videos=["/uploads/ref.mp4"], audios=["/uploads/narr.mp3"], duration=10)
+    assert r["success"] is True
+    assert seen[0]["videos"] == ["/uploads/ref.mp4"]
+    assert seen[0]["audios"] == ["/uploads/narr.mp3"]
+
+
+def test_audio_only_allowed_on_25_but_not_20(monkeypatch):
+    """纯音频输入仅 seedance2.5 合法；2.0 家族本地拦，不白跑提交。"""
+    with_key(monkeypatch)
+    seen = []
+    fake_requests(monkeypatch, submit_handler([FakeResp(202, {"clip_id": "ao1"})], seen))
+    r = jg.submit("multimodal2video", "卡节奏", backend="server",
+                  audios=["/uploads/beat.mp3"], duration=8)     # 默认 2.5
+    assert r["success"] is True and "images" not in seen[0]
+    r2 = jg.submit("multimodal2video", "x", backend="server", model="seedance2.0fast",
+                   audios=["/uploads/beat.mp3"], duration=8)
+    assert r2["success"] is False and "2.5" in r2["error"]
+
+
+def test_av_caps_by_model(monkeypatch):
+    """视频/音频条数按档拦：2.5 各 10、2.0 家族各 3。"""
+    with_key(monkeypatch)
+    calls, _ = fake_requests(monkeypatch, submit_handler([]))
+    r = jg.submit("multimodal2video", "x", backend="server",
+                  images=["/uploads/p.png"],
+                  videos=[f"/uploads/{i}.mp4" for i in range(11)], duration=8)
+    assert r["success"] is False and "10" in r["error"]
+    assert [c for c in calls if c["method"] == "POST"] == []
+
+
+def test_local_av_paths_fall_back(monkeypatch, tmp_path):
+    """本机路径的视频/音频仍回落本地 CLI（图床只收图片，换不了直链）。"""
+    with_key(monkeypatch)
+    calls, mod = fake_requests(monkeypatch, submit_handler([]))
+    fake_local_cli(monkeypatch)
+    v = tmp_path / "ref.mp4"; v.write_bytes(b"x")
+    r = jg.submit("multimodal2video", "x", backend="server",
+                  images=["/uploads/p.png"], videos=[str(v)], duration=8)
+    assert r["backend"] == "local"
+    assert [c for c in calls if c["method"] == "POST"] == []
+
+
+def test_batch_max_credits_in_body_only_when_set(monkeypatch, tmp_path):
+    """max_credits 显式才带（不传行为与从前逐字一致）；带了就进 batch body。"""
+    import json as _json
+    with_key(monkeypatch)
+    seen = []
+    def handler(method, url, body):
+        if method == "POST" and "video-clip-batches" in url:
+            seen.append(body)
+            return FakeResp(202, {"batch_id": "b1", "clip_ids": ["c1"]})
+        return FakeResp(200, {"logged_in": True, "credit": 9999})
+    fake_requests(monkeypatch, handler)
+    plan = tmp_path / "plan.json"
+    plan.write_text(_json.dumps({"shots": [{"operation": "text2video", "prompt": "x",
+                                            "duration": 5}]}), encoding="utf-8")
+    jg.batch(str(plan), str(tmp_path), submit_only=True, backend="server",
+             max_credits=800)
+    assert seen and seen[0].get("max_credits") == 800
+    seen.clear()
+    jg.batch(str(plan), str(tmp_path), submit_only=True, backend="server")
+    assert seen and "max_credits" not in seen[0]
