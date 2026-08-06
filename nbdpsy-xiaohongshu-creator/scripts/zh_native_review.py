@@ -82,8 +82,8 @@ def extract(md_path: Path) -> str:
     return "\n\n".join(parts)
 
 
-def review(content: str) -> dict:
-    r = requests.post(API, timeout=120, headers={"Authorization": f"Bearer {load_key()}"},
+def review_once(content: str, key: str) -> dict:
+    r = requests.post(API, timeout=120, headers={"Authorization": f"Bearer {key}"},
         json={"model": "deepseek-chat", "temperature": 0.2,
               "response_format": {"type": "json_object"},
               "messages": [{"role": "system", "content": SYSTEM},
@@ -92,18 +92,57 @@ def review(content: str) -> dict:
     return json.loads(r.json()["choices"][0]["message"]["content"])
 
 
+def _norm(s: str) -> str:
+    return re.sub(r"\s", "", s or "")
+
+
+def review(content: str, rounds: int = 3) -> dict:
+    """多数决聚合（2026-08-06 实测定案）：LLM 审核单跑不收敛——同一文件连跑四次
+    报 2/4/8/20 条，且大量条目 fix 与原文相同（no-op churn）。两层过滤：
+    ① no-op 过滤：fix 为空、或剔空白后与 original 相同的条目直接丢弃（机械可判的无效建议）；
+    ② 多数决：original 在 ≥ ceil(rounds/2) 轮里被点名才算真问题（偶发挑刺过滤）。
+    verdict 由过滤后的条目决定。"""
+    key = load_key()
+    votes: dict[str, dict] = {}
+    counts = []
+    for _ in range(rounds):
+        res = review_once(content, key)
+        seen = set()
+        counts.append(len(res.get("issues") or []))
+        for i in res.get("issues") or []:
+            k = _norm(i.get("original", ""))
+            if not k or not _norm(i.get("fix")) or _norm(i.get("fix")) == k:
+                continue  # no-op：不给改法或改法与原文相同
+            if k in seen:
+                continue  # 同轮内去重
+            seen.add(k)
+            v = votes.setdefault(k, {"hits": 0, "issue": i})
+            v["hits"] += 1
+    need = (rounds // 2) + 1
+    issues = [v["issue"] for v in votes.values() if v["hits"] >= need]
+    return {"verdict": "pass" if not issues else "fail", "issues": issues,
+            "rounds": rounds, "per_round_raw_counts": counts,
+            "summary": f"{rounds} 轮多数决（原始各轮 {counts}），有效共识问题 {len(issues)} 条"}
+
+
 def main() -> int:
-    if len(sys.argv) >= 3 and sys.argv[1] == "--text":
-        content = sys.argv[2]
-    elif len(sys.argv) == 2:
-        content = extract(Path(sys.argv[1]))
+    args = [a for a in sys.argv[1:]]
+    rounds = 3
+    if "--rounds" in args:
+        i = args.index("--rounds")
+        rounds = int(args[i + 1])
+        del args[i:i + 2]
+    if len(args) >= 2 and args[0] == "--text":
+        content = args[1]
+    elif len(args) == 1:
+        content = extract(Path(args[0]))
         if not content:
             print("没抽到可审文本（缺 title/发布文案/图内文字块）")
             return 2
     else:
         print(__doc__)
         return 2
-    res = review(content)
+    res = review(content, rounds)
     print(json.dumps(res, ensure_ascii=False, indent=1))
     return 0 if res.get("verdict") == "pass" else 1
 
