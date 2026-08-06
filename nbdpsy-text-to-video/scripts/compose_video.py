@@ -156,7 +156,9 @@ def build_ass(text: str, duration: float, width: int, height: int, out_ass: str)
     """生成单段 ASS 字幕：底部居中、白字黑描边、半透明底，整段时长常驻。"""
     # 字号按画布高度自适应（约 5%）
     fontsize = max(28, int(height * 0.052))
-    margin_v = int(height * 0.08)
+    # 平台安全区：竖屏 9:16 下底部约 18% 被小红书/抖音的标题文案区遮挡、右侧 ~15% 有
+    # 互动按钮列。字幕底边距抬到 20% 高度，落在遮挡区之上、又不压画面主体（中央 1/3）。
+    margin_v = int(height * 0.20) if height > width else int(height * 0.08)
     end = max(0.5, duration)
     eh = int(end // 3600)
     em = int((end % 3600) // 60)
@@ -233,7 +235,7 @@ def _wrap_caption(text: str, per_line: int = 12) -> str:
 def _ass_header(width: int, height: int) -> str:
     """ASS 头(Script Info + 底部居中白字黑描边样式)，build_timed_ass / build_cued_ass 共用。"""
     fontsize = max(28, int(height * 0.052))
-    margin_v = int(height * 0.08)
+    margin_v = int(height * 0.20) if height > width else int(height * 0.08)
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}

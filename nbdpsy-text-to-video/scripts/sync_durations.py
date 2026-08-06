@@ -25,6 +25,51 @@ def probe_duration(path: Path) -> float:
     return float(data["format"]["duration"])
 
 
+def run_segments(data: dict, shots_path: Path, audio_dir: Path, *,
+                 max_d: float) -> dict[str, Any]:
+    """v3：逐段校验并写回 gen。gen = ceil(该段旁白实测总和 + 0.3×beat数)，clamp 到 max_d。
+    超 max_d 直接报 overflow（要拆段或压旁白），**绝不静默截短**——截短意味着最后一条
+    旁白没画面可配。"""
+    report: dict[str, Any] = {"updated": [], "overflow": [], "missing": [], "ok": True}
+    for seg in data["segments"]:
+        si = seg.get("index")
+        need = 0.0
+        seg_missing = False
+        for bi in seg.get("beats") or []:
+            narr = audio_dir / f"narr-{bi:02d}.mp3"
+            if not narr.exists():
+                report["missing"].append({"segment": si, "beat": bi, "expect": narr.name,
+                                          "reason": "file not found"})
+                report["ok"] = False
+                seg_missing = True
+                continue
+            try:
+                need += probe_duration(narr) + 0.3
+            except Exception:
+                report["missing"].append({"segment": si, "beat": bi, "expect": narr.name,
+                                          "reason": "ffprobe failed"})
+                report["ok"] = False
+                seg_missing = True
+        if seg_missing:
+            continue
+        gen = int(math.ceil(need))
+        if gen > max_d:
+            report["overflow"].append({"segment": si, "need": round(need, 1),
+                                       "hint": f"该段旁白共 {need:.1f}s 超模型上限 {max_d}s——"
+                                               f"把 beat 挪到别的段，或压旁白"})
+            report["ok"] = False
+            continue
+        old = seg.get("gen")
+        seg["gen"] = gen
+        seg["narr_total"] = round(need, 1)
+        report["updated"].append({"segment": si, "narr_total": round(need, 1),
+                                  "gen": gen, "was": old})
+        print(f"  段{si} 旁白共 {need:.1f}s → gen={gen}s" +
+              (f"（原 {old}s 已修正）" if old != gen else ""), file=sys.stderr)
+    shots_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
 def run_beats(data: dict, shots_path: Path, audio_dir: Path, *,
               min_d: float, max_d: float) -> dict[str, Any]:
     """v2 电影格式：把每条旁白的实测时长分配给该 beat 下的各个 cut。
@@ -107,6 +152,11 @@ def run(shots_path: Path, audio_dir: Path, *, min_d: float, max_d: float) -> dic
     """
     # 读取 shots.json
     shots_content = json.loads(shots_path.read_text(encoding="utf-8"))
+    if shots_content.get("segments"):
+        # v3 电影格式：一段 = 一次生成，段内切割由 cut_assemble 按旁白实测完成。
+        # 本步的职责变为**提交前的钱坑校验**：每段 gen 必须 ≥ 该段旁白总长 + 0.3s/beat，
+        # 否则生成出来不够切（cut_assemble 只能告警，但那时钱已花了）。
+        return run_segments(shots_content, shots_path, audio_dir, max_d=max_d)
     if shots_content.get("beats"):
         # v2 电影格式：一条旁白（beat）挂多个分镜（cut），按 cut 权重把旁白时长分下去
         return run_beats(shots_content, shots_path, audio_dir, min_d=min_d, max_d=max_d)

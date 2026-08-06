@@ -165,7 +165,33 @@ python3 {SKILL_DIR}/scripts/sync_durations.py --shots <workdir>/shots.json --aud
 - 每镜 `duration` = clamp(旁白实测 + 0.3s, 4, 15)，原地写回 shots.json。
 - **overflow（旁白+0.3s > 15s）或缺音频 → exit 1** → 回第 2 步拆镜/精简旁白、重出该镜旁白，再跑本步。**禁止跳过**——手工漏做这步 = 画面被异常放慢的最大事故源。
 
-**5. 提交生成（全部镜头先灌队列）**
+**4.5 动态分镜 animatic（电影化必做，零积分的彩排）**
+
+在花任何积分之前，用已有素材免费验证全片节奏——这是真实片场的 previz 环节：
+
+```bash
+# 分镜参考图 + 已出的旁白 mp3，ffmpeg 拼一条「静态动画版」（每图配该 beat 旁白时长）
+python3 {SKILL_DIR}/scripts/build_manifest.py --workdir <workdir> --stills images/
+python3 {SKILL_DIR}/scripts/compose_video.py --manifest <workdir>/manifest.json --output animatic.mp4
+# （--stills 未实现时手工：ffmpeg loop 每张图 narr 时长 → concat → 加旁白轨）
+```
+
+**看什么**：旁白配上画面后节奏累不累、哪个 beat 拖、钩子前 3 秒立不立得住、收尾留白够不够。
+**改分镜/旁白在这一步改**——animatic 上改是免费的，生成后改是烧钱的。运营/老板终审节奏也看它。
+
+**5. 提交生成**
+
+**电影化（v3，默认）**：segments 整段提交，模型在段内自己切镜：
+
+```bash
+python3 {SKILL_DIR}/scripts/jimeng_gen.py batch --plan <workdir>/shots.json \
+  --out-dir <workdir> --submit-only > <workdir>/submit_ids.json
+# v3 的 batch 自动按段展开；结果 results[].target_name 是 segment-NN.mp4
+# ⚠️ 提交前第 4 步的 sync_durations 必须 ok=true（它校验每段 gen ≥ 旁白总长——
+#    gen 不够意味着生成出来不够切，钱白花）
+```
+
+**快版（v1 单层 shots）**：
 
 ```bash
 python3 {SKILL_DIR}/scripts/jimeng_gen.py batch --plan <workdir>/shots.json \
@@ -175,7 +201,18 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py batch --plan <workdir>/shots.json \
 - **保存 stdout JSON 到 `<workdir>/submit_ids.json`**：`results[].submit_id` 是取片凭证与防重复扣分的关键（注意 `results[].index` 是 0 起，shots.json 的 `index` 是 1 起，映射时 +1）。submit_id 保留不重复提交，即使超时也可后续再 fetch 补取。
 - 新题材首次跑建议先 `gen` 试水 1 镜确认观感+实测排队，再放量（见「生成细节」节）。
 
-**6. 并行取片 + 重命名**
+**6. 取片 + 切段**
+
+**电影化（v3）**：取回段片后按旁白边界切成 shot-NN.mp4（build_manifest 消费的老契约）：
+
+```bash
+python3 {SKILL_DIR}/scripts/jimeng_gen.py fetch --submit-id <id> --out-dir <workdir>
+mv <取回的文件> <workdir>/segment-01.mp4        # 按 results[].target_name 改名
+python3 {SKILL_DIR}/scripts/cut_assemble.py --workdir <workdir>   # 切出 shot-NN.mp4
+# 关键镜（钩子段/收尾段）建议多条选优：同段再提交 1–2 次（换 client_ref），谁好用谁
+```
+
+**快版（v1）**：
 
 ```bash
 # 每个 submit_id 各开一个 fetch（可多进程并行，墙钟≈最慢单镜）
