@@ -317,7 +317,12 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py gen --operation text2video \
 
 - **后端参数（所有子命令通用）**：`--backend server|local|auto`（默认 `auto`，规则见第 0 步；环境变量 `NBDPSY_JIMENG_BACKEND` 可改默认，显式 `--backend` 优先）、`--api-base URL`（server 基址，默认 `NBDPSY_VIDEO_API_BASE` 或 `https://mcp.nbdpsy.com`）。输出 JSON 多一个 `backend` 键表明这次实际走了哪条；**服务化之前的字段两个后端一个不少**（`success`/`submit_id`/`status`/`videos`/`credit_count`/`meta`/`raw`/`error`），server 侧另附 `client_ref`/`video_url`/`expires_at`/`batch_id`/`low_threshold_hit` 等新键，老解析忽略即可。server 模式下 `--image` 收**图床直链、`/uploads` 路径或本机路径**——本机路径会自动先传 server 图床（`POST /api/uploads/images`）换成直链再提交，stderr 打一行 `[upload] P01.png → …`；只有上传失败（文件不存在 / 非 png·jpg·webp / 两次网络异常）才整镜回落本地 CLI 并说明原因。多图或带 `--video`/`--audio` 的镜 server 单镜契约表达不了，照旧整镜回落。
 - 模型可选：`seedance2.5`（**默认**）/ `seedance2.0` / `seedance2.0fast` / `seedance2.0_vip` / `seedance2.0fast_vip` / `seedance2.0mini`。**`seedance2.5` 是新一代，没有 fast / vip 变体，是 VIP-only**，时长 4–30s（其余模型 4–15s，超了当场被拦、不会白跑一趟提交）。⚠️ **2.5 首次使用可能需要先到即梦网页端手动生成一次**做账号级合规授权（否则回 `AigcComplianceConfirmationRequired`）——那是要人去点的一次性动作，脚本重试无意义。
-- **积分 & 排队（实测，重要）**：5s/720p 实测——**`seedance2.5` 130 积分、秒级出片无排队**（2026-08-05 生产实测，maestro 会员）；普通 `fast` 25 积分但排队极长（实测队列可 15 小时+）；`fast_vip` 55 积分 ~3 分钟出片。扣费 success 才结算。`seedance2.0mini` 未实测（服务端对它不估算不 warning，跑前自己看 `credits`）。→ 默认 2.5 = 质量+速度换 5 倍于 fast 的积分；**预算敏感的批量**用 `fast_vip`（55 分/条）或夜间 `fast` + `--submit-only` 错峰；急用不差钱走默认。
+- **积分 & 排队（实测，重要）**：**`seedance2.5` = 26 积分/秒，按秒线性计价、不是按 5 秒档取整**
+  （server 三次独立实测：4s=104 是决定性证据——块状公式会算 130；5s=130、10s=260），秒级出片无排队。
+  普通 `fast` 25/5s 但排队极长（队列可 15 小时+）；`fast_vip` 55/5s ~3 分钟出片（两档仅 5s 单点实测，
+  非 5 倍数时长属外推）。扣费 success 才结算；`estimated_credits` 是预估、**实扣一律以 `credit_count`
+  为准**；`frames2video` 价格从未实测——**首条真任务跑完必对一次 credit_count**。
+  → 默认 2.5 = 质量+速度换约 5 倍于 fast 的积分；预算敏感批量用 `fast_vip` 或夜间 `fast` 错峰。
 - **失败/超时保留 submit_id，绝不重复提交扣分**；排队中任务无法取消（dreamina 无 cancel）。
 - **并行生产（关键提速）**：`batch` 不带 `--submit-only` 时是**串行** submit+fetch（等一镜下完才提交下一镜）很慢。正解 = 十步流程的 5–6 步：**先全部 `--submit-only` 灌队列、再并行 fetch**，即梦后端同时排队渲染，墙钟≈最慢单镜而非 N 镜相加。
 - **卡 querying 重提**：个别任务卡 `querying` 数小时 → 重新提交拿新 submit_id（走 VIP）、新旧并行谁先渲染好用谁（旧积分已沉没，不因等待翻倍损失时间）。
