@@ -13,6 +13,8 @@
   "ai_label": "AI 生成",        # 合规显式标识(右上角)；置空字符串可关闭——但投放强烈建议保留
   "logo": "logo.png",           # 可选；透明底品牌 logo，叠右下角(宽18%、边距3%、透明度0.88)
   "fade_out": 1.5,              # 可选；片尾音画同步淡出秒数，防收尾戛然而止
+  "cover": "cover.png",         # 可选；封面图插到片头当首帧(默认0.1s)，部分平台自动抓首帧当封面
+  "cover_duration": 0.1,        # 可选；封面停留秒数
   "bgm": "bgm.mp3",             # 可选；自动按相对响度垫底(比旁白低 bgm_gap_db)
   "bgm_volume": 0.15,           # 可选，0-1；仅响度探测失败时的回退系数
   "bgm_gap_db": 12,             # 可选；BGM 比旁白低多少 dB(默认12，越大越轻)
@@ -458,8 +460,10 @@ def concat_segments(paths: list[str], out: str, workdir: str) -> bool:
 
 def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
              bgm_volume: float, width: int, height: int, bgm_gap_db: float = 12.0,
-             logo: Optional[str] = None, fade_out: float = 0.0) -> bool:
-    """叠 AI 生成合规角标(右上) + 可选品牌 logo(右下) + 可选 BGM 混音 +
+             logo: Optional[str] = None, fade_out: float = 0.0,
+             cover: Optional[str] = None, cover_duration: float = 0.1) -> bool:
+    """叠 AI 生成合规角标(右上) + 可选封面首帧(cover 前 N 秒 overlay，音频零改动，
+    避免微型音频段 concat 时间戳错乱) + 可选品牌 logo(右下) + 可选 BGM 混音 +
     可选片尾音画淡出(fade_out 秒) → 最终成片(+faststart)。"""
     fontsize = max(20, int(height * 0.030))
     pad = int(height * 0.012)
@@ -470,9 +474,16 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
     has_logo = bool(logo and Path(logo).exists())
     if logo and not has_logo:
         _err(f"[finalize] logo 文件不存在，跳过：{logo}")
+    has_cover = bool(cover and Path(cover).exists())
+    if cover and not has_cover:
+        _err(f"[finalize] cover 文件不存在，跳过：{cover}")
+    logo_idx = cover_idx = 0
     if has_logo:
-        logo_idx = 2 if has_bgm else 1
+        logo_idx = 1 + int(has_bgm)
         cmd += ["-i", logo]
+    if has_cover:
+        cover_idx = 1 + int(has_bgm) + int(has_logo)
+        cmd += ["-i", cover]
 
     filters = []
     if ai_label:
@@ -488,18 +499,30 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
         # 片尾音画同步淡出，消除"戛然而止"；淡出起点按成片实测时长倒推。
         # 视频淡出挂在滤镜链最末（logo 之后），让 logo 随画面一起淡出
         fade_st = max(0.0, ffprobe_duration(src) - fade_out)
-        vfade = f",fade=t=out:st={fade_st:.2f}:d={fade_out:.2f}"
+        vfade = f"fade=t=out:st={fade_st:.2f}:d={fade_out:.2f}"
         afade = f"afade=t=out:st={fade_st:.2f}:d={fade_out:.2f}"
     vfilter = ",".join(filters) if filters else "null"
+
+    # 视频链按序装配：基础滤镜 → 封面首帧 → logo → 片尾淡出
+    parts = [f"[0:v]{vfilter}[v0]"]
+    cur = "v0"
+    if has_cover:
+        cdur = max(1.0 / 30, float(cover_duration or 0.1))
+        parts.append(f"[{cover_idx}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                     f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black[cvr]")
+        parts.append(f"[{cur}][cvr]overlay=0:0:enable='lte(t,{cdur:.3f})'[vc]")
+        cur = "vc"
     if has_logo:
         # 右下角品牌 logo：宽约画面 18%，边距 3%，轻微降透明度融入画面
         logo_w = int(width * 0.18)
         logo_pad = int(width * 0.03)
-        logo_chain = (f"[{logo_idx}:v]format=rgba,scale={logo_w}:-1,"
-                      f"colorchannelmixer=aa=0.88[lg];"
-                      f"[vbase][lg]overlay=W-w-{logo_pad}:H-h-{logo_pad}{vfade}")
-    else:
-        vfilter += vfade
+        parts.append(f"[{logo_idx}:v]format=rgba,scale={logo_w}:-1,colorchannelmixer=aa=0.88[lg]")
+        parts.append(f"[{cur}][lg]overlay=W-w-{logo_pad}:H-h-{logo_pad}[vl]")
+        cur = "vl"
+    if vfade:
+        parts.append(f"[{cur}]{vfade}[vf]")
+        cur = "vf"
+    need_vchain = has_cover or has_logo or vfade
 
     if has_bgm:
         # BGM 相对响度：测旁白 mean 与 BGM mean，把 BGM 压到比旁白低 bgm_gap_db(默认12dB)。
@@ -514,24 +537,20 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
             bgm_vol_expr = f"volume={max(0.0, bgm_volume)}"
             _err("[finalize] 响度探测失败, 回退固定 bgm_volume")
         # normalize=0 关键：否则 amix 会把旁白+BGM 各压低 ~6dB(实测旁白变小声的 bug)
-        vchain = (f"[0:v]{vfilter}[vbase];{logo_chain}[v]" if has_logo
-                  else f"[0:v]{vfilter}[v]")
         amix_tail = f",{afade}" if afade else ""
-        fc = (f"{vchain};"
+        fc = (";".join(parts) + ";"
               f"[1:a]{bgm_vol_expr}[bg];"
               f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0{amix_tail}[a]")
-        cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
-    elif has_logo:
-        fc = f"[0:v]{vfilter}[vbase];{logo_chain}[v]"
+        cmd += ["-filter_complex", fc, "-map", f"[{cur}]", "-map", "[a]"]
+    elif need_vchain:
+        fc = ";".join(parts)
         if afade:
             fc += f";[0:a]{afade}[a]"
-            cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
+            cmd += ["-filter_complex", fc, "-map", f"[{cur}]", "-map", "[a]"]
         else:
-            cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a:0?"]
+            cmd += ["-filter_complex", fc, "-map", f"[{cur}]", "-map", "0:a:0?"]
     else:
         cmd += ["-vf", vfilter, "-map", "0:v:0", "-map", "0:a:0?"]
-        if afade:
-            cmd += ["-af", afade]
 
     cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out]
@@ -573,7 +592,9 @@ def compose(manifest: dict, output_override: Optional[str] = None) -> dict:
         ok = finalize(merged, output, ai_label=manifest.get("ai_label", ""),
                       bgm=manifest.get("bgm"), bgm_volume=float(manifest.get("bgm_volume", 0.15)),
                       width=width, height=height, bgm_gap_db=float(manifest.get("bgm_gap_db", 12.0)),
-                      logo=manifest.get("logo"), fade_out=float(manifest.get("fade_out", 0.0)))
+                      logo=manifest.get("logo"), fade_out=float(manifest.get("fade_out", 0.0)),
+                      cover=manifest.get("cover"),
+                      cover_duration=float(manifest.get("cover_duration", 0.1)))
         if not ok:
             return {"success": False, "error": "导出失败", "stage": "finalize"}
 

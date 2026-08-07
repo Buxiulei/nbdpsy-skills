@@ -171,6 +171,10 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
         manifest["logo"] = str(logo_path)
     if "fade_out" in video_meta:
         manifest["fade_out"] = video_meta["fade_out"]
+    # 工作目录放 cover.png 即自动插片头首帧封面
+    cover_path = workdir / "cover.png"
+    if cover_path.is_file():
+        manifest["cover"] = str(cover_path)
 
     return {"manifest_dict": manifest, "missing": missing, "shots": len(shots)}
 

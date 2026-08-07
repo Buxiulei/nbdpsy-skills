@@ -18,6 +18,19 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.72.0] — 2026-08-07
+
+### text-to-video：封面首帧 + finalize 视频链重构
+
+视频上传需要封面：部分平台自动抓首帧当封面，server 的小红书视频上传接口也要单独传封面图。
+
+- **`cover` / `cover_duration`（manifest 可选）**：封面图叠在成片前 0.1s（工作目录放 `cover.png` 即自动生效，同 logo/bgm 约定）。**实现走 finalize 的 `overlay enable='lte(t,N)'`，不进 concat**——第一版把封面做成 0.1s 微型音频段拼接，AAC 时间戳错乱导致编码器拒帧（`Error submitting audio frame`），微型段进 concat 是死路；
+- **finalize 视频链重构**：基础滤镜 → 封面 → logo → 淡出按序装配（parts 列表），四个可选件任意组合都成立；
+- **封面制作口径（非代码，方法论）**：视频封面遵循小红书图文封面 skill 的三级层级原则（Heavy 1.6x 强调色扎心句 / Bold 议题词 / 细体拉字距副标题、标题压上 1/3、底部留白），基底用本片干净 shot 帧（风格天然同源），PIL 精确排版零错字；本机 Noto 只有 Bold/Regular 两档，Heavy 用 Bold+同色描边模拟；
+- 独立封面文件（供上传接口）从成片首帧导出（`ffmpeg -frames:v 1`），与视频内封面像素一致、自带 logo。
+
+---
+
 ## [1.71.0] — 2026-08-07
 
 ### text-to-video：首条电影化成片（CPTSD）落地沉淀——语音表演 + 字幕分页制 + 品牌收尾
