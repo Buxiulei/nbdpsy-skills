@@ -18,6 +18,21 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.81.0] — 2026-08-08
+
+### xhs：publish_note 支持视频/播客发布（补上 v1.80.2 记录的欠账）
+
+- 新增 `--video` / `--audio` / `--cover`：图文/视频/播客三选一，`--video` 与 `--audio` 互斥即时报错；
+  扩展名与文件存在性本地预检（省一次白跑 422）。
+- **`stage_media()` 同机落盘**：媒体文件 cp 进 `nbdpsy-server/data/uploads/media/skill-uploads/`
+  再把绝对路径传给接口，零网络传输；同名同尺寸跳过复制（幂等）。**server 在远端时明确
+  报错并指路分片上传**，不假装能传。
+- 分流修正：视频/播客不收图（`collect_images` 跳过）、图片张数校验只对图文生效
+  （干跑实测曾误报「图片 0 张会被拒」）、`--cover` 用于图文时直接报错（图文封面就是第一张图）；
+  `--dry-run` 回显 media_kind/video/audio/cover。
+
+---
+
 ## [1.80.2] — 2026-08-07
 
 ### xhs：视频/播客笔记发布实战沉淀（四号齐发跑通）

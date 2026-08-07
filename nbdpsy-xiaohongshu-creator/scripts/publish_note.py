@@ -72,6 +72,7 @@ related_counselor 驱动服务端**在本账号内**推导引用笔记，查不�
 import argparse
 import base64
 import json
+import shutil
 import re
 import sys
 import time
@@ -167,6 +168,36 @@ def split_content_topics(publish_text: str, meta: dict):
     return content, uniq
 
 
+# server 数据目录：mcp.nbdpsy.com 由本机 nbdpsy-server 提供时，媒体文件直接 cp 进去即可，
+# 零网络传输。走隧道分片上传实测极不稳（50MB SSL 断连 / 8MB 502 / 2MB 传到第 5 片仍 502）。
+SERVER_MEDIA_DIR = Path("/home/roots/nbdpsy-server/data/uploads/media/skill-uploads")
+VIDEO_EXTS = {".mp4", ".mov", ".flv", ".f4v", ".mkv", ".rm", ".rmvb", ".m4v", ".mpg", ".mpeg", ".ts"}
+AUDIO_EXTS = {".m4a", ".mp3", ".wav", ".flac", ".aac"}
+COVER_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def stage_media(path: Path, kind: str) -> str:
+    """把本机媒体文件放到 server 能读到的位置，返回服务器侧绝对路径。
+    同机（SERVER_MEDIA_DIR 的父目录存在）→ 直接 cp；否则报错并提示走分片上传
+    （远端 server 的分片通道 POST /api/uploads/media-sessions，本函数不代劳：
+    那条路要按 server 返回的 chunk_size 切片、逐片 PUT、complete 校验 sha256）。"""
+    exts = {"video": VIDEO_EXTS, "audio": AUDIO_EXTS, "cover": COVER_EXTS}[kind]
+    if not path.is_file():
+        raise ValueError(f"{kind} 文件不存在：{path}")
+    if path.suffix.lower() not in exts:
+        raise ValueError(f"{kind} 扩展名不支持：{path.suffix}（允许 {'/'.join(sorted(exts))}）")
+    if not SERVER_MEDIA_DIR.parent.parent.exists():
+        raise ValueError(
+            f"本机没有 server 数据目录（{SERVER_MEDIA_DIR.parent.parent}）——"
+            "说明 server 在远端，请改走分片上传 POST /api/uploads/media-sessions，"
+            "拿 complete 返回的 path 再发布")
+    SERVER_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    dst = SERVER_MEDIA_DIR / path.name
+    if not (dst.exists() and dst.stat().st_size == path.stat().st_size):
+        shutil.copy2(path, dst)
+    return str(dst.resolve())
+
+
 def collect_images(note_path: Path, images_dir):
     """默认取笔记同目录 images/<note名>/ 下的图片，按文件名排序（P01→PNN 即页序）。"""
     d = Path(images_dir) if images_dir else note_path.parent / "images" / note_path.stem
@@ -223,7 +254,7 @@ def extras_warnings(extras: dict):
     return w
 
 
-def build_warnings(title: str, content: str, topics, image_paths):
+def build_warnings(title: str, content: str, topics, image_paths, media_kind: str = "images"):
     w = []
     if len(title) > 20:
         w.append(f"标题 {len(title)} 字超 20，服务端会静默截断")
@@ -231,7 +262,8 @@ def build_warnings(title: str, content: str, topics, image_paths):
         w.append(f"正文 {len(content)} 字超 900，服务端会静默截断")
     if len(topics) > 10:
         w.append(f"话题 {len(topics)} 个超 10，服务端会静默截断")
-    if not 1 <= len(image_paths) <= 18:
+    # 视频/播客笔记不带图，图片张数校验只对图文生效
+    if media_kind == "images" and not 1 <= len(image_paths) <= 18:
         w.append(f"图片 {len(image_paths)} 张不在 1–18 范围，服务端会拒绝（400）")
     return w
 
@@ -729,6 +761,14 @@ def main():
     ap = argparse.ArgumentParser(description="经 nbdpsy-api 发布小红书图文笔记（异步）")
     ap.add_argument("--note", type=Path, help="笔记文件（post-NN.md，须含「## 发布文案」块）")
     ap.add_argument("--account", help="小红书账号：数字 id 或账号名/昵称")
+    ap.add_argument("--video", type=Path, metavar="路径",
+                    help="视频笔记：本机视频文件（.mp4/.mov/.flv/.f4v/.mkv/.rm/.rmvb/.m4v/.mpg/.mpeg/.ts）"
+                         "；与图文/播客三选一。同机场景自动落进 server 数据目录（零传输）")
+    ap.add_argument("--audio", type=Path, metavar="路径",
+                    help="播客笔记：本机音频文件（.m4a/.mp3/.wav/.flac/.aac；时长须 10 分钟-2 小时、≤1GB）"
+                         "；与图文/视频三选一")
+    ap.add_argument("--cover", type=Path, metavar="路径",
+                    help="视频/播客的自定义封面图（.jpg/.jpeg/.png/.webp）；不传则视频用平台截首帧")
     ap.add_argument("--images-dir", type=Path, help="配图目录（默认 <笔记同目录>/images/<笔记名>/）")
     ap.add_argument("--schedule", help="定时发布，ISO8601 带时区偏移，如 2026-07-14T09:00:00+08:00")
     ap.add_argument("--api-base", help="API base（默认凭据 NBDPSY_XHS_API_BASE 或 https://mcp.nbdpsy.com）")
@@ -936,6 +976,8 @@ def main():
             print(json.dumps(job_brief(view), ensure_ascii=False))
             sys.exit(1 if view.get("status") in ("failed", "canceled") else 0)
 
+        if args.video and args.audio:
+            ap.error("--video 与 --audio 互斥（图文/视频/播客三选一）")
         if not args.note or not args.account:
             ap.error("发布需要 --note 与 --account（或改用 --job / --list-accounts）")
 
@@ -944,16 +986,21 @@ def main():
         if not title:
             raise ValueError("frontmatter 缺 title")
         content, topics = split_content_topics(extract_publish_text(body), meta)
-        image_paths = collect_images(args.note, args.images_dir)
+        media_kind = "video" if args.video else ("audio" if args.audio else "images")
+        image_paths = [] if media_kind != "images" else collect_images(args.note, args.images_dir)
         extras = collect_extras(meta, args)
-        warnings = build_warnings(title, content, topics, image_paths) + extras_warnings(extras)
+        warnings = build_warnings(title, content, topics, image_paths, media_kind) + extras_warnings(extras)
         for w in warnings:
             print(f"⚠ {w}", file=sys.stderr)
 
         if args.dry_run:
             print(json.dumps({
                 "outcome": "dry_run", "title": title, "content_chars": len(content),
-                "topics": topics, "images": [str(p) for p in image_paths],
+                "topics": topics, "media_kind": media_kind,
+                "video": str(args.video) if args.video else None,
+                "audio": str(args.audio) if args.audio else None,
+                "cover": str(args.cover) if args.cover else None,
+                "images": [str(p) for p in image_paths],
                 "account": args.account, "schedule_time": args.schedule,
                 "extras": extras, "warnings": warnings,
             }, ensure_ascii=False, indent=2))
@@ -965,12 +1012,24 @@ def main():
             print(f"⚠ {acc_warn}", file=sys.stderr)
 
         payload = {"account_id": account_id, "title": title, "content": content,
-                   "images": b64_items(image_paths), "topics": topics, **extras}
+                   "topics": topics, **extras}
+        if media_kind == "video":
+            payload["video"] = stage_media(args.video, "video")
+        elif media_kind == "audio":
+            payload["audio"] = stage_media(args.audio, "audio")
+        else:
+            payload["images"] = b64_items(image_paths)
+        if args.cover:
+            if media_kind == "images":
+                raise ValueError("图文笔记没有独立封面（封面就是第一张图），--cover 仅用于视频/播客")
+            payload["cover"] = stage_media(args.cover, "cover")
         if args.schedule:
             payload["schedule_time"] = args.schedule
 
-        print(f"提交发布：{args.note.name} → 账号 {account_label}（{len(image_paths)} 图）…",
-              file=sys.stderr)
+        what = {"video": f"视频 {args.video.name if args.video else ''}",
+                "audio": f"播客 {args.audio.name if args.audio else ''}",
+                "images": f"{len(image_paths)} 图"}[media_kind]
+        print(f"提交发布：{args.note.name} → 账号 {account_label}（{what}）…", file=sys.stderr)
         resp = send_request("POST", f"{api_base}/api/publish-jobs", key, payload, timeout=180)
         if resp.status_code >= 400:
             raise ValueError(api_error(resp))
