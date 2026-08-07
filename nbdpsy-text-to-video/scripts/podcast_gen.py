@@ -96,16 +96,33 @@ def _make_silence(seconds: float, out: Path) -> None:
           "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(out)], "生成静音")
 
 
-def _to_wav(src: Path, dst: Path) -> None:
-    """把片段解码成统一规格 wav 再参与拼接。
+# 双声响度目标（2026-08-07 老板验收：两个声音音量差太大——实测温暖闺蜜 -31dB vs
+# 温润男声 -23.6dB，差 7.5dB）。每行按 mean_volume 归一到统一目标，增益限幅防把底噪泵上来。
+TARGET_MEAN_DB = -22.0
+GAIN_LIMIT_DB = 12.0
+
+
+def _mean_volume_db(path: Path) -> float | None:
+    """volumedetect 测 mean_volume(dB)，输出在 stderr。"""
+    r = subprocess.run(["ffmpeg", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
+                       capture_output=True, text=True, timeout=120)
+    m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?) dB", r.stderr)
+    return float(m.group(1)) if m else None
+
+
+def _to_wav(src: Path, dst: Path, gain_db: float = 0.0) -> None:
+    """把片段解码成统一规格 wav 再参与拼接（gain_db≠0 时顺带做响度归一）。
 
     为什么不直接 concat mp3：mp3 每个文件两端都带编码器延迟/补零，拼接重编码时
     这部分被吃掉，于是「各段 ffprobe 时长之和」比拼出来的实际音轨长——实测 4 行就
     差了 0.32s，而且**随行数单调累积**，几十行下来字幕会明显滞后于人声。
     统一转成 pcm wav 后，段长是精确的样本数，累加即全局时间轴，cues 由构造保证准确；
     唯一残留的编码器补零只落在最终 mp3 的末尾，不影响任何一条 cue 的位置。"""
-    _run(["ffmpeg", "-y", "-i", str(src), "-ar", str(SILENCE_RATE), "-ac", "1",
-          "-c:a", "pcm_s16le", str(dst)], f"解码 {src.name}")
+    cmd = ["ffmpeg", "-y", "-i", str(src)]
+    if abs(gain_db) > 0.05:
+        cmd += ["-af", f"volume={gain_db:.1f}dB"]
+    cmd += ["-ar", str(SILENCE_RATE), "-ac", "1", "-c:a", "pcm_s16le", str(dst)]
+    _run(cmd, f"解码 {src.name}")
 
 
 def _concat_wav_to_mp3(parts: list[Path], out: Path) -> None:
@@ -192,7 +209,14 @@ def synth(podcast_path: str, *, workdir: str | None = None,
             est_chars += billable_chars(raw)
 
         wav = wav_dir / f"line-{i:02d}.wav"
-        _to_wav(mp3, wav)
+        # 逐行响度归一：不同音色出厂响度差很大（实测双声差 7.5dB），统一拉到 TARGET_MEAN_DB
+        mv = _mean_volume_db(mp3)
+        gain = 0.0
+        if mv is not None:
+            gain = max(-GAIN_LIMIT_DB, min(GAIN_LIMIT_DB, TARGET_MEAN_DB - mv))
+            if abs(gain) > 0.05:
+                _err(f"[podcast] 行{i:02d} 响度 {mv:.1f}dB → 增益 {gain:+.1f}dB")
+        _to_wav(mp3, wav, gain_db=gain)
         d = tts_gen.ffprobe_duration(str(wav))
         if d <= 0:
             raise RuntimeError(f"行{i} 音频时长探测为 0，文件可能损坏：{mp3}")

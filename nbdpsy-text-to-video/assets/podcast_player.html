@@ -68,10 +68,11 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
     opacity: 1; transition: opacity 150ms linear;
     text-shadow: 0 2px 18px rgba(0, 0, 0, .9);
     max-height: 520px; overflow: hidden;
+    white-space: pre-line;  /* 页级 cue 的 \n 换行直接生效（逗号换行/每页两行由注入端分好） */
   }
   #cap.spk-M { color: var(--spk-m); }
 
-  /* ③ 波形播放器图形（纯装饰，随播放走，不反映真实频谱） */
+  /* ③ 波形播放器图形（真实声纹：离线预计算频谱查表驱动，见 record_podcast.compute_spectrogram） */
   #player { width: 560px; margin-bottom: 96px; }
   #bars {
     height: 92px; display: flex; align-items: center; justify-content: center;

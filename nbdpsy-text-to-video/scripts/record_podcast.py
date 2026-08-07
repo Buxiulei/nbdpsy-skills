@@ -72,6 +72,29 @@ def compute_spectrogram(audio: Path, bands: int = 44, win: float = 0.08) -> dict
     return {"win": win, "bands": bands, "frames": arr.astype(int).tolist()}
 
 
+def paginate_cues(cues: list[dict]) -> list[dict]:
+    """行级 cues → 页级 cues（2026-08-07 老板定案：播客字幕与短视频同规则——
+    逗号换行、句号翻页、每页最多两行超出翻页）。直接复用 compose_video 的分页管线
+    （标点转换/词表折行/两行装箱），页时长按该页文字显示宽度在行内按比例分配，
+    与 compose_video._page_events 同一套时间分配逻辑；页文本以 \\n 分行，页面转 <br>。"""
+    import compose_video as cv
+    out = []
+    for c in cues:
+        pages = cv._render_caption_pages((c.get("text") or "").strip())
+        if not pages:
+            continue
+        start, end = float(c["start"]), float(c["end"])
+        weights = [max(1.0, cv._disp_w(p.replace("\n", ""))) for p in pages]
+        total = sum(weights)
+        t = start
+        for i, (p, w) in enumerate(zip(pages, weights)):
+            e = end if i == len(pages) - 1 else min(end, t + (end - start) * w / total)
+            out.append({"speaker": c.get("speaker", "F"), "text": p,
+                        "start": round(t, 3), "end": round(e, 3)})
+            t = e
+    return out
+
+
 def build_page(podcast: dict, cues_doc: dict, out_html: Path, spectro: dict | None = None) -> None:
     """把 {title, vol, series, duration, cues, spectro} 注进模板的 #podcast-data 占位。
     页面按同目录相对路径加载 podcast.mp3，所以 out_html 必须与音频同目录。"""
@@ -80,7 +103,7 @@ def build_page(podcast: dict, cues_doc: dict, out_html: Path, spectro: dict | No
         "vol": podcast.get("vol"),
         "series": podcast.get("series", ""),
         "duration": cues_doc.get("duration"),
-        "cues": cues_doc.get("cues") or [],
+        "cues": paginate_cues(cues_doc.get("cues") or []),
         "spectro": spectro,
     }
     # "</" 转义：正文里若混进 </script> 会把 script 标签提前闭合，页面直接崩
