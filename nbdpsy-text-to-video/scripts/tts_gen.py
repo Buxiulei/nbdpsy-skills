@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""中文旁白生成 —— 双引擎：edge-tts(免费无 key) / 火山豆包大模型 TTS(高音质, 需 key)。
+"""中文旁白生成 —— 三引擎：edge-tts(免费无 key) / 火山豆包大模型 TTS(高音质, 需 key)
+/ MiniMax T2A(高音质, 需 key)。
 
 把分镜旁白文案转成 mp3，喂给 compose_video.py 的 segments[].narration。
 
@@ -20,6 +21,24 @@
             → 走 V1 接口（/api/v1/tts，官方已标"不推荐"但保留向后兼容），
             默认音色仍是 zh_female_wenroushunv_mars_bigtts「温柔淑女」。
           · 都无 → 报错，优先引导配 VOLC_TTS_API_KEY。
+  minimax（高音质，需 key）MiniMax 同步 HTTP T2A（POST /v1/t2a_v2，非流式），
+          凭据读 MINIMAX_API_KEY（Bearer）/ MINIMAX_VOICE，语速 --speed（范围 0.5-2.0，
+          与豆包的 0.8-2.0 不同，越界会 clamp 并在 stderr 提示），模型 --model
+          默认 speech-2.8-hd。情绪 --emotion 只在显式传入时才带上——官方原文
+          「模型会根据输入文本自动匹配合适的情绪，一般无需手动指定」，不传更自然。
+          MINIMAX_GROUP_ID 通常不需要配：官方现行 OpenAPI 规范无此参数；仅旧版/
+          国际站账号要求 ?GroupId=xxx，配了才拼进 query（绝不自动试探重试，
+          因为 TTS 按字符计费，重试＝重复扣费）。
+
+          **MiniMax 独有的两套文本标记（豆包没有，后续做停顿/气口用这个）**：
+          · 停顿标记 `<#x#>`：x 为秒数，0.01-99.99，最多两位小数；不可连续使用多个；
+            必须夹在两段可发音文本之间。例：`他愣了一下<#0.8#>然后笑了。`
+          · 语气词标签（**仅 speech-2.8-hd / speech-2.8-turbo 支持**）：
+            (sighs)(breath)(chuckle)(laughs)(gasps)(exhale)(inhale)(coughs)
+            (clear-throat)(groans)(pant)(sniffs)(snorts)(humming)(hissing)
+            (emm)(sneezes)(burps)(lip-smacking)
+          · 对比：豆包那套方括号语气指令实测是死路——会被原样朗读出来；
+            MiniMax 这两套是官方标记，不会被念出来。
 
 **逐句时间轴 --timed（字幕真同步的根，强烈建议开）**：
   默认整段合成时，字幕只能按字数比例估算时长 → 与真实语速错位。
@@ -39,6 +58,7 @@ edge 常用音色：zh-CN-XiaoxiaoNeural(温柔女) / zh-CN-YunxiNeural(沉稳�
 用法：
   python tts_gen.py --engine doubao --text "焦虑不是敌人…" --out tts/1.mp3 --timed
   python tts_gen.py --engine doubao --plan shots.json --out-dir tts/ --timed
+  python tts_gen.py --engine minimax --voice <voice_id> --text "焦虑不是敌人…" --out tts/1.mp3 --timed
 """
 from __future__ import annotations
 
@@ -71,6 +91,29 @@ DOUBAO_V3_RESOURCE_ID = "seed-tts-2.0"  # 豆包语音合成大模型2.0（默�
 # 与 seed-tts-2.0 同一个 unidirectional 端点、同一套流式响应格式，仅换 resource-id
 # 并额外要求 X-Api-App-Id 头 + body 带 user.uid（实测契约，speaker=S_xxx 出合法 mp3）。
 DOUBAO_ICL_RESOURCE_ID = "seed-icl-2.0"
+
+# ---- MiniMax T2A（同步 HTTP，非流式）----
+# 契约锁定自 MiniMax 官方 OpenAPI 规范（POST /v1/t2a_v2）。
+# 备用域名 https://api-bj.minimaxi.com/v1/t2a_v2 —— 故意不实现自动切换：
+# TTS 按字符计费，任何自动重试/换域名重发都可能重复扣费（本仓库资金安全铁律）。
+MINIMAX_ENDPOINT = "https://api.minimaxi.com/v1/t2a_v2"
+MINIMAX_DEFAULT_MODEL = "speech-2.8-hd"
+MINIMAX_MODELS = (
+    "speech-2.8-hd", "speech-2.8-turbo",
+    "speech-2.6-hd", "speech-2.6-turbo",
+    "speech-02-hd", "speech-02-turbo",
+    "speech-01-hd", "speech-01-turbo",
+)
+MINIMAX_EMOTIONS = (
+    "happy", "sad", "angry", "fearful", "disgusted", "surprised",
+    "calm", "fluent", "whisper",
+)
+# whisper（气声）只有 2.6 系支持，2.8 系不支持——本地预检拦掉，省一次白跑（也就省一次计费）
+MINIMAX_WHISPER_UNSUPPORTED_PREFIX = "speech-2.8"
+MINIMAX_SPEED_MIN, MINIMAX_SPEED_MAX = 0.5, 2.0  # 注意与豆包的 0.8-2.0 不同
+# 计费口径（官方）：1 个汉字算 2 字符，其他字符算 1；下表是每万计费字符的人民币价格。
+# 只登记已核对过价格的型号，其余型号只打字符数不瞎估价。
+MINIMAX_PRICE_PER_10K = {"speech-2.8-hd": 3.5, "speech-2.8-turbo": 2.0}
 
 
 def _err(m: str) -> None:
@@ -122,6 +165,18 @@ def resolve_credentials() -> dict:
         "token": _secret_fallback("VOLC_TTS_ACCESS_TOKEN"),
         "cluster": _secret_fallback("VOLC_TTS_CLUSTER") or "volcano_tts",
         "voice": _secret_fallback("VOLC_TTS_VOICE"),
+    }
+
+
+def resolve_minimax_credentials() -> dict:
+    """MiniMax T2A 凭据解析（纯函数，便于测试）。与 resolve_credentials()（豆包专用）
+    互不干扰，各读各的键。三级链同上：环境变量 → skill 目录 .env → nbdpsy_common 用户级 secrets。
+    group_id 多数账号为 None（官方现行接口不需要 GroupId），只有旧版/国际站账号才配。"""
+    _load_env()
+    return {
+        "api_key": _secret_fallback("MINIMAX_API_KEY"),
+        "group_id": _secret_fallback("MINIMAX_GROUP_ID"),
+        "voice": _secret_fallback("MINIMAX_VOICE"),
     }
 
 
@@ -343,11 +398,115 @@ def _doubao_synth(text: str, out: str, voice: str | None, speed: float,
     return resolved_voice
 
 
+# ---- MiniMax T2A ----
+
+def _minimax_build_request(text: str, voice: str, speed: float, *,
+                           model: str = MINIMAX_DEFAULT_MODEL,
+                           emotion: str | None = None,
+                           group_id: str | None = None) -> tuple[str, dict]:
+    """构造 MiniMax T2A 的 (url, body)。抽成纯函数：不发请求即可断言载荷正确，
+    避免为验证参数而真调接口（TTS 按字符计费，白跑一次就是真金白银）。
+    本地预检在这里做完（whisper/2.8 冲突、非法 emotion、speed 越界 clamp），
+    先于任何网络请求，不合法直接抛错。"""
+    if not voice:
+        raise RuntimeError(
+            "MiniMax 需要音色 voice_id：用 --voice 传入，或配 MINIMAX_VOICE"
+            "（官方 schema 无默认值，不代猜）")
+    if emotion is not None:
+        if emotion not in MINIMAX_EMOTIONS:
+            raise RuntimeError(
+                f"MiniMax 不认识的 emotion={emotion}，合法值：{'/'.join(MINIMAX_EMOTIONS)}"
+                "（官方若新增情感值，请同步更新 MINIMAX_EMOTIONS）")
+        if emotion == "whisper" and model.startswith(MINIMAX_WHISPER_UNSUPPORTED_PREFIX):
+            raise RuntimeError(
+                f"emotion=whisper 仅 2.6 系模型支持，当前 model={model} 不支持——"
+                "请换 --model speech-2.6-hd/speech-2.6-turbo，或去掉 --emotion")
+    clamped = max(MINIMAX_SPEED_MIN, min(MINIMAX_SPEED_MAX, speed))
+    if clamped != speed:
+        _err(f"⚠ MiniMax 语速范围 {MINIMAX_SPEED_MIN}-{MINIMAX_SPEED_MAX}（与豆包 0.8-2.0 不同），"
+             f"--speed {speed} 已收敛为 {clamped}")
+    voice_setting = {
+        "voice_id": voice,
+        "speed": clamped,
+        "vol": 1,      # >0 且 ≤10，暂不暴露到 CLI
+        "pitch": 0,    # -12..12 整数，暂不暴露到 CLI
+    }
+    # emotion 只在调用方显式指定时才带上：官方原文「模型会根据输入文本自动匹配
+    # 合适的情绪，一般无需手动指定」，硬塞一个反而把自然的情绪起伏压平。
+    if emotion is not None:
+        voice_setting["emotion"] = emotion
+    body = {
+        "model": model,
+        "text": text,
+        "stream": False,
+        "voice_setting": voice_setting,
+        # sample_rate 官方 schema 没写 default，显式传，别赌默认值
+        "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1},
+        # output_format 用默认 hex（不传该键）——data.audio 因此是 hex 串而非 base64
+    }
+    # 官方现行 OpenAPI 不需要 GroupId；旧版/国际站才要拼 query。配了才拼，没配不拼，
+    # 且绝不做「不带→失败→带上重试」的自动试探（重试＝重复计费）。
+    url = f"{MINIMAX_ENDPOINT}?GroupId={group_id}" if group_id else MINIMAX_ENDPOINT
+    return url, body
+
+
+def _minimax_synth(text: str, out: str, voice: str, speed: float, api_key: str, *,
+                   model: str = MINIMAX_DEFAULT_MODEL, emotion: str | None = None,
+                   group_id: str | None = None) -> bool:
+    """MiniMax 同步 HTTP 合成（POST /v1/t2a_v2，stream=false，一次请求拿全量音频）。
+    响应契约：data.audio 是 **hex 编码**字符串（不是 base64，与豆包不同，用 bytes.fromhex）；
+    data.status 1=合成中 2=结束；extra_info.audio_length(ms)/usage_characters(计费字符数)/word_count；
+    base_resp.status_code 0=正常，1000 未知 / 1001 超时 / 1002 限流 / 1004 鉴权失败 /
+    1039 TPM限流 / 1042 非法字符超10% / 2013 参数不正常。
+    **HTTP 200 不代表成功**——这类 API 常在 200 里返错误码，必须查 base_resp（本仓库踩过同类坑）。
+    失败一律原文透出、绝不自动重试：TTS 按字符计费（1 汉字=2 字符；
+    speech-2.8-hd ¥3.5/万字符、speech-2.8-turbo ¥2.0/万字符），重试就是重复扣费，
+    该不该再花钱由调用方决定。"""
+    import requests
+    url, body = _minimax_build_request(text, voice, speed, model=model,
+                                       emotion=emotion, group_id=group_id)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    r = requests.post(url, headers=headers, json=body, timeout=120)
+    group_hint = ("（若你的账号属于旧版/国际站，可配置 MINIMAX_GROUP_ID 后重试）"
+                  if not group_id else "")
+    if r.status_code != 200:
+        auth_hint = group_hint if r.status_code == 401 else ""
+        raise RuntimeError(f"MiniMax TTS HTTP {r.status_code}：{r.text[:300]}{auth_hint}")
+    try:
+        j = r.json()
+    except Exception:
+        raise RuntimeError(f"MiniMax TTS 非 JSON 响应 HTTP{r.status_code}: {r.text[:300]}")
+    base = j.get("base_resp") or {}
+    code = base.get("status_code")
+    if code not in (0, None):
+        hint = group_hint if code == 1004 else ""
+        raise RuntimeError(
+            f"MiniMax TTS 失败 status_code={code} msg={base.get('status_msg')} "
+            f"trace_id={j.get('trace_id')}{hint}")
+    audio_hex = ((j.get("data") or {}).get("audio")) or ""
+    if not audio_hex:
+        raise RuntimeError(f"MiniMax TTS 无音频数据（trace_id={j.get('trace_id')}）：{str(j)[:300]}")
+    try:
+        audio = bytes.fromhex(audio_hex)
+    except ValueError as e:
+        raise RuntimeError(f"MiniMax TTS 音频不是合法 hex（{e}），未按预期的 output_format 返回")
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_bytes(audio)
+    # 计费对账：从服务端回执读实际计费字符数，打一行到 stderr，方便事后核对账单
+    used = (j.get("extra_info") or {}).get("usage_characters")
+    if used is not None:
+        price = MINIMAX_PRICE_PER_10K.get(model)
+        cost = f"（约 ¥{used / 10000 * price:.2f}）" if price else "（该型号价目未登记）"
+        _err(f"[tts] MiniMax 本次计费字符 {used}{cost}")
+    return True
+
+
 # ---- 统一入口 ----
 
 def gen_one(text: str, out: str, *, engine: str = "edge", voice: str | None = None,
             rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95,
-            emotion: str | None = None, emotion_scale: int | None = None) -> dict:
+            emotion: str | None = None, emotion_scale: int | None = None,
+            model: str = MINIMAX_DEFAULT_MODEL) -> dict:
     text = (text or "").strip()
     if not text:
         return {"success": False, "error": "文本为空"}
@@ -356,6 +515,15 @@ def gen_one(text: str, out: str, *, engine: str = "edge", voice: str | None = No
         if engine == "doubao":
             resolved_voice = _doubao_synth(text, out, voice, speed,
                                            emotion=emotion, emotion_scale=emotion_scale)
+        elif engine == "minimax":
+            creds = resolve_minimax_credentials()
+            if not creds["api_key"]:
+                raise RuntimeError(
+                    "缺 MiniMax TTS 凭据 MINIMAX_API_KEY：填进 skill 的 .env，"
+                    "或跑 setup.py 凭据向导写入用户级 secrets")
+            resolved_voice = voice or creds["voice"]
+            _minimax_synth(text, out, resolved_voice, speed, creds["api_key"],
+                           model=model, emotion=emotion, group_id=creds["group_id"])
         else:
             asyncio.run(_edge_synth(text, out, resolved_voice, rate))
     except ModuleNotFoundError as e:
@@ -379,7 +547,8 @@ def _concat_mp3(parts: list[str], out: str) -> bool:
 
 def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None = None,
               rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95,
-              emotion: str | None = None, emotion_scale: int | None = None) -> dict:
+              emotion: str | None = None, emotion_scale: int | None = None,
+              model: str = MINIMAX_DEFAULT_MODEL) -> dict:
     """逐句合成 + 实测时间轴：每句单独 TTS、ffprobe 实测时长、拼接成 out，
     并写 sidecar {out}.cues.json（[{text,start,end}]），供 compose 做字幕真同步。"""
     text = (text or "").strip()
@@ -392,7 +561,7 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
         for i, s in enumerate(sents):
             part = str(Path(tmp) / f"p{i:03d}.mp3")
             r = gen_one(s, part, engine=engine, voice=voice, rate=rate, speed=speed,
-                        emotion=emotion, emotion_scale=emotion_scale)
+                        emotion=emotion, emotion_scale=emotion_scale, model=model)
             if not r.get("success"):
                 return {"success": False, "error": f"句{i}合成失败：{r.get('error')}"}
             d = ffprobe_duration(part)
@@ -421,7 +590,8 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
 
 
 def gen_batch(plan_path: str, out_dir: str, *, engine: str = "edge", voice: str | None = None,
-              rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95, timed: bool = False) -> dict:
+              rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95, timed: bool = False,
+              model: str = MINIMAX_DEFAULT_MODEL) -> dict:
     try:
         plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001
@@ -440,9 +610,9 @@ def gen_batch(plan_path: str, out_dir: str, *, engine: str = "edge", voice: str 
             _err(f"[tts] 分镜 {i}: 跳过(无文案)")
             continue
         if timed:
-            r = gen_timed(text, out, engine=engine, voice=voice, rate=rate, speed=speed)
+            r = gen_timed(text, out, engine=engine, voice=voice, rate=rate, speed=speed, model=model)
         else:
-            r = gen_one(text, out, engine=engine, voice=voice, rate=rate, speed=speed)
+            r = gen_one(text, out, engine=engine, voice=voice, rate=rate, speed=speed, model=model)
         r["index"] = i
         results.append(r)
         _err(f"[tts] 分镜 {i}: {'✅' if r.get('success') else '❌ ' + r.get('error', '')} {out}"
@@ -452,18 +622,24 @@ def gen_batch(plan_path: str, out_dir: str, *, engine: str = "edge", voice: str 
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="中文旁白生成（edge-tts / 火山豆包）")
-    p.add_argument("--engine", default="edge", choices=["edge", "doubao"])
+    p = argparse.ArgumentParser(description="中文旁白生成（edge-tts / 火山豆包 / MiniMax）")
+    p.add_argument("--engine", default="edge", choices=["edge", "doubao", "minimax"])
     p.add_argument("--text")
     p.add_argument("--out")
     p.add_argument("--plan")
     p.add_argument("--out-dir", default="./tts")
     p.add_argument("--voice", default=None)
     p.add_argument("--rate", default=EDGE_DEFAULT_RATE, help="edge 语速，如 -10%%")
-    p.add_argument("--speed", type=float, default=0.95, help="豆包语速 speed_ratio 0.8-2.0")
+    p.add_argument("--model", default=MINIMAX_DEFAULT_MODEL, choices=list(MINIMAX_MODELS),
+                   help=f"MiniMax 模型（仅 --engine minimax 生效），默认 {MINIMAX_DEFAULT_MODEL}")
+    p.add_argument("--speed", type=float, default=0.95,
+                   help="语速：豆包 speed_ratio 0.8-2.0；MiniMax 0.5-2.0（越界自动收敛）")
     p.add_argument("--emotion", default=None,
                    help="豆包 V3 情感/风格（Seed-TTS/ICL 2.0）：如 sad/happy/pleased/"
-                        "novel_dialog 等 28 种；克隆音色官方明确支持情感演绎")
+                        "novel_dialog 等 28 种；克隆音色官方明确支持情感演绎。"
+                        "MiniMax 合法值仅 9 种：happy/sad/angry/fearful/disgusted/"
+                        "surprised/calm/fluent/whisper（whisper 仅 2.6 系支持），"
+                        "不传则由模型按文本自动匹配情绪（官方建议）")
     p.add_argument("--emotion-scale", type=int, default=None,
                    help="情感强度 1-5（配 --emotion 用）")
     p.add_argument("--timed", action="store_true",
@@ -472,14 +648,14 @@ def main() -> None:
 
     if a.plan:
         res = gen_batch(a.plan, a.out_dir, engine=a.engine, voice=a.voice, rate=a.rate,
-                        speed=a.speed, timed=a.timed)
+                        speed=a.speed, timed=a.timed, model=a.model)
     elif a.text and a.out:
         if a.timed:
             res = gen_timed(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
-                            emotion=a.emotion, emotion_scale=a.emotion_scale)
+                            emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model)
         else:
             res = gen_one(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
-                          emotion=a.emotion, emotion_scale=a.emotion_scale)
+                          emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model)
     else:
         p.error("用 --text+--out 单条，或 --plan+--out-dir 批量")
         return

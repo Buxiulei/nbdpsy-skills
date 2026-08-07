@@ -17,6 +17,13 @@ description: >-
 
 **一句话心智**：这是「**你当导演、脚本跑腿、每条人工终审**」的半自动产线，不是一键批量出片机。质量取决于分镜脚本的用心 + 中文打磨，不是堆钱。
 
+**两种内容形态**（2026-08-07 命名定案）：
+- **「笔记微电影」**——小红书笔记短内容 → 电影化动画短片（1–3 分钟，几秒一个分镜，
+  Seedance 画面 + 口播旁白 + 分页字幕 + 品牌收尾）。本文十步产线就是它；创作方法论见
+  `references/cinematic-direction.md`，旁白逐字稿规范见 `references/narration-spec.md`。
+- **「长文播客」**——长文 → 一男一女对谈播客视频（声音+字幕为主，HTML 播放器画面录屏，
+  黑底大字幕+波形+栏目名）。规格见 `references/podcast-video-spec.md`。
+
 **路径约定**：以下命令中 `{SKILL_DIR}` 指本文件（SKILL.md）所在目录；`{workspace}` 指内容工作区根目录，用 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace` 查询实际路径。
 
 多步任务先维护一份中文任务清单，每步做完勾掉。
@@ -299,6 +306,8 @@ python3 {SKILL_DIR}/scripts/compose_video.py --manifest <workdir>/manifest.json
 
 ### 旁白与字幕文案
 
+**逐字稿规范（写稿六律 / DeepSeek 三轮本土化审校 / TTS 引语坑 / 表演标记纪律）见
+`references/narration-spec.md`——口播稿定稿前必须走完该文档的审校流程。**
 口语化、共情、**忠于原文不编造**；不下诊断、不承诺疗效。`subtitle` 是无旁白镜的兜底固定字幕（每镜 1–2 行、每行 ≤ ~16 字）；有旁白+cues 时字幕逐句真同步、无需手写。shots.json 里的 `narration_text`/`subtitle` 由 TTS 与合成清单消费，`jimeng_gen` 生成画面时会忽略它们（只吃 operation/prompt/duration/ratio/model/image）。
 
 ---
@@ -333,7 +342,11 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py gen --operation text2video \
 
 ## 旁白与 BGM 细节（第 3、7 步引用）
 
-**双引擎**：`edge`（免费无 key）/ `doubao`（火山豆包大模型，高音质，需 `.env` 配凭据；凭据缺失即报错，兜底改 `--engine edge`）。`doubao` 引擎内部按凭据自动路由两套接口，互不干扰：
+**三引擎**：`edge`（免费无 key，兜底）/ `doubao`（火山豆包）/ `minimax`（**口播默认**，
+2026-08-07 起）。**minimax** 走 MiniMax 同步 T2A（`speech-2.8-hd`，凭据 `MINIMAX_API_KEY`，
+现役音色「温暖闺蜜」`Chinese (Mandarin)_Warm_Bestie`）——独有秒级停顿 `<#x#>` 与 19 个语气词
+标签（`(sighs)` 等，不会被念出来），是表演控制最强的一档；**引语坑与选型对照表见
+`references/narration-spec.md` 第三节**。`doubao` 保留（有老板克隆音色 S_），按凭据自动路由两套接口，互不干扰：
 - 配了 `VOLC_TTS_API_KEY`（新版单一凭据，**优先**）→ 走 V3 单向流式接口，默认音色「温柔淑女 2.0」`zh_female_wenroushunv_uranus_bigtts`。
 - **克隆音色（火山「声音复刻」）**：默认音色（`VOLC_TTS_VOICE` / `--voice`）填成 `S_` 开头的克隆音色 id（如 `S_moiqVFN72`）→ 旁白自动用你克隆的专属声音，走 `seed-icl-2.0`（同端点换 resource-id + 带 `X-Api-App-Id` 头），**纯人声、全片一致**。此时**必须**同时配 `VOLC_TTS_APPID`（作 `X-Api-App-Id`），缺失直接报错不静默。没填 S_ 音色则用上面的默认音色，行为不变。
 - 未配 API Key 但配了 `VOLC_TTS_APPID` + `VOLC_TTS_ACCESS_TOKEN`（旧版双凭据）→ 走 V1 接口（官方已标"不推荐"，仅向后兼容），默认音色「温柔淑女」`zh_female_wenroushunv_mars_bigtts`。

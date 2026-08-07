@@ -39,6 +39,12 @@ CREDENTIALS = [  # (KEY, 是否必需, 说明)
     ("VOLC_TTS_ACCESS_TOKEN", False,
      "火山豆包 TTS（旧版，已有 VOLC_TTS_API_KEY 可不填）—— 找管理员要（凭据配置包会一并带上）；"
      "可跳过，跳过后旁白改用 --engine edge（免费 edge-tts）"),
+    ("MINIMAX_API_KEY", False,
+     "MiniMax TTS 凭据（旁白第三引擎 --engine minimax）—— 找管理员要（凭据配置包会一并带上），"
+     "或去 MiniMax 开放平台账户管理页自建；可跳过，跳过后旁白改用 --engine doubao 或 edge"),
+    ("MINIMAX_GROUP_ID", False,
+     "MiniMax GroupId —— 仅旧版/国际站账号需要，官方现行接口不需要；"
+     "绝大多数人留空即可，只有报鉴权失败（HTTP 401 / status_code=1004）时才回来补填"),
     ("NBDPSY_XHS_API_KEY", False,
      "nbdpsy-server apikey（运营专属，接入包同一把）—— 同一把 key 既用于小红书自动发布，"
      "也用于 YouTube 视频搬运/再制作（nbdpsy-server 视频管线）；管理员在后台「小红书运营接入」生成的"
