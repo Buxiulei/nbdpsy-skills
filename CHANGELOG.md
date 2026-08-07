@@ -18,6 +18,19 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.74.1] — 2026-08-07
+
+### text-to-video：播客波形改真实声纹（老板验收定案：竖线=音频声纹、会跳动）
+
+- **离线预计算频谱注入**：record_podcast 合成前用 numpy 对音频做 80Hz–6kHz 对数分带
+  频谱（80ms 窗、44 band、0-99 量化），注进 `#podcast-data`；播放器按 currentTime 查表
+  驱动条高。量化验证：四帧波形差异量 97–392（装饰动画版为 0–2）。
+- **⛔ Web Audio 死路记录**：Chromium 把 file:// 音源当跨域污染，AnalyserNode 输出全零
+  （声照放、谱全空）；设 `crossOrigin` 更糟——音源直接被拒（no supported sources）。
+  页面里的 Analyser 链已整段删除，回退态只剩正弦装饰动画。
+
+---
+
 ## [1.74.0] — 2026-08-07
 
 ### text-to-video：长文播客产线三件落地 + 句间气口 + NBDpsy 逐字母朗读

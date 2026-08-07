@@ -41,8 +41,39 @@ def _err(m: str) -> None:
     print(m, file=sys.stderr, flush=True)
 
 
-def build_page(podcast: dict, cues_doc: dict, out_html: Path) -> None:
-    """把 {title, vol, series, duration, cues} 注进模板的 #podcast-data 占位。
+def compute_spectrogram(audio: Path, bands: int = 44, win: float = 0.08) -> dict:
+    """离线预计算频谱（真实声纹的数据源）。
+    为什么不用页面里的 Web Audio AnalyserNode：Chromium 把 file:// 音源当跨域污染，
+    MediaElementSource 输出全零——声照放、谱全空（2026-08-07 实翻车，四帧指纹完全相同）。
+    离线算好按时间轴注入页面查表，既是真声纹、又零运行时依赖，录屏环境 100% 稳。
+    数据量：win=0.08s、44 band、每值 0-99 → 10 分钟 ≈ 33 万数字 ≈ 1MB JSON，可接受。"""
+    import numpy as np
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(audio), "-f", "s16le",
+         "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "-"],
+        capture_output=True, timeout=600).stdout
+    pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    sr, n = 16000, int(16000 * win)
+    frames = []
+    for i in range(0, max(1, len(pcm) - n), n):
+        seg = pcm[i:i + n] * np.hanning(n)
+        mag = np.abs(np.fft.rfft(seg))
+        # 语音能量集中低频：按对数间隔取 band 边界（80Hz–6kHz），高频不浪费条
+        edges = np.logspace(np.log10(80), np.log10(6000), bands + 1)
+        idx = (edges / (sr / 2) * (len(mag) - 1)).astype(int)
+        vals = [float(mag[idx[b]:max(idx[b] + 1, idx[b + 1])].mean()) for b in range(bands)]
+        frames.append(vals)
+    arr = np.array(frames)
+    if arr.size:
+        # 对数压缩 + 按 95 分位归一（防个别爆音把全片压扁），量化到 0-99
+        arr = np.log1p(arr * 40)
+        peak = np.percentile(arr, 95) or 1.0
+        arr = np.clip(arr / peak, 0, 1) * 99
+    return {"win": win, "bands": bands, "frames": arr.astype(int).tolist()}
+
+
+def build_page(podcast: dict, cues_doc: dict, out_html: Path, spectro: dict | None = None) -> None:
+    """把 {title, vol, series, duration, cues, spectro} 注进模板的 #podcast-data 占位。
     页面按同目录相对路径加载 podcast.mp3，所以 out_html 必须与音频同目录。"""
     payload = {
         "title": podcast.get("title", ""),
@@ -50,6 +81,7 @@ def build_page(podcast: dict, cues_doc: dict, out_html: Path) -> None:
         "series": podcast.get("series", ""),
         "duration": cues_doc.get("duration"),
         "cues": cues_doc.get("cues") or [],
+        "spectro": spectro,
     }
     # "</" 转义：正文里若混进 </script> 会把 script 标签提前闭合，页面直接崩
     blob = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
@@ -163,7 +195,9 @@ def run(podcast_path: str, *, workdir: str | None = None, audio: str | None = No
 
     # 页面必须与 podcast.mp3 同目录（模板按相对路径加载音频）
     page_html = wd / "_podcast_player.html"
-    build_page(podcast, cues_doc, page_html)
+    _err("[podcast] 预计算声纹频谱 …")
+    spectro = compute_spectrogram(audio_p)
+    build_page(podcast, cues_doc, page_html, spectro=spectro)
 
     video_dir = Path(tempfile.mkdtemp(prefix="podcast_rec_"))
     try:

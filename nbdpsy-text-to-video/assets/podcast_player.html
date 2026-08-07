@@ -164,7 +164,8 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   elTitle.textContent = DATA.title || "";
   elSeries.textContent = DATA.series || "";
 
-  // 波形条：固定 44 根，各自一个相位，播放时按正弦叠加起伏（装饰性，稳定优先于真实感）
+  // 波形条：固定 44 根。真实声纹驱动（2026-08-07 老板定案：竖线是音频的声纹、会跳动），
+  // Web Audio AnalyserNode 逐帧读频谱喂给条高；AudioContext 建不起来时回退正弦装饰动画。
   var N = 44, bars = [], phase = [];
   for (var i = 0; i < N; i++) {
     var b = document.createElement("i");
@@ -176,6 +177,13 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   // 音频固定同目录相对路径，模板必须与 podcast.mp3 同目录
   var audio = new Audio("podcast.mp3");
   audio.preload = "auto";
+
+  // 真实声纹 = 录屏脚本离线预计算的频谱表（DATA.spectro = {win, bands, frames[][]}），
+  // 播放时按 currentTime 查表驱动条高。
+  // ⚠ 为什么不用 Web Audio AnalyserNode：Chromium 把 file:// 音源当跨域污染，
+  // MediaElementSource 输出全零——声照放、谱全空（2026-08-07 实翻车）；
+  // 设 crossOrigin 更糟，音源直接被拒（no supported sources）。查表方案零运行时依赖。
+  var SPEC = DATA.spectro || null;
 
   window.__done = false;
   window.__error = null;
@@ -237,14 +245,25 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
     elTime.textContent = fmt(t);
 
     var playing = !audio.paused && !audio.ended;
-    for (var i = 0; i < N; i++) {
-      // 中间高两侧低的包络 × 时间正弦，播放时起伏、暂停时压平成静息线
-      var env = 0.35 + 0.65 * Math.sin((i + 0.5) / N * Math.PI);
-      var amp = playing
-        ? (0.30 + 0.70 * Math.abs(Math.sin(ts / 190 + phase[i] + i * 0.35)))
-        : 0.06;
-      bars[i].style.height = Math.max(4, 84 * env * amp).toFixed(1) + "px";
-      bars[i].style.background = playing && amp > 0.72 ? "#e8c27a" : "#3a3a3f";
+    if (SPEC && playing) {
+      // 真实声纹：按播放时刻查预计算频谱帧（bands 数与条数一致，逐条直喂）
+      var fi = Math.min(SPEC.frames.length - 1, Math.floor(t / SPEC.win));
+      var frame = SPEC.frames[fi] || [];
+      for (var i = 0; i < N; i++) {
+        var amp = (frame[Math.floor(i / N * SPEC.bands)] || 0) / 99;   // 0..1
+        bars[i].style.height = Math.max(4, 84 * amp).toFixed(1) + "px";
+        bars[i].style.background = amp > 0.45 ? "#e8c27a" : "#3a3a3f";
+      }
+    } else {
+      for (var i = 0; i < N; i++) {
+        // 回退/静止态：中间高两侧低包络 × 时间正弦（AudioContext 建不起来时的装饰动画）
+        var env = 0.35 + 0.65 * Math.sin((i + 0.5) / N * Math.PI);
+        var amp = playing
+          ? (0.30 + 0.70 * Math.abs(Math.sin(ts / 190 + phase[i] + i * 0.35)))
+          : 0.06;
+        bars[i].style.height = Math.max(4, 84 * env * amp).toFixed(1) + "px";
+        bars[i].style.background = playing && amp > 0.72 ? "#e8c27a" : "#3a3a3f";
+      }
     }
     requestAnimationFrame(tick);
   }
