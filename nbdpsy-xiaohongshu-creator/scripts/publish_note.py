@@ -775,7 +775,12 @@ def main():
                     help="列该次发布留下的现场截图（排障用；空清单不是异常）")
     ap.add_argument("--out", metavar="DIR", help="--artifacts 配它则把截图下载到该目录")
     ap.add_argument("--artifact-name", help="--artifacts --out 时只下这一张")
-    ap.add_argument("--collection-id", help="发布时把笔记加入该合集（合集 id 用 note_ops.py --collections 查）")
+    ap.add_argument("--collection-id", help=(
+        "把这篇笔记【归拢进】该合集——它会成为合集成员、出现在合集页；"
+        "⛔ 不是「在正文里引用/提及合集」，想提及请自己写进文案。"
+        "按稿件 frontmatter 的『议题合集』挂；⛔ 科普笔记绝不挂「咨询师简介」（那里只放咨询师推介笔记）。"
+        "id 每批用 note_ops.py --collections 现查、按合集名匹配，别写死。"
+        "⚠️ 挂错只能人工去创作后台摘（server 无移出能力）"))
     ap.add_argument("--quoted-note-id", help="发布时引用该笔记（显式指定，优先级高于 --related-counselor）")
     ap.add_argument("--activity-id", help="发布时关联该活动（会往正文末尾追加活动话题；用 note_ops.py --activities 查）")
     ap.add_argument("--related-counselor", help="关联咨询师姓名（驱动服务端在本账号内自动推导引用笔记）")
