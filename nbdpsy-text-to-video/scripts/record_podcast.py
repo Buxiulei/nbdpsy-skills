@@ -72,18 +72,44 @@ def compute_wave(audio: Path, win: float = 0.08) -> dict:
     return {"win": win, "values": arr.astype(int).tolist(), "peaks": peaks.tolist()}
 
 
+_SENT_END = "。！？!?…"
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按句末标点切句（标点留在句尾，供下游决定删/留）。
+    ⚠ 为什么分页层必须自己切句：短视频那条线的「句号翻页」其实是 **TTS 层**做的
+    （tts_gen --timed 一句一条 cue，句号天然是 cue 边界），分页层只管逗号换行。
+    播客是**按行合成**（一行 = 一条 cue，行内含多个句子），分页层若不切句，
+    compose_video 的管线会把句号当删除字符吞掉，两句话被粘成一句
+    （2026-08-07 实翻车：「他回两个字，在忙。我盯着那两个字看了很久」被粘成
+    「在忙我盯着那两个字看了很久」）。"""
+    out, buf = [], ""
+    for ch in (text or ""):
+        buf += ch
+        if ch in _SENT_END:
+            out.append(buf.strip())
+            buf = ""
+    if buf.strip():
+        out.append(buf.strip())
+    return out or [(text or "").strip()]
+
+
 def paginate_cues(cues: list[dict]) -> list[dict]:
     """行级 cues → 页级 cues（2026-08-07 老板定案：播客字幕与短视频同规则——
-    逗号换行、句号翻页、每页最多两行超出翻页）。直接复用 compose_video 的分页管线
-    （标点转换/词表折行/两行装箱），页时长按该页文字显示宽度在行内按比例分配，
-    与 compose_video._page_events 同一套时间分配逻辑；页文本以 \\n 分行，页面转 <br>。"""
+    逗号换行、句号翻页、每页最多两行超出翻页）。
+    三层：① 行内按句末标点切句（= 句号翻页）；② 每句复用 compose_video 的分页管线
+    （逗号换行 / 词表折行 / 两行装箱）；③ 时长按显示宽度在行内逐页比例分配。"""
     import compose_video as cv
     out = []
     for c in cues:
-        pages = cv._render_caption_pages((c.get("text") or "").strip())
+        raw = (c.get("text") or "").strip()
+        start, end = float(c["start"]), float(c["end"])
+        # 先切句，再逐句分页，拼成该行的完整页序列
+        pages: list[str] = []
+        for sent in _split_sentences(raw):
+            pages.extend(cv._render_caption_pages(sent))
         if not pages:
             continue
-        start, end = float(c["start"]), float(c["end"])
         weights = [max(1.0, cv._disp_w(p.replace("\n", ""))) for p in pages]
         total = sum(weights)
         t = start
