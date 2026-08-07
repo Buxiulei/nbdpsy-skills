@@ -68,6 +68,7 @@ import base64
 import codecs
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -540,11 +541,24 @@ _SPEAK_ALIASES = {
 }
 
 
+_DIGIT_ZH = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
+             "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
+# 四位数字 + 年 → 年份，必须逐位念（2026-08-07 老板听出：1946 年被念成
+# 「一千九百四十六年」）。只认紧跟「年」的四位数，避免误伤金额/样本量等真数值
+# （「149 对」「6973 人」仍按数值念才对）。
+_YEAR_RE = re.compile(r"(?<!\d)(1[89]\d{2}|20\d{2})(\s*)年")
+
+
+def _speak_years(text: str) -> str:
+    """把「1946 年」改写成「一九四六年」——年份是序号不是数量，逐位念才自然。"""
+    return _YEAR_RE.sub(lambda m: "".join(_DIGIT_ZH[c] for c in m.group(1)) + "年", text)
+
+
 def _speakable(text: str) -> str:
-    """应用发音别名（只影响送 TTS 的文本，不影响字幕原文）。"""
+    """应用发音归一化（只影响送 TTS 的文本，不影响字幕原文）：别名 + 年份逐位。"""
     for k, v in _SPEAK_ALIASES.items():
         text = text.replace(k, v)
-    return text
+    return _speak_years(text)
 
 
 def _make_silence(path: str, seconds: float) -> bool:
