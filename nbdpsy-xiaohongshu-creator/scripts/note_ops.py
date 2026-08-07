@@ -11,7 +11,8 @@
     python3 note_ops.py --collections 账号名或ID          # 该号的合集
     python3 note_ops.py --activities 账号名或ID [--keyword 心理]   # 可关联的活动
     python3 note_ops.py --set-components --account 号 --note-id ID   # 九个字段可同批提交
-        [--collection-id N] [--quoted-note-id ID] [--related-counselor 姓名] [--activity-id N]
+        [--collection-id N] [--remove-collection-id N --remove-collection-name 名]
+        [--quoted-note-id ID] [--related-counselor 姓名] [--activity-id N]
         [--set-title 标题] [--set-content 正文 | --set-content-file 路径]
         [--add-image URL...] [--remove-image-index N...] [--expected-image-count N]
     python3 note_ops.py --read-components --account 号 --note-id ID
@@ -410,6 +411,13 @@ def check_component_request(requested: dict):
     if "activity_id" in requested:
         warns.append("**编辑页的「关联活动」区 2026-08-03 起被平台收走**（08-01 还能用），"
                      "这一项大概率设不上；活动改到发布时挂（publish_note.py --activity-id）")
+    if "collection_id" in requested and "remove_collection_id" in requested:
+        raise ValueError("--collection-id 与 --remove-collection-id 互斥（加入与移出语义相反）："
+                         "换合集请分两次跑，先移出旧的、回读确认，再加入新的")
+    if "remove_collection_id" in requested and "remove_collection_name" not in requested:
+        warns.append("带 --remove-collection-id 必须一起给 --remove-collection-name（合集名）："
+                     "移出是破坏性操作，服务端比对不上「当前所在合集就是目标」时会拒绝动手，"
+                     "报 collection_remove_unverifiable")
     if "collection_id" in requested and "collection_name" not in requested:
         warns.append("带 --collection-id 时最好一起给 --collection-name（合集名）："
                      "服务端用它做「已选态」比对，不传且页面解析不出会报 "
@@ -627,8 +635,16 @@ def main():
     ap.add_argument("--account", help="操作类命令的目标账号（名称或 id）")
     ap.add_argument("--note-id", help="笔记的平台 note_id（有它就用它，标题只是兜底）")
     ap.add_argument("--title", help="按标题定位（空标题或同号重复标题会 note_not_locatable）")
-    ap.add_argument("--collection-id", help="--set-components：加入该合集（挂载幂等，可安全重跑）")
+    ap.add_argument("--collection-id",
+                    help="--set-components：把这篇笔记**归拢进**该合集（它会成为合集成员、"
+                         "出现在合集页；这不是「引用/提及」合集）。挂载幂等，可安全重跑")
     ap.add_argument("--collection-name", help="--set-components：合集名，供服务端做「已选态」比对")
+    ap.add_argument("--remove-collection-id",
+                    help="--set-components：把这篇笔记**移出**该合集（与 --collection-id 互斥）。"
+                         "幂等：本就不在该合集 → skipped 且一次发布都不点，可安全重跑")
+    ap.add_argument("--remove-collection-name",
+                    help="--set-components：要移出的合集名，**强烈建议与 --remove-collection-id "
+                         "同传**——服务端靠它确认「当前所在合集就是目标」，比对不上绝不动手")
     ap.add_argument("--read-components", action="store_true",
                     help="回读某篇笔记的组件实况（**核对组件的唯一可信来源**；只读幂等，"
                          "须配 --account 与 --note-id）")
@@ -754,6 +770,8 @@ def main():
                 content = Path(args.set_content_file).read_text(encoding="utf-8").strip()
             requested = {k: v for k, v in (
                 ("collection_id", args.collection_id), ("collection_name", args.collection_name),
+                ("remove_collection_id", args.remove_collection_id),
+                ("remove_collection_name", args.remove_collection_name),
                 ("quoted_note_id", args.quoted_note_id),
                 ("activity_id", args.activity_id), ("related_counselor", args.related_counselor),
                 ("content", content),
@@ -763,7 +781,8 @@ def main():
             if args.set_title is not None:   # 空串是「清空标题」的合法值，不能被过滤掉
                 requested["title"] = args.set_title
             if not requested:
-                ap.error("--set-components 至少要给一项：--collection-id / --quoted-note-id / "
+                ap.error("--set-components 至少要给一项：--collection-id / "
+                         "--remove-collection-id / --quoted-note-id / "
                          "--activity-id / --related-counselor / --set-title / --set-content[-file] / "
                          "--add-image / --remove-image-index")
             for w in check_component_request(requested):
