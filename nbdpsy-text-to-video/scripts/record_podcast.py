@@ -60,7 +60,16 @@ def compute_wave(audio: Path, win: float = 0.08) -> dict:
     arr = np.log1p(rms * 30)
     peak = np.percentile(arr, 95) or 1.0
     arr = np.clip(arr / peak, 0, 1) * 99
-    return {"win": win, "values": arr.astype(int).tolist()}
+    # 心电图形态（2026-08-07 老板定案）要过零摆动的连续描线：每窗取有符号极值对
+    # [min,max]（真实波形的上下包络），页面 canvas 交替穿线成心电式轨迹。
+    hi = np.array([float(pcm[i * n:(i + 1) * n].max()) for i in range(count)])
+    lo = np.array([float(pcm[i * n:(i + 1) * n].min()) for i in range(count)])
+    def _q(x):
+        y = np.sign(x) * np.log1p(np.abs(x) * 30)
+        pk = np.percentile(np.abs(y), 95) or 1.0
+        return np.clip(y / pk, -1, 1) * 99
+    peaks = np.stack([_q(lo), _q(hi)], axis=1).astype(int)
+    return {"win": win, "values": arr.astype(int).tolist(), "peaks": peaks.tolist()}
 
 
 def paginate_cues(cues: list[dict]) -> list[dict]:

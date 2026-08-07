@@ -74,14 +74,14 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
 
   /* ③ 波形播放器图形（真实声纹：离线预计算频谱查表驱动，见 record_podcast.compute_spectrogram） */
   #player { width: 560px; margin-bottom: 96px; }
-  #bars {
-    height: 92px; display: flex; align-items: center; justify-content: center;
-    gap: 5px;
+  /* 心电图式声纹（2026-08-07 老板定案）：canvas 连续描线 + 两侧渐隐窗口 */
+  #wavewrap { position: relative; height: 110px; }
+  #wavecv { width: 560px; height: 110px; display: block; }
+  #wavewrap::before, #wavewrap::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 72px; z-index: 2;
   }
-  #bars i {
-    display: block; width: 5px; height: 8px; border-radius: 3px;
-    background: #3a3a3f; transform-origin: center;
-  }
+  #wavewrap::before { left: 0; background: linear-gradient(90deg, #0a0a0c, transparent); }
+  #wavewrap::after { right: 0; background: linear-gradient(270deg, #0a0a0c, transparent); }
   #ctrl { margin-top: 34px; display: flex; align-items: center; gap: 20px; }
   #play {
     flex: none; width: 54px; height: 54px; border-radius: 50%;
@@ -132,7 +132,7 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
     <div style="position:absolute;left:0;top:0;width:32px;height:32px;background:#f0f"></div>
   </div>
   <div id="player">
-    <div id="bars"></div>
+    <div id="wavewrap"><canvas id="wavecv"></canvas></div>
     <div id="ctrl">
       <div id="play"></div>
       <div id="track"><div id="fill"></div><div id="dot"></div></div>
@@ -160,7 +160,6 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   var elTitle = document.getElementById("title");
   var elSeries = document.getElementById("series");
   var elCap = document.getElementById("cap");
-  var elBars = document.getElementById("bars");
   var elFill = document.getElementById("fill");
   var elDot = document.getElementById("dot");
   var elTime = document.getElementById("time");
@@ -170,28 +169,81 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   elTitle.textContent = DATA.title || "";
   elSeries.textContent = DATA.series || "";
 
-  // 波形条：固定 44 根。真实声纹驱动（2026-08-07 老板定案：竖线是音频的声纹、会跳动），
-  // Web Audio AnalyserNode 逐帧读频谱喂给条高；AudioContext 建不起来时回退正弦装饰动画。
-  var N = 44, bars = [], phase = [];
-  for (var i = 0; i < N; i++) {
-    var b = document.createElement("i");
-    elBars.appendChild(b);
-    bars.push(b);
-    phase.push(Math.random() * Math.PI * 2);
-  }
+  // 心电图式声纹（2026-08-07 老板定案）：canvas 连续描线，数据=离线预计算的每窗
+  // 有符号峰值对（真实波形上下包络），交替穿线成过零摆动的心电轨迹；
+  // 画面中心=当下（辉光播放头），已播金色带辉光、未播暗灰；亚像素平滑滚动。
+  var cv = document.getElementById("wavecv");
+  var DPR = window.devicePixelRatio || 1;
+  cv.width = 560 * DPR; cv.height = 110 * DPR;
+  var g2d = cv.getContext("2d");
+  g2d.scale(DPR, DPR);
+  var CW = 560, CH = 110, MIDY = CH / 2;
+  var SPAN = 44;                       // 可视窗口容纳的数据窗数（与旧 44 根条同宽感）
+  var STEP = CW / SPAN;
 
   // 音频固定同目录相对路径，模板必须与 podcast.mp3 同目录
   var audio = new Audio("podcast.mp3");
   audio.preload = "auto";
 
-  // 真实声纹 = 录屏脚本离线预计算的音量包络（DATA.wave = {win, values[]}）。
-  // C 形态（2026-08-07 老板选定）：条形=音轨逐窗真实音量、画面中心=当下、随播放向左滚动；
-  // 已播（中心以左含中心）金色、未播灰色。
+  // 数据 = 录屏脚本离线预计算（DATA.wave = {win, values[], peaks[[lo,hi]...]}）。
   // ⚠ 为什么不用 Web Audio AnalyserNode：Chromium 把 file:// 音源当跨域污染，
   // MediaElementSource 输出全零——声照放、谱全空（2026-08-07 实翻车）；
   // 设 crossOrigin 更糟，音源直接被拒（no supported sources）。查表方案零运行时依赖。
   var WAVE = DATA.wave || null;
-  var CENTER = Math.floor(N / 2);
+  var PEAKS = (WAVE && WAVE.peaks) || null;
+
+  // 心电轨迹采样：窗 j 贡献两个点（max 与 min 交替），静音窗回落基线
+  function tracePoint(j, k) {   // k=0 上摆(max)，k=1 下摆(min)
+    if (!PEAKS || j < 0 || j >= PEAKS.length) return 0;
+    var p = PEAKS[j];
+    return (k === 0 ? p[1] : p[0]) / 99;   // -1..1
+  }
+
+  function drawWave(t) {
+    g2d.clearRect(0, 0, CW, CH);
+    // 基线（极淡）
+    g2d.strokeStyle = "rgba(232,194,122,.14)";
+    g2d.lineWidth = 1;
+    g2d.beginPath(); g2d.moveTo(0, MIDY); g2d.lineTo(CW, MIDY); g2d.stroke();
+    if (!PEAKS) return;
+    var pos = t / WAVE.win;               // 浮点窗位 → 亚像素滚动
+    var first = Math.floor(pos) - SPAN / 2 - 1;
+    var offx = (pos - Math.floor(pos)) * STEP;
+    // 一条轨迹分两段画：中心以左（已播·金+辉光）、以右（未播·暗灰）
+    function seg(fromX, toX, style, glow) {
+      g2d.save();
+      g2d.beginPath();
+      g2d.rect(fromX, 0, toX - fromX, CH);
+      g2d.clip();
+      g2d.strokeStyle = style;
+      g2d.lineWidth = 2.4;
+      g2d.lineJoin = "round";
+      if (glow) { g2d.shadowColor = "rgba(232,194,122,.85)"; g2d.shadowBlur = 10; }
+      g2d.beginPath();
+      var started = false;
+      for (var j = first; j <= first + SPAN + 2; j++) {
+        for (var k = 0; k < 2; k++) {
+          var x = (j - first) * STEP - offx + (k * STEP / 2);
+          var y = MIDY - tracePoint(j, k) * (CH / 2 - 8);
+          if (!started) { g2d.moveTo(x, y); started = true; }
+          else g2d.lineTo(x, y);
+        }
+      }
+      g2d.stroke();
+      g2d.restore();
+    }
+    var cx = CW / 2;
+    seg(0, cx, "#e8c27a", true);
+    seg(cx, CW, "#3f3f46", false);
+    // 播放头：中心辉光圆点落在当前轨迹值上
+    var cur = Math.floor(pos);
+    var y0 = MIDY - tracePoint(cur, 0) * (CH / 2 - 8) * 0.6;
+    g2d.save();
+    g2d.shadowColor = "rgba(232,194,122,1)"; g2d.shadowBlur = 14;
+    g2d.fillStyle = "#f4dfae";
+    g2d.beginPath(); g2d.arc(cx, y0, 4.5, 0, Math.PI * 2); g2d.fill();
+    g2d.restore();
+  }
 
   window.__done = false;
   window.__error = null;
@@ -257,28 +309,7 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
     elDot.style.left = (p * 100) + "%";
     elTime.textContent = fmt(t);
 
-    var playing = !audio.paused && !audio.ended;
-    if (WAVE) {
-      // C 形态：第 i 根条 = 时刻 (当前窗 + i - CENTER) 的真实音量；播放推进即整排左移。
-      // 暂停/未播时也画（静止的开头窗口），画面不空。
-      var cur = Math.floor(t / WAVE.win);
-      for (var i = 0; i < N; i++) {
-        var j = cur + i - CENTER;
-        var v = (j >= 0 && j < WAVE.values.length) ? WAVE.values[j] : 0;
-        bars[i].style.height = Math.max(4, 84 * v / 99).toFixed(1) + "px";
-        bars[i].style.background = i <= CENTER ? "#e8c27a" : "#3a3a3f";
-      }
-    } else {
-      for (var i = 0; i < N; i++) {
-        // 回退/静止态：中间高两侧低包络 × 时间正弦（AudioContext 建不起来时的装饰动画）
-        var env = 0.35 + 0.65 * Math.sin((i + 0.5) / N * Math.PI);
-        var amp = playing
-          ? (0.30 + 0.70 * Math.abs(Math.sin(ts / 190 + phase[i] + i * 0.35)))
-          : 0.06;
-        bars[i].style.height = Math.max(4, 84 * env * amp).toFixed(1) + "px";
-        bars[i].style.background = playing && amp > 0.72 ? "#e8c27a" : "#3a3a3f";
-      }
-    }
+    drawWave(t);
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
