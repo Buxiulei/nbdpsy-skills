@@ -1059,7 +1059,16 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
    **发布时可顺带设三个组件 + 两个标注**（全可选，运营没提就别加）：`--collection-id`（加入合集）、
    `--quoted-note-id`（引用某篇笔记）、`--activity-id`（关联活动）、`--related-counselor <姓名>`
    （让服务端在**本账号内**自动推导引用哪篇推介笔记）、`--note-purpose`（本篇核心目的，也可写进
-   frontmatter）。合集/活动 id 用 `note_ops.py --collections/--activities` 查。⚠ 关联活动会
+   frontmatter）。合集/活动 id 用 `note_ops.py --collections/--activities` 查。
+
+   > 🔴 **`--collection-id` 默认不传（2026-08-07 运营定案，此前理解错误已致约 100 篇笔记被误归拢）。**
+   > **「加入合集」≠「引用合集」**：`--collection-id` 的语义是**把这篇笔记归拢进该合集**，它会真的成为
+   > 合集的一员、出现在合集列表页里。运营要的是**在正文里引用/提及**咨询师简介合集（导流），不是把
+   > 科普笔记塞进「咨询师简介」——那个合集只该放**咨询师推介笔记**，混进科普笔记会让合集失去意义。
+   > **纪律**：①科普笔记发布 **一律不传 `--collection-id`**；②只有做**咨询师推介笔记**时才传，且必须
+   > 传对应的咨询师合集；③运营明确说「把这篇加进 XX 合集」才传其它合集。发布后补挂同理
+   > （`note_ops.py --set-components` 的 `--collection-id` 是同一语义，别拿它给科普笔记补挂）。
+   > ⚠️ **移出合集目前没有工具能力**（server 只实现了加入），误加只能人工在创作后台移除，所以别加错。⚠ 关联活动会
    **往正文末尾追加活动话题并真的发出去**，且话题名≠活动名。**活动只能在发布这一刻挂**——
    笔记发出去之后就改不了了（编辑页的「关联活动」区 2026-08-03 起被平台收走）。
 
@@ -1186,7 +1195,11 @@ python3 {SKILL_DIR}/scripts/note_ops.py --backfill-purpose <账号>  # 幂等，
   `publish_note.py --upload-images` 换直链）/ `--remove-image-index N...`（**1-based**，按发布态
   图序，删完须剩 ≥1）：**动图片必须同时给 `--expected-image-count`，传的是「编辑前的当前张数」
   不是目标张数**（删 1 张时传 6 不是 5，字面极易理解反）。脚本提交前先拦一道，别等 422 才发现。
-- **合集**：带 `--collection-id` 时**顺带给 `--collection-name <合集名>`**，服务端用它做「已选态」
+- **合集**：🔴 **默认不挂**（2026-08-07 运营定案，见第 7 步发布节的红框）。`--collection-id` 是
+  **把笔记归拢进合集**（成为合集成员、出现在合集页），**不是「在正文里引用合集」**——科普笔记挂进
+  「咨询师简介」会毁掉那个合集的意义（此前误挂约 100 篇，且**移出能力 server 尚未实现**，只能人工
+  在创作后台一篇篇摘，代价极高）。**只有做咨询师推介笔记、或运营明确点名「加进 X 合集」时才传。**
+  确需挂载时：带 `--collection-id` 要**顺带给 `--collection-name <合集名>`**，服务端用它做「已选态」
   比对；不给且页面解析不出会报 `collection_chosen_unverifiable`。合集 id→名用 `--collections <账号>`
   查一次记下来。**挂载已幂等**——笔记已在目标合集时返回 `components.collection.status: "skipped"`
   也算成功，所以**批量挂载可以安全重跑，调用方不用自己做去重**。
