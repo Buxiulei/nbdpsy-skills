@@ -18,6 +18,25 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.80.2] — 2026-08-07
+
+### xhs：视频/播客笔记发布实战沉淀（四号齐发跑通）
+
+两条视频线（笔记微电影 / 长文播客）首次发到矩阵，把踩到的三件事写进第 7 步：
+
+- **视频/播客发布直调 server 契约**：`publish_note.py` 目前只支持图文（无 `--video`/`--audio`），
+  视频走 `POST /api/publish-jobs` 的 `video`（服务器侧路径，与 images 三选一互斥）+ 可选 `cover`；
+  其余字段与图文完全一致。
+- ⭐ **同机直接落盘，别走分片上传**：`mcp.nbdpsy.com` 由本机 nbdpsy-server 提供，
+  文件 cp 进 `data/uploads/media/` 传绝对路径即可，零网络传输。实测走隧道传本地文件极不稳
+  （50MB SSL 断连 / 8MB 502 / 2MB 传到第 5 片仍 502），而同机 cp 74MB 瞬间就位。
+- ⚠️ **任务状态用终态白名单**：真实流是 `pending → publishing → published`。
+  黑名单写法（排除 pending/running）会把 `publishing` 误判成终态；只认 `completed|success`
+  则永远等不到——同一天各踩一次。
+- 一稿多号必须逐号差异化标题/正文/标签，视频文件复用同一路径。
+
+---
+
 ## [1.80.1] — 2026-08-07
 
 ### 清单类笔记必须有收藏引导（机器评分挖出的缺口）

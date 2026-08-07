@@ -1094,6 +1094,23 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
 
 ### 第 7 步 · 发布（自动可选）或交付（人工兜底）
 
+> 📹 **视频/播客笔记的发布**（2026-08-07 实战跑通，四号齐发 + 播客试水）：
+> `publish_note.py` **目前只支持图文**（无 `--video`/`--audio` 参数），视频与播客要**直接按
+> server 契约调 `POST /api/publish-jobs`**：`video`（或 `audio`）传**服务器侧文件路径**，
+> 与 `images` 三选一互斥；`cover` 可传自定义封面（视频不限体积、播客音频封面 ≤32MB）；
+> 其余字段（title/content/topics/collection_id/quoted_note_id/note_purpose…）与图文完全一致。
+> - ⭐ **同机场景直接落盘，别走分片上传**：`mcp.nbdpsy.com` 由**本机** `/home/roots/nbdpsy-server`
+>   提供，把文件 `cp` 进 `data/uploads/media/<自建子目录>/` 再把绝对路径传给接口即可，
+>   **零网络传输**。分片通道（`/api/uploads/media-sessions`）是给「运营在自己电脑、server 在远端」
+>   的场景用的；实测走隧道传本地文件极不稳（50MB SSL 断连 / 8MB 502 / 2MB 传到第 5 片仍 502），
+>   而同机 `cp` 74MB 瞬间就位。
+> - ⚠️ **任务状态用终态白名单判，别用黑名单**：真实状态流是
+>   `pending → publishing → published`（失败为 `failed`）。轮询终止条件只认
+>   `published|failed|cancelled`；写成「排除 pending/running」会把 `publishing` 当终态误判成功，
+>   写成只认 `completed|success` 则永远等不到（这两个坑同一天各踩一次）。
+> - 视频笔记同账号串行、跨账号并行；11 分钟级视频的 `publishing` 阶段可长达十几分钟，别当卡死。
+> - 一稿多号发布时**标题/正文/标签必须逐号差异化**（同素材换切入角度），视频文件可复用同一路径。
+
 先探测本机有没有小红书发布凭据：`python3 {SKILL_DIR}/scripts/nbdpsy_common.py secret ensure NBDPSY_XHS_API_KEY`
 （无输出 = 已配置；输出键名 = 缺。**绝不用 `secret get` 探测**——它会把密钥值打进 stdout/对话转录）。
 
