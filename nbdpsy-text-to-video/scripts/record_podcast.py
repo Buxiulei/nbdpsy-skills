@@ -41,35 +41,26 @@ def _err(m: str) -> None:
     print(m, file=sys.stderr, flush=True)
 
 
-def compute_spectrogram(audio: Path, bands: int = 44, win: float = 0.08) -> dict:
-    """离线预计算频谱（真实声纹的数据源）。
-    为什么不用页面里的 Web Audio AnalyserNode：Chromium 把 file:// 音源当跨域污染，
-    MediaElementSource 输出全零——声照放、谱全空（2026-08-07 实翻车，四帧指纹完全相同）。
-    离线算好按时间轴注入页面查表，既是真声纹、又零运行时依赖，录屏环境 100% 稳。
-    数据量：win=0.08s、44 band、每值 0-99 → 10 分钟 ≈ 33 万数字 ≈ 1MB JSON，可接受。"""
+def compute_wave(audio: Path, win: float = 0.08) -> dict:
+    """离线预计算音量包络（滚动声纹的数据源，2026-08-07 老板选定 C 形态：
+    条形=真实音轨逐窗音量、画面中心=当下、随播放滚动）。
+    为什么离线算而不用页面里的 Web Audio AnalyserNode：Chromium 把 file:// 音源当
+    跨域污染，MediaElementSource 输出全零——声照放、谱全空（实翻车）。
+    每窗一个 RMS 值、0-99 量化 → 10 分钟 ≈ 7500 个数字，极小。"""
     import numpy as np
     raw = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(audio), "-f", "s16le",
          "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "-"],
         capture_output=True, timeout=600).stdout
     pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    sr, n = 16000, int(16000 * win)
-    frames = []
-    for i in range(0, max(1, len(pcm) - n), n):
-        seg = pcm[i:i + n] * np.hanning(n)
-        mag = np.abs(np.fft.rfft(seg))
-        # 语音能量集中低频：按对数间隔取 band 边界（80Hz–6kHz），高频不浪费条
-        edges = np.logspace(np.log10(80), np.log10(6000), bands + 1)
-        idx = (edges / (sr / 2) * (len(mag) - 1)).astype(int)
-        vals = [float(mag[idx[b]:max(idx[b] + 1, idx[b + 1])].mean()) for b in range(bands)]
-        frames.append(vals)
-    arr = np.array(frames)
-    if arr.size:
-        # 对数压缩 + 按 95 分位归一（防个别爆音把全片压扁），量化到 0-99
-        arr = np.log1p(arr * 40)
-        peak = np.percentile(arr, 95) or 1.0
-        arr = np.clip(arr / peak, 0, 1) * 99
-    return {"win": win, "bands": bands, "frames": arr.astype(int).tolist()}
+    n = int(16000 * win)
+    count = max(1, len(pcm) // n)
+    rms = np.array([float(np.sqrt(np.mean(pcm[i * n:(i + 1) * n] ** 2))) for i in range(count)])
+    # 对数压缩 + 95 分位归一（防个别爆音把全片压扁），量化 0-99
+    arr = np.log1p(rms * 30)
+    peak = np.percentile(arr, 95) or 1.0
+    arr = np.clip(arr / peak, 0, 1) * 99
+    return {"win": win, "values": arr.astype(int).tolist()}
 
 
 def paginate_cues(cues: list[dict]) -> list[dict]:
@@ -95,8 +86,8 @@ def paginate_cues(cues: list[dict]) -> list[dict]:
     return out
 
 
-def build_page(podcast: dict, cues_doc: dict, out_html: Path, spectro: dict | None = None) -> None:
-    """把 {title, vol, series, duration, cues, spectro} 注进模板的 #podcast-data 占位。
+def build_page(podcast: dict, cues_doc: dict, out_html: Path, wave: dict | None = None) -> None:
+    """把 {title, vol, series, duration, cues, wave} 注进模板的 #podcast-data 占位。
     页面按同目录相对路径加载 podcast.mp3，所以 out_html 必须与音频同目录。"""
     payload = {
         "title": podcast.get("title", ""),
@@ -104,7 +95,7 @@ def build_page(podcast: dict, cues_doc: dict, out_html: Path, spectro: dict | No
         "series": podcast.get("series", ""),
         "duration": cues_doc.get("duration"),
         "cues": paginate_cues(cues_doc.get("cues") or []),
-        "spectro": spectro,
+        "wave": wave,
     }
     # "</" 转义：正文里若混进 </script> 会把 script 标签提前闭合，页面直接崩
     blob = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
@@ -133,6 +124,10 @@ def record(page_url: str, audio_duration: float, video_dir: Path) -> tuple[Path,
         )
         page = ctx.new_page()
         page.goto(page_url, wait_until="load")
+        # 故意预滚 0.8s 再开播：让同步掩幕（品红标记）被录进至少十几帧——
+        # load 后立刻 __start() 时掩幕在场 <100ms，录屏一帧都拍不到，
+        # find_sync_cut 找不到标记只能回退误差几百毫秒的估算（实翻车）。
+        time.sleep(0.8)
         page.evaluate("() => window.__start()")
         deadline = time.monotonic() + audio_duration + 60
         ended_at = None
@@ -155,15 +150,52 @@ def record(page_url: str, audio_duration: float, video_dir: Path) -> tuple[Path,
     return path, closed_at - ended_at
 
 
+def find_sync_cut(webm: Path, max_scan: float = 8.0) -> float | None:
+    """逐帧扫描录屏开头，找同步标记（左上角品红块）消失的时刻 = 音频出声的第一帧。
+    这是音画同步的真源（2026-08-07 老板验收：声纹与音频不同步——旧的
+    「webm时长−音频时长−尾巴」反推法误差几百毫秒，声纹 80ms 一格跳，错半秒就全对不上）。
+    帧级扫描把误差压到一帧（25fps=40ms）。返回 None = 没找到标记（旧版模板），调用方回退估算。"""
+    import numpy as np
+    tmp = webm.parent / "_syncscan"
+    tmp.mkdir(exist_ok=True)
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-t", f"{max_scan}", "-i", str(webm),
+             "-vf", "crop=32:32:0:0", str(tmp / "f-%04d.png")],
+            capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            return None
+        from PIL import Image
+        frames = sorted(tmp.glob("f-*.png"))
+        fps_probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+             "stream=avg_frame_rate", "-of", "default=nw=1:nk=1", str(webm)],
+            capture_output=True, text=True, timeout=60).stdout.strip()
+        try:
+            num, den = fps_probe.split("/")
+            fps = float(num) / float(den)
+        except Exception:  # noqa: BLE001
+            fps = FPS
+        last_marker = None
+        for i, f in enumerate(frames):
+            px = np.asarray(Image.open(f).convert("RGB")).reshape(-1, 3).mean(axis=0)
+            if px[0] > 150 and px[2] > 150 and px[1] < 100:  # 品红：R高B高G低
+                last_marker = i
+        if last_marker is None:
+            return None
+        return (last_marker + 1) / fps
+    finally:
+        import shutil as _sh
+        _sh.rmtree(tmp, ignore_errors=True)
+
+
 def mux(webm: Path, audio: Path, out: Path, *, lead_in: float,
         cover: str | None, fade_out: float, audio_duration: float) -> None:
     """录屏画面 + 原始音轨 → 成片。
 
-    时间对齐的取舍：录屏是从页面创建就开始的，__start() 之前那一小段静止画面
-    （lead_in）必须切掉，否则字幕会整体比人声晚一拍。lead_in 由
-    「webm 实测时长 − 音频时长 − 已测量的尾巴」反推——这是能拿到的最好估计，
-    误差量级是轮询间隔（50ms）加 webm 时长本身的精度。
-    再者录屏帧率与音频还会有几百毫秒漂移：**一律以音频为准**——
+    时间对齐：lead_in 由 find_sync_cut 帧级标记给出（误差一帧）；标记缺失时
+    回退「webm 实测时长 − 音频时长 − 尾巴」估算（误差几百毫秒，仅兜底）。
+    录屏帧率与音频还会有几百毫秒漂移：**一律以音频为准**——
     视频先 tpad 定格补长（宁可多几帧定格画面），再靠 -shortest 按音轨长度切齐。"""
     inputs = ["-ss", f"{lead_in:.3f}", "-i", str(webm), "-i", str(audio)]
     cover_idx = None
@@ -218,18 +250,23 @@ def run(podcast_path: str, *, workdir: str | None = None, audio: str | None = No
 
     # 页面必须与 podcast.mp3 同目录（模板按相对路径加载音频）
     page_html = wd / "_podcast_player.html"
-    _err("[podcast] 预计算声纹频谱 …")
-    spectro = compute_spectrogram(audio_p)
-    build_page(podcast, cues_doc, page_html, spectro=spectro)
+    _err("[podcast] 预计算声纹包络 …")
+    wave = compute_wave(audio_p)
+    build_page(podcast, cues_doc, page_html, wave=wave)
 
     video_dir = Path(tempfile.mkdtemp(prefix="podcast_rec_"))
     try:
         _err(f"[podcast] 录屏中（音频 {audio_dur:.1f}s）…")
         webm, tail = record(page_html.as_uri(), audio_dur, video_dir)
+        sync_cut = find_sync_cut(webm)
         vdur = tts_gen.ffprobe_duration(str(webm))
-        lead_in = max(0.0, min(5.0, vdur - audio_dur - tail))
-        _err(f"[podcast] 录屏 {vdur:.2f}s / 音频 {audio_dur:.2f}s / 尾巴 {tail:.2f}s "
-             f"→ 切掉开头 {lead_in:.2f}s")
+        if sync_cut is not None:
+            lead_in = sync_cut
+            _err(f"[podcast] 帧级同步标记：切掉开头 {lead_in:.3f}s（帧扫描，误差≤1帧）")
+        else:
+            lead_in = max(0.0, min(5.0, vdur - audio_dur - tail))
+            _err(f"[podcast] ⚠ 未找到同步标记，回退估算：录屏 {vdur:.2f}s / 音频 {audio_dur:.2f}s"
+                 f" / 尾巴 {tail:.2f}s → 切掉开头 {lead_in:.2f}s（误差几百毫秒）")
         mux(webm, audio_p, out_p, lead_in=lead_in, cover=cover,
             fade_out=max(0.0, fade_out), audio_duration=audio_dur)
     finally:

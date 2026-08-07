@@ -126,6 +126,11 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
     <div id="rule"></div>
   </div>
   <div id="capwrap"><div id="cap"></div></div>
+  <!-- 同步标记幕：预滚期全黑盖住 UI，左上角品红块是给录屏后期找"音频起点"的帧级标记；
+       audio 'playing' 一响立刻整幕撤掉。record_podcast 逐帧扫描品红块消失点精确切齐音画。 -->
+  <div id="syncmask" style="position:fixed;inset:0;background:#000;z-index:99">
+    <div style="position:absolute;left:0;top:0;width:32px;height:32px;background:#f0f"></div>
+  </div>
   <div id="player">
     <div id="bars"></div>
     <div id="ctrl">
@@ -179,17 +184,24 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   var audio = new Audio("podcast.mp3");
   audio.preload = "auto";
 
-  // 真实声纹 = 录屏脚本离线预计算的频谱表（DATA.spectro = {win, bands, frames[][]}），
-  // 播放时按 currentTime 查表驱动条高。
+  // 真实声纹 = 录屏脚本离线预计算的音量包络（DATA.wave = {win, values[]}）。
+  // C 形态（2026-08-07 老板选定）：条形=音轨逐窗真实音量、画面中心=当下、随播放向左滚动；
+  // 已播（中心以左含中心）金色、未播灰色。
   // ⚠ 为什么不用 Web Audio AnalyserNode：Chromium 把 file:// 音源当跨域污染，
   // MediaElementSource 输出全零——声照放、谱全空（2026-08-07 实翻车）；
   // 设 crossOrigin 更糟，音源直接被拒（no supported sources）。查表方案零运行时依赖。
-  var SPEC = DATA.spectro || null;
+  var WAVE = DATA.wave || null;
+  var CENTER = Math.floor(N / 2);
 
   window.__done = false;
   window.__error = null;
   window.__t = function () { return audio.currentTime || 0; };
   window.__start = function () { return audio.play(); };
+  // 音频真正出声的那一刻撤同步幕（playing 比 play() resolve 更贴近实际出声时刻）
+  audio.addEventListener("playing", function () {
+    var m = document.getElementById("syncmask");
+    if (m) m.parentNode.removeChild(m);
+  }, { once: true });
 
   audio.addEventListener("ended", function () { window.__done = true; });
   audio.addEventListener("error", function () {
@@ -246,14 +258,15 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
     elTime.textContent = fmt(t);
 
     var playing = !audio.paused && !audio.ended;
-    if (SPEC && playing) {
-      // 真实声纹：按播放时刻查预计算频谱帧（bands 数与条数一致，逐条直喂）
-      var fi = Math.min(SPEC.frames.length - 1, Math.floor(t / SPEC.win));
-      var frame = SPEC.frames[fi] || [];
+    if (WAVE) {
+      // C 形态：第 i 根条 = 时刻 (当前窗 + i - CENTER) 的真实音量；播放推进即整排左移。
+      // 暂停/未播时也画（静止的开头窗口），画面不空。
+      var cur = Math.floor(t / WAVE.win);
       for (var i = 0; i < N; i++) {
-        var amp = (frame[Math.floor(i / N * SPEC.bands)] || 0) / 99;   // 0..1
-        bars[i].style.height = Math.max(4, 84 * amp).toFixed(1) + "px";
-        bars[i].style.background = amp > 0.45 ? "#e8c27a" : "#3a3a3f";
+        var j = cur + i - CENTER;
+        var v = (j >= 0 && j < WAVE.values.length) ? WAVE.values[j] : 0;
+        bars[i].style.height = Math.max(4, 84 * v / 99).toFixed(1) + "px";
+        bars[i].style.background = i <= CENTER ? "#e8c27a" : "#3a3a3f";
       }
     } else {
       for (var i = 0; i < N; i++) {
