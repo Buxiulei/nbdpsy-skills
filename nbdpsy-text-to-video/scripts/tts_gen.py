@@ -192,7 +192,8 @@ def _is_cloned_voice(v: str | None) -> bool:
 
 
 def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str,
-                     appid: str | None = None) -> None:
+                     appid: str | None = None, emotion: str | None = None,
+                     emotion_scale: int | None = None) -> None:
     """V3 单向流式合成（新版单一 API Key）。同一个 unidirectional 端点、同一套流式响应，
     按音色是否为克隆音色（S_ 开头）在请求侧分叉：
       · 默认音色 → resource-id=seed-tts-2.0，body={"req_params":{...,"speech_rate"}}，无 App-Id 头。
@@ -210,23 +211,36 @@ def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str
         raise RuntimeError(
             "克隆音色需要 VOLC_TTS_APPID（X-Api-App-Id），"
             "请在后台豆包卡片『AppID』框填火山 appid")
+    audio_params = {"format": "mp3", "sample_rate": 24000}
+    if emotion:
+        # Doubao-Seed-TTS 2.0 / Seed-ICL 2.0 的情感控制（2025-10 起）：emotion 指定情感/风格，
+        # emotion_scale 1-5 控制强度。克隆音色（复刻 2.0）官方明确支持情感演绎。
+        audio_params["emotion"] = emotion
+        audio_params["enable_emotion"] = True
+        if emotion_scale is not None:
+            audio_params["emotion_scale"] = max(1, min(5, int(emotion_scale)))
     req_params = {
         "text": text,
         "speaker": voice,
-        "audio_params": {"format": "mp3", "sample_rate": 24000},
+        "audio_params": audio_params,
     }
     headers = {
         "X-Api-Key": api_key,
         "X-Api-Request-Id": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
+    # speech_rate 两种音色都传（此前克隆分支漏传）。实测 2026-08-07：放 req_params 顶层
+    # 对克隆音色（seed-icl-2.0）不生效——1.05 与 1.15 速时长几乎一样；官方 V3 契约里
+    # 它归属 audio_params。双写以兼容两代读法。
+    rate_v = _doubao_v3_speech_rate(speed)
+    req_params["speech_rate"] = rate_v
+    audio_params["speech_rate"] = rate_v
     if cloned:
         headers["X-Api-Resource-Id"] = DOUBAO_ICL_RESOURCE_ID
         headers["X-Api-App-Id"] = appid
         body = {"user": {"uid": "tts"}, "req_params": req_params}
     else:
         headers["X-Api-Resource-Id"] = DOUBAO_V3_RESOURCE_ID
-        req_params["speech_rate"] = _doubao_v3_speech_rate(speed)
         body = {"req_params": req_params}
     r = requests.post(DOUBAO_V3_ENDPOINT, headers=headers, json=body, stream=True, timeout=120)
     if r.status_code != 200:
@@ -277,15 +291,21 @@ def _doubao_v3_synth(text: str, out: str, voice: str, speed: float, api_key: str
     Path(out).write_bytes(bytes(audio))
 
 
-def _doubao_synth(text: str, out: str, voice: str | None, speed: float) -> str:
-    """豆包 TTS 统一入口：按凭据自动路由 V3(新)/V1(旧，向后兼容)，返回实际使用的音色。"""
+def _doubao_synth(text: str, out: str, voice: str | None, speed: float,
+                  emotion: str | None = None, emotion_scale: int | None = None) -> str:
+    """豆包 TTS 统一入口：按凭据自动路由 V3(新)/V1(旧，向后兼容)，返回实际使用的音色。
+    emotion/emotion_scale 仅 V3 支持（V1 旧接口静默忽略并给 stderr 提示）。"""
     creds = resolve_credentials()
     api_key = creds.get("api_key")
     if api_key:
         resolved_voice = voice or creds["voice"] or DOUBAO_V3_DEFAULT_VOICE
         # appid 仅克隆音色（seed-icl-2.0，S_ 开头）需要作 X-Api-App-Id 头；默认音色忽略
-        _doubao_v3_synth(text, out, resolved_voice, speed, api_key, creds.get("appid"))
+        _doubao_v3_synth(text, out, resolved_voice, speed, api_key, creds.get("appid"),
+                         emotion=emotion, emotion_scale=emotion_scale)
         return resolved_voice
+    if emotion:
+        print("⚠ V1 旧接口不支持 emotion，已忽略（配 VOLC_TTS_API_KEY 走 V3 才生效）",
+              file=sys.stderr)
 
     import requests
     appid, token = creds["appid"], creds["token"]
@@ -326,14 +346,16 @@ def _doubao_synth(text: str, out: str, voice: str | None, speed: float) -> str:
 # ---- 统一入口 ----
 
 def gen_one(text: str, out: str, *, engine: str = "edge", voice: str | None = None,
-            rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95) -> dict:
+            rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95,
+            emotion: str | None = None, emotion_scale: int | None = None) -> dict:
     text = (text or "").strip()
     if not text:
         return {"success": False, "error": "文本为空"}
     resolved_voice = voice or EDGE_DEFAULT_VOICE
     try:
         if engine == "doubao":
-            resolved_voice = _doubao_synth(text, out, voice, speed)
+            resolved_voice = _doubao_synth(text, out, voice, speed,
+                                           emotion=emotion, emotion_scale=emotion_scale)
         else:
             asyncio.run(_edge_synth(text, out, resolved_voice, rate))
     except ModuleNotFoundError as e:
@@ -356,7 +378,8 @@ def _concat_mp3(parts: list[str], out: str) -> bool:
 
 
 def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None = None,
-              rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95) -> dict:
+              rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95,
+              emotion: str | None = None, emotion_scale: int | None = None) -> dict:
     """逐句合成 + 实测时间轴：每句单独 TTS、ffprobe 实测时长、拼接成 out，
     并写 sidecar {out}.cues.json（[{text,start,end}]），供 compose 做字幕真同步。"""
     text = (text or "").strip()
@@ -368,19 +391,16 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
         parts, cues, t = [], [], 0.0
         for i, s in enumerate(sents):
             part = str(Path(tmp) / f"p{i:03d}.mp3")
-            r = gen_one(s, part, engine=engine, voice=voice, rate=rate, speed=speed)
+            r = gen_one(s, part, engine=engine, voice=voice, rate=rate, speed=speed,
+                        emotion=emotion, emotion_scale=emotion_scale)
             if not r.get("success"):
                 return {"success": False, "error": f"句{i}合成失败：{r.get('error')}"}
             d = ffprobe_duration(part)
             # 句内再按逗号等细分为字幕条，按字数比例分配该句实测时长(滚动更细、不一条久挂；
             # 同步精度仍是句级实测，单句内语速均匀故比例估算误差极小)
-            units = _split_caption_units(s)
-            ulen = sum(len(u) for u in units) or 1
-            ut = t
-            for k, u in enumerate(units):
-                end = (t + d) if k == len(units) - 1 else (ut + d * (len(u) / ulen))
-                cues.append({"text": u.strip(), "start": round(ut, 3), "end": round(end, 3)})
-                ut = end
+            # 一句 = 一条字幕（2026-08-07 老板定案：句号翻页、逗号换行）。
+            # 句内逗号的换行由 compose 渲染层处理，这里保留原文标点作为换行依据。
+            cues.append({"text": s.strip(), "start": round(t, 3), "end": round(t + d, 3)})
             t += d
             parts.append(part)
         Path(out).parent.mkdir(parents=True, exist_ok=True)
@@ -441,6 +461,11 @@ def main() -> None:
     p.add_argument("--voice", default=None)
     p.add_argument("--rate", default=EDGE_DEFAULT_RATE, help="edge 语速，如 -10%%")
     p.add_argument("--speed", type=float, default=0.95, help="豆包语速 speed_ratio 0.8-2.0")
+    p.add_argument("--emotion", default=None,
+                   help="豆包 V3 情感/风格（Seed-TTS/ICL 2.0）：如 sad/happy/pleased/"
+                        "novel_dialog 等 28 种；克隆音色官方明确支持情感演绎")
+    p.add_argument("--emotion-scale", type=int, default=None,
+                   help="情感强度 1-5（配 --emotion 用）")
     p.add_argument("--timed", action="store_true",
                    help="逐句合成+写 .cues.json 时间轴（字幕真同步，强烈建议）")
     a = p.parse_args()
@@ -450,9 +475,11 @@ def main() -> None:
                         speed=a.speed, timed=a.timed)
     elif a.text and a.out:
         if a.timed:
-            res = gen_timed(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed)
+            res = gen_timed(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
+                            emotion=a.emotion, emotion_scale=a.emotion_scale)
         else:
-            res = gen_one(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed)
+            res = gen_one(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
+                          emotion=a.emotion, emotion_scale=a.emotion_scale)
     else:
         p.error("用 --text+--out 单条，或 --plan+--out-dir 批量")
         return

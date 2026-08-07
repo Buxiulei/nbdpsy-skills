@@ -11,6 +11,8 @@
   "resolution": "720x1280",     # 画布；Seedance 竖屏默认 720x1280
   "fps": 30,
   "ai_label": "AI 生成",        # 合规显式标识(右上角)；置空字符串可关闭——但投放强烈建议保留
+  "logo": "logo.png",           # 可选；透明底品牌 logo，叠右下角(宽18%、边距3%、透明度0.88)
+  "fade_out": 1.5,              # 可选；片尾音画同步淡出秒数，防收尾戛然而止
   "bgm": "bgm.mp3",             # 可选；自动按相对响度垫底(比旁白低 bgm_gap_db)
   "bgm_volume": 0.15,           # 可选，0-1；仅响度探测失败时的回退系数
   "bgm_gap_db": 12,             # 可选；BGM 比旁白低多少 dB(默认12，越大越轻)
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -152,18 +155,68 @@ def _ass_escape(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\n", r"\N")
 
 
+# 字幕标点规则（2026-08-07 老板定案）：**逗号=换行，句号=翻页**。
+# 翻页由句级 cues 承担（tts_gen 一句一条）；本层把句内逗号类（，、；：）换成换行、
+# 句号类删除；？！…保留（有语气价值）。\x00 是换行占位符，最后统一落 \N。
+_BREAK_PUNCT = "，、；：,;—"  # 破折号同为停顿，字幕里不显示、按换行处理
+_DROP_PUNCT = "。."
+
+
+def _render_caption_pages(text: str, max_lines: int = 2) -> list[str]:
+    """字幕渲染管线：标点转换 → 按逗号分段 → 逐段折行 → 装箱成页。
+    每页最多 max_lines 行（2026-08-07 老板定案：最多两行，多了翻页）；
+    逗号段尽量不跨页，单段折出超过一页的按行切页。"""
+    out = []
+    for ch in (text or ""):
+        if ch in _BREAK_PUNCT:
+            out.append("\x00")
+        elif ch in _DROP_PUNCT:
+            continue
+        else:
+            out.append(ch)
+    segs = [x.strip() for x in "".join(out).split("\x00") if x.strip()]
+    pages, cur = [], []
+    for seg in segs:
+        seg_lines = _wrap_caption(seg).split("\n")
+        if cur and len(cur) + len(seg_lines) > max_lines:
+            pages.append(cur)
+            cur = []
+        while len(seg_lines) > max_lines:
+            pages.append(seg_lines[:max_lines])
+            seg_lines = seg_lines[max_lines:]
+        cur.extend(seg_lines)
+        if len(cur) >= max_lines:
+            pages.append(cur)
+            cur = []
+    if cur:
+        pages.append(cur)
+    return ["\n".join(p) for p in pages]
+
+
+def _page_events(text: str, start: float, end: float) -> list[tuple[float, float, str]]:
+    """一条 cue 的文本翻成若干页字幕事件：页时长按该页文字显示宽度占比分配。"""
+    pages = _render_caption_pages(text)
+    if not pages:
+        return []
+    weights = [max(1.0, _disp_w(p.replace("\n", ""))) for p in pages]
+    total = sum(weights)
+    events, t = [], start
+    for i, (p, w) in enumerate(zip(pages, weights)):
+        e = end if i == len(pages) - 1 else min(end, t + (end - start) * w / total)
+        events.append((t, e, _ass_escape(p)))
+        t = e
+    return events
+
+
 def build_ass(text: str, duration: float, width: int, height: int, out_ass: str) -> None:
     """生成单段 ASS 字幕：底部居中、白字黑描边、半透明底，整段时长常驻。"""
     # 字号按画布高度自适应（约 5%）
-    fontsize = max(28, int(height * 0.052))
+    fontsize = max(28, int(height * 0.045))
     # 平台安全区：竖屏 9:16 下底部约 18% 被小红书/抖音的标题文案区遮挡、右侧 ~15% 有
     # 互动按钮列。字幕底边距抬到 20% 高度，落在遮挡区之上、又不压画面主体（中央 1/3）。
     margin_v = int(height * 0.20) if height > width else int(height * 0.08)
+    margin_h = max(40, int(width * 0.08))     # 左右各留 8% 呼吸，别顶边
     end = max(0.5, duration)
-    eh = int(end // 3600)
-    em = int((end % 3600) // 60)
-    es = end % 60
-    end_ts = f"{eh}:{em:02d}:{es:05.2f}"
     # PlayResX/Y 对齐画布；Alignment=2 底部居中；BorderStyle=1 描边+阴影
     content = f"""[Script Info]
 ScriptType: v4.00+
@@ -174,13 +227,14 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{CJK_FONT_NAME},{fontsize},&H00FFFFFF,&H00000000,&H80000000,1,1,3,1,2,40,40,{margin_v},1
+Style: Default,{CJK_FONT_NAME},{fontsize},&H00FFFFFF,&H00000000,&H80000000,1,1,3,1,2,{margin_h},{margin_h},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,{end_ts},Default,,0,0,0,,{_ass_escape(text)}
 """
-    Path(out_ass).write_text(content, encoding="utf-8")
+    events = [f"Dialogue: 0,{_ass_ts(s)},{_ass_ts(e)},Default,,0,0,0,,{txt}"
+              for s, e, txt in _page_events(text, 0.0, end)]
+    Path(out_ass).write_text(content + "\n".join(events) + "\n", encoding="utf-8")
 
 
 def _ass_ts(sec: float) -> str:
@@ -213,29 +267,56 @@ def _split_caption(text: str) -> list[str]:
     return out or [text.strip()]
 
 
-def _wrap_caption(text: str, per_line: int = 12) -> str:
-    """单条字幕过长则折行（每行约 per_line 字，优先在标点处折）。"""
-    if len(text) <= per_line:
+# 折行不可拆的高频双字词（非分词器，只收拆开必难受的功能词）
+_NO_SPLIT_WORDS = (
+    "复杂性创伤|心理学|工作室|咨询师|创伤|"  # 长词在前，正则备选按序匹配
+    "可以|不是|就是|还是|都是|我们|你们|他们|它们|自己|什么|怎么|因为|所以|"
+    "如果|其实|曾经|已经|现在|一个|这些|那些|这个|那个|没有|不要|需要|随时|"
+    "小孩|保护|帮助|联系|反应|自我|情绪|感觉|时候|地方|东西|事情|别人|身体"
+)
+_TOKEN_RE = re.compile(rf"[A-Za-z0-9]+ ?|{_NO_SPLIT_WORDS}|.")
+
+
+def _disp_w(s: str) -> float:
+    """显示宽度：ASCII 半角算 0.5，CJK 全角算 1——「CPTSD 」只占 3 个汉字位。"""
+    return sum(0.5 if ord(ch) < 128 else 1.0 for ch in s)
+
+
+def _wrap_caption(text: str, per_line: float = 11) -> str:
+    """无标点段的超长兜底折行（逗号级分段在 _render_caption_pages 上层已做）。三条规则：
+    ① 英文/数字词（CPTSD、12356）是不可拆 token，绝不从词中间劈开；
+    ② 宽度按显示宽算（半角 0.5），中英混排不吃亏；
+    ③ 各行长度尽量均衡（14 字 → 7+7），不出「机\\N制」式孤字尾行。"""
+    text = (text or "").strip()
+    total = _disp_w(text)
+    if total <= per_line:
         return text
-    lines, buf = [], ""
-    for ch in text:
-        buf += ch
-        if len(buf) >= per_line and ch in "，。！？、；,!?;":
-            lines.append(buf); buf = ""
-    if buf:
-        lines.append(buf)
-    out = []
-    for ln in lines:
-        while len(ln) > per_line + 4:
-            out.append(ln[:per_line]); ln = ln[per_line:]
-        out.append(ln)
-    return "\n".join(out)
+    # token 化：英文/数字连续串（带其后空格）为一个 token；高频双字词不可拆
+    # （零依赖不引分词器，只保「劈开必难受」的功能词——「帮助可/以随时」这种）
+    toks = re.findall(_TOKEN_RE, text)
+    # 不可拆 token 会把字符挤进别的行，某行可能超出 per_line 硬上限——超了就多给一行重排
+    for n_lines in range(math.ceil(total / per_line), len(toks) + 1):
+        target = total / n_lines
+        lines, buf, w = [], "", 0.0
+        for t in toks:
+            tw = _disp_w(t.rstrip())
+            if buf and len(lines) < n_lines - 1 and w + tw > target:
+                lines.append(buf.strip())
+                buf, w = "", 0.0
+            buf += t
+            w += _disp_w(t)
+        if buf.strip():
+            lines.append(buf.strip())
+        if all(_disp_w(x) <= per_line for x in lines):
+            break
+    return "\n".join(lines)
 
 
 def _ass_header(width: int, height: int) -> str:
     """ASS 头(Script Info + 底部居中白字黑描边样式)，build_timed_ass / build_cued_ass 共用。"""
-    fontsize = max(28, int(height * 0.052))
+    fontsize = max(28, int(height * 0.045))
     margin_v = int(height * 0.20) if height > width else int(height * 0.08)
+    margin_h = max(40, int(width * 0.08))     # 左右各留 8% 呼吸，别顶边
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -245,7 +326,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{CJK_FONT_NAME},{fontsize},&H00FFFFFF,&H00000000,&H80000000,1,1,3,1,2,40,40,{margin_v},1
+Style: Default,{CJK_FONT_NAME},{fontsize},&H00FFFFFF,&H00000000,&H80000000,1,1,3,1,2,{margin_h},{margin_h},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -263,7 +344,8 @@ def build_timed_ass(text: str, duration: float, width: int, height: int, out_ass
         start = t
         end = duration if i == len(caps) - 1 else min(duration, t + seg)
         t = end
-        lines.append(f"Dialogue: 0,{_ass_ts(start)},{_ass_ts(end)},Default,,0,0,0,,{_ass_escape(_wrap_caption(c))}")
+        for s, e, txt in _page_events(c, start, end):
+            lines.append(f"Dialogue: 0,{_ass_ts(s)},{_ass_ts(e)},Default,,0,0,0,,{txt}")
     Path(out_ass).write_text(_ass_header(width, height) + "\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -274,9 +356,8 @@ def build_cued_ass(cues: list, width: int, height: int, out_ass: str) -> None:
     for c in (cues or []):
         start = float(c.get("start", 0.0))
         end = float(c.get("end", start))
-        txt = _ass_escape(_wrap_caption((c.get("text") or "").strip()))
-        if txt:
-            lines.append(f"Dialogue: 0,{_ass_ts(start)},{_ass_ts(end)},Default,,0,0,0,,{txt}")
+        for s, e, txt in _page_events((c.get("text") or "").strip(), start, end):
+            lines.append(f"Dialogue: 0,{_ass_ts(s)},{_ass_ts(e)},Default,,0,0,0,,{txt}")
     Path(out_ass).write_text(_ass_header(width, height) + "\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -376,14 +457,22 @@ def concat_segments(paths: list[str], out: str, workdir: str) -> bool:
 
 
 def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
-             bgm_volume: float, width: int, height: int, bgm_gap_db: float = 12.0) -> bool:
-    """叠 AI 生成合规角标(右上) + 可选 BGM 混音 → 最终成片(+faststart)。"""
+             bgm_volume: float, width: int, height: int, bgm_gap_db: float = 12.0,
+             logo: Optional[str] = None, fade_out: float = 0.0) -> bool:
+    """叠 AI 生成合规角标(右上) + 可选品牌 logo(右下) + 可选 BGM 混音 +
+    可选片尾音画淡出(fade_out 秒) → 最终成片(+faststart)。"""
     fontsize = max(20, int(height * 0.030))
     pad = int(height * 0.012)
     cmd = [FFMPEG, "-y", "-i", src]
     has_bgm = bool(bgm and Path(bgm).exists())
     if has_bgm:
         cmd += ["-stream_loop", "-1", "-i", bgm]  # BGM 循环铺满
+    has_logo = bool(logo and Path(logo).exists())
+    if logo and not has_logo:
+        _err(f"[finalize] logo 文件不存在，跳过：{logo}")
+    if has_logo:
+        logo_idx = 2 if has_bgm else 1
+        cmd += ["-i", logo]
 
     filters = []
     if ai_label:
@@ -393,7 +482,24 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
         filters.append(
             f"drawtext=fontfile='{cjk_font_file}':text='{ai_label}':"
             f"fontcolor=white:fontsize={fontsize}:{box}:x=w-tw-{pad}:y={pad}")
+    fade_out = max(0.0, float(fade_out or 0.0))
+    vfade = afade = ""
+    if fade_out:
+        # 片尾音画同步淡出，消除"戛然而止"；淡出起点按成片实测时长倒推。
+        # 视频淡出挂在滤镜链最末（logo 之后），让 logo 随画面一起淡出
+        fade_st = max(0.0, ffprobe_duration(src) - fade_out)
+        vfade = f",fade=t=out:st={fade_st:.2f}:d={fade_out:.2f}"
+        afade = f"afade=t=out:st={fade_st:.2f}:d={fade_out:.2f}"
     vfilter = ",".join(filters) if filters else "null"
+    if has_logo:
+        # 右下角品牌 logo：宽约画面 18%，边距 3%，轻微降透明度融入画面
+        logo_w = int(width * 0.18)
+        logo_pad = int(width * 0.03)
+        logo_chain = (f"[{logo_idx}:v]format=rgba,scale={logo_w}:-1,"
+                      f"colorchannelmixer=aa=0.88[lg];"
+                      f"[vbase][lg]overlay=W-w-{logo_pad}:H-h-{logo_pad}{vfade}")
+    else:
+        vfilter += vfade
 
     if has_bgm:
         # BGM 相对响度：测旁白 mean 与 BGM mean，把 BGM 压到比旁白低 bgm_gap_db(默认12dB)。
@@ -408,12 +514,24 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
             bgm_vol_expr = f"volume={max(0.0, bgm_volume)}"
             _err("[finalize] 响度探测失败, 回退固定 bgm_volume")
         # normalize=0 关键：否则 amix 会把旁白+BGM 各压低 ~6dB(实测旁白变小声的 bug)
-        fc = (f"[0:v]{vfilter}[v];"
+        vchain = (f"[0:v]{vfilter}[vbase];{logo_chain}[v]" if has_logo
+                  else f"[0:v]{vfilter}[v]")
+        amix_tail = f",{afade}" if afade else ""
+        fc = (f"{vchain};"
               f"[1:a]{bgm_vol_expr}[bg];"
-              f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[a]")
+              f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0{amix_tail}[a]")
         cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
+    elif has_logo:
+        fc = f"[0:v]{vfilter}[vbase];{logo_chain}[v]"
+        if afade:
+            fc += f";[0:a]{afade}[a]"
+            cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
+        else:
+            cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a:0?"]
     else:
         cmd += ["-vf", vfilter, "-map", "0:v:0", "-map", "0:a:0?"]
+        if afade:
+            cmd += ["-af", afade]
 
     cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out]
@@ -454,7 +572,8 @@ def compose(manifest: dict, output_override: Optional[str] = None) -> dict:
         _err("[compose] 叠合规标识 / 混 BGM / 导出 …")
         ok = finalize(merged, output, ai_label=manifest.get("ai_label", ""),
                       bgm=manifest.get("bgm"), bgm_volume=float(manifest.get("bgm_volume", 0.15)),
-                      width=width, height=height, bgm_gap_db=float(manifest.get("bgm_gap_db", 12.0)))
+                      width=width, height=height, bgm_gap_db=float(manifest.get("bgm_gap_db", 12.0)),
+                      logo=manifest.get("logo"), fade_out=float(manifest.get("fade_out", 0.0)))
         if not ok:
             return {"success": False, "error": "导出失败", "stage": "finalize"}
 

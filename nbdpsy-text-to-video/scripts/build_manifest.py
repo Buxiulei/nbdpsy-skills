@@ -24,8 +24,9 @@ manifest 契约，源自 compose_video.py（本仓库同目录，勿改）：
   字幕级联语义（第261-268行）：cues > narration_text > subtitle，三者都缺才不烧字幕。
 
 工作目录约定（跨任务契约，Task 8/9/14）：
-  shots.json          Task 8 产物：{"video":{"title","ratio","source_note"},
-                       "shots":[{"index","page","prompt","subtitle","narration_text",
+  shots.json          镜列表取自 `shots`（v1 快版）或 `beats`（v3 电影版，一条旁白=一镜段）：
+                       {"video":{"title","ratio",...},
+                       "shots"|"beats":[{"index","subtitle","narration_text",
                        "image","duration"}, ...]}
   shot-{NN}.mp4        每镜成片，两位序号(01起)，必需——缺失则该镜无法合成，计入 missing
   narr-{NN}.mp3        每镜旁白，两位序号，必需——缺失则计入 missing 阻断（本脚本强制检查）。
@@ -81,7 +82,9 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
     if not shots_path.is_file():
         raise FileNotFoundError(f"缺少 {shots_path}")
     data = json.loads(shots_path.read_text(encoding="utf-8"))
-    shots = data.get("shots") or []
+    # v3 电影格式：镜列表在 beats（一条旁白=一镜段），文件命名规则与 v1 的 shots 完全一致
+    # （shot-NN.mp4 / narr-NN.mp3 / cues），所以这里只需换个取数位置，下游逻辑一行不用改。
+    shots = data.get("shots") or data.get("beats") or []
     video_meta = data.get("video") or {}
 
     segments: list[dict[str, Any]] = []
@@ -151,7 +154,9 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
 
     manifest: dict[str, Any] = {
         "output": str(workdir / "final.mp4"),
-        "ai_label": AI_LABEL_DEFAULT,
+        # video.ai_label 显式给了（含空串=关闭）就尊重，没给才用合规默认。
+        # 关闭是创作决策（如动画类由发布平台的 AIGC 声明替代画面角标），入口留给 shots.json
+        "ai_label": video_meta["ai_label"] if "ai_label" in video_meta else AI_LABEL_DEFAULT,
         "segments": segments,
     }
     resolution = RATIO_TO_RESOLUTION.get(video_meta.get("ratio"))
@@ -160,6 +165,12 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
     bgm_path = workdir / "bgm.mp3"
     if bgm_path.is_file():
         manifest["bgm"] = str(bgm_path)
+    # 工作目录放 logo.png(透明底) 即自动叠右下角品牌水印
+    logo_path = workdir / "logo.png"
+    if logo_path.is_file():
+        manifest["logo"] = str(logo_path)
+    if "fade_out" in video_meta:
+        manifest["fade_out"] = video_meta["fade_out"]
 
     return {"manifest_dict": manifest, "missing": missing, "shots": len(shots)}
 
