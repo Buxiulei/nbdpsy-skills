@@ -18,6 +18,16 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.76.1] — 2026-08-07
+
+### text-to-video：podcast_gen 补发音别名（NBDpsy 逐字母）
+
+- podcast_gen 直接调 `_minimax_synth` 绕过了 `_speakable()` 发音别名——播客里的
+  「NBDpsy」会被整词瞎拼（首期稿审校时抓到）。已在合成前套 `_speakable`，
+  cue/字幕仍存原文。凡新增直调底层合成的入口，发音别名要跟上（此坑记一笔）。
+
+---
+
 ## [1.76.0] — 2026-08-07
 
 ### text-to-video：播客声纹终版=心电图式描线 + 男声/首期定案

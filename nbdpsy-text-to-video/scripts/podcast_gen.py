@@ -201,7 +201,8 @@ def synth(podcast_path: str, *, workdir: str | None = None,
         else:
             _err(f"[podcast] 行{i:02d} 🎙 {ln['speaker']} {voice} speed={speed} …")
             # 直接调 tts_gen 的 minimax 合成：失败原样抛出，绝不自动重试
-            tts_gen._minimax_synth(raw, str(mp3), voice, speed, creds["api_key"],
+            # _speakable：发音别名（NBDpsy→逐字母）只进合成文本；cue/字幕仍存原文
+            tts_gen._minimax_synth(tts_gen._speakable(raw), str(mp3), voice, speed, creds["api_key"],
                                    model=model, emotion=emotion,
                                    group_id=creds["group_id"])
             sig.write_text(want, encoding="utf-8")
