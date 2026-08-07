@@ -1,0 +1,260 @@
+<!doctype html>
+<!--
+「长文播客」播放器页模板（竖屏 720×1280，黑底）
+形态规格见 references/podcast-video-spec.md §④。
+
+用法：record_podcast.py 把模板拷进工作目录，用 {title, vol, series, cues} 替换
+下面 #podcast-data 这个 <script> 的内容，然后 file:// 打开；音频按同目录相对
+路径 podcast.mp3 加载（所以模板必须落在 podcast.mp3 旁边）。
+
+零外网依赖：无 CDN、无 webfont，字体栈只用系统 Noto。录屏机器上装了
+fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，值得先 fc-list 核一下）。
+
+自动播放：chromium 默认拦截带声音的 autoplay。两条路都可以，本模板两条都留：
+  A) 录屏脚本调 window.__start()（本模板设计路径，播放时机由脚本掌控，好对齐时间轴）；
+  B) 启动 chromium 时加 --autoplay-policy=no-user-gesture-required（record_podcast.py
+     已经加了，是 A 能成功 play() 的前提——没有它，脚本触发的 play() 同样会被拒）。
+录屏脚本要用的接口：
+  window.__start()  开始播放，返回 Promise
+  window.__done     布尔，音频 ended 后置 true（出错也置 true，并写 window.__error）
+  window.__t()      当前播放秒数（调试用）
+-->
+<meta charset="utf-8">
+<title>NBDpsy 长文播客</title>
+<style>
+  :root {
+    /* 说话人配色：F 暖白、M 浅金——只靠颜色区分，行首绝不加「男/女」字样 */
+    --spk-f: #f4efe6;
+    --spk-m: #e8c27a;
+    --dim: #6b6b6b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 720px; height: 1280px;
+    background: #000; overflow: hidden;
+    font-family: "Noto Sans CJK SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* 极轻的中心辉光，避免纯黑底显得像加载失败 */
+  #stage {
+    position: relative; width: 720px; height: 1280px;
+    display: flex; flex-direction: column; align-items: center;
+    background: radial-gradient(ellipse 560px 620px at 50% 46%, #16161a 0%, #000 72%);
+  }
+
+  /* ① 期号 + 标题 */
+  #head { margin-top: 108px; text-align: center; padding: 0 64px; }
+  #vol {
+    font-size: 26px; letter-spacing: 6px; color: var(--spk-m);
+    opacity: .85; font-weight: 500;
+  }
+  #title {
+    margin-top: 18px; font-size: 40px; line-height: 1.35; font-weight: 700;
+    color: #fff; letter-spacing: 1px;
+    /* 标题限两行，超了省略——版式稳定优先 */
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  #rule { margin-top: 30px; width: 68px; height: 2px; background: var(--spk-m); opacity: .5; }
+
+  /* ② 当前句大字幕：画面视觉中心 */
+  #capwrap {
+    flex: 1; width: 100%; padding: 0 62px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #cap {
+    font-size: 52px; line-height: 1.6; font-weight: 600; text-align: center;
+    letter-spacing: 1px; color: var(--spk-f);
+    opacity: 1; transition: opacity 150ms linear;
+    text-shadow: 0 2px 18px rgba(0, 0, 0, .9);
+    max-height: 520px; overflow: hidden;
+  }
+  #cap.spk-M { color: var(--spk-m); }
+
+  /* ③ 波形播放器图形（纯装饰，随播放走，不反映真实频谱） */
+  #player { width: 560px; margin-bottom: 96px; }
+  #bars {
+    height: 92px; display: flex; align-items: center; justify-content: center;
+    gap: 5px;
+  }
+  #bars i {
+    display: block; width: 5px; height: 8px; border-radius: 3px;
+    background: #3a3a3f; transform-origin: center;
+  }
+  #ctrl { margin-top: 34px; display: flex; align-items: center; gap: 20px; }
+  #play {
+    flex: none; width: 54px; height: 54px; border-radius: 50%;
+    border: 2px solid rgba(232, 194, 122, .75);
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* 播放键造型：CSS 三角，纯装饰不可点 */
+  #play::after {
+    content: ""; margin-left: 4px;
+    border-left: 16px solid var(--spk-m);
+    border-top: 10px solid transparent; border-bottom: 10px solid transparent;
+  }
+  #track {
+    flex: 1; height: 3px; border-radius: 2px; background: #2a2a2e; position: relative;
+  }
+  #fill {
+    position: absolute; left: 0; top: 0; height: 100%; width: 0;
+    border-radius: 2px; background: var(--spk-m);
+  }
+  #dot {
+    position: absolute; top: 50%; left: 0; width: 12px; height: 12px;
+    margin: -6px 0 0 -6px; border-radius: 50%; background: #fff;
+    box-shadow: 0 0 10px rgba(232, 194, 122, .8);
+  }
+  #time {
+    flex: none; font-size: 20px; color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ④ 栏目名 */
+  #series {
+    margin-bottom: 56px; font-size: 30px; letter-spacing: 10px;
+    color: #cfc7ba; opacity: .72;
+    font-family: "Noto Serif CJK SC", "Noto Sans CJK SC", serif;
+  }
+</style>
+
+<div id="stage">
+  <div id="head">
+    <div id="vol"></div>
+    <div id="title"></div>
+    <div id="rule"></div>
+  </div>
+  <div id="capwrap"><div id="cap"></div></div>
+  <div id="player">
+    <div id="bars"></div>
+    <div id="ctrl">
+      <div id="play"></div>
+      <div id="track"><div id="fill"></div><div id="dot"></div></div>
+      <div id="time">00:00</div>
+    </div>
+  </div>
+  <div id="series"></div>
+</div>
+
+<!-- 数据注入点：录屏脚本把 {title, vol, series, cues} 写进这里 -->
+<script id="podcast-data" type="application/json">{}</script>
+
+<script>
+(function () {
+  "use strict";
+  var DATA = {};
+  try {
+    DATA = JSON.parse(document.getElementById("podcast-data").textContent || "{}");
+  } catch (e) {
+    DATA = {};
+  }
+  var CUES = DATA.cues || [];
+
+  var elVol = document.getElementById("vol");
+  var elTitle = document.getElementById("title");
+  var elSeries = document.getElementById("series");
+  var elCap = document.getElementById("cap");
+  var elBars = document.getElementById("bars");
+  var elFill = document.getElementById("fill");
+  var elDot = document.getElementById("dot");
+  var elTime = document.getElementById("time");
+
+  // 注意用 != null 而非真值判断：vol 可能是 0（试播期），落进 falsy 会把期号整行吞掉
+  elVol.textContent = (DATA.vol !== undefined && DATA.vol !== null) ? ("VOL." + DATA.vol) : "";
+  elTitle.textContent = DATA.title || "";
+  elSeries.textContent = DATA.series || "";
+
+  // 波形条：固定 44 根，各自一个相位，播放时按正弦叠加起伏（装饰性，稳定优先于真实感）
+  var N = 44, bars = [], phase = [];
+  for (var i = 0; i < N; i++) {
+    var b = document.createElement("i");
+    elBars.appendChild(b);
+    bars.push(b);
+    phase.push(Math.random() * Math.PI * 2);
+  }
+
+  // 音频固定同目录相对路径，模板必须与 podcast.mp3 同目录
+  var audio = new Audio("podcast.mp3");
+  audio.preload = "auto";
+
+  window.__done = false;
+  window.__error = null;
+  window.__t = function () { return audio.currentTime || 0; };
+  window.__start = function () { return audio.play(); };
+
+  audio.addEventListener("ended", function () { window.__done = true; });
+  audio.addEventListener("error", function () {
+    // 出错也置 __done：让录屏脚本立刻收工去看 __error，而不是干等到超时
+    window.__error = "audio error code=" + ((audio.error && audio.error.code) || "?");
+    window.__done = true;
+  });
+
+  var curIdx = -1, swapping = false;
+
+  function findCue(t) {
+    // 二分找覆盖 t 的 cue；间隙（两句之间的停顿）不返回 -1，保持上一句挂着，
+    // 免得每次换气字幕都闪一下空白。
+    var lo = 0, hi = CUES.length - 1, ans = -1;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      if (CUES[mid].start <= t) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return ans;
+  }
+
+  function syncCue() {
+    var idx = findCue(window.__t());
+    if (idx < 0 || idx === curIdx || swapping) return;
+    curIdx = idx;
+    var c = CUES[idx];
+    // 淡出 150ms → 换文案 → 淡入 150ms
+    swapping = true;
+    elCap.style.opacity = "0";
+    setTimeout(function () {
+      elCap.textContent = c.text || "";
+      elCap.className = "spk-" + (c.speaker || "F");
+      elCap.style.opacity = "1";
+      swapping = false;
+    }, 150);
+  }
+
+  // 字幕同步：timeupdate 是规格指定入口，但它只有 ~4Hz（最坏迟 250ms）；
+  // 故另用 rAF 以帧率驱动同一个幂等的 syncCue()，波形与进度条也搭这趟车。
+  audio.addEventListener("timeupdate", syncCue);
+
+  function fmt(s) {
+    s = Math.max(0, Math.floor(s || 0));
+    return ("0" + Math.floor(s / 60)).slice(-2) + ":" + ("0" + (s % 60)).slice(-2);
+  }
+
+  function tick(ts) {
+    syncCue();
+    var t = window.__t();
+    var dur = audio.duration || DATA.duration || 0;
+    var p = dur > 0 ? Math.min(1, t / dur) : 0;
+    elFill.style.width = (p * 100) + "%";
+    elDot.style.left = (p * 100) + "%";
+    elTime.textContent = fmt(t);
+
+    var playing = !audio.paused && !audio.ended;
+    for (var i = 0; i < N; i++) {
+      // 中间高两侧低的包络 × 时间正弦，播放时起伏、暂停时压平成静息线
+      var env = 0.35 + 0.65 * Math.sin((i + 0.5) / N * Math.PI);
+      var amp = playing
+        ? (0.30 + 0.70 * Math.abs(Math.sin(ts / 190 + phase[i] + i * 0.35)))
+        : 0.06;
+      bars[i].style.height = Math.max(4, 84 * env * amp).toFixed(1) + "px";
+      bars[i].style.background = playing && amp > 0.72 ? "#e8c27a" : "#3a3a3f";
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // 首句先亮出来，别让开播前 1 秒是空画面
+  if (CUES.length) {
+    elCap.textContent = CUES[0].text || "";
+    elCap.className = "spk-" + (CUES[0].speaker || "F");
+    curIdx = 0;
+  }
+})();
+</script>

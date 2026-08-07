@@ -61,8 +61,11 @@
 3. **波形播放器图形**（居中：波形条 + 播放键造型 + 进度点——纯装饰，CSS/JS 动画随
    播放进度走，不必真实反映频谱；真实感优先级低于稳定性）；
 4. **栏目名**（书法感字体或 logo 字，底部）。
-- 全部资源内联（字体用系统 Noto，不依赖外网），页面接受 `?cues=podcast.cues.json&audio=podcast.mp3`
-  本地文件驱动；**页面里内置 `window.__seek(t)` 与 `window.__done` 标志**供录屏脚本控制/检测结束。
+- 全部资源内联（字体用系统 Noto，不依赖外网）。数据注入：模板顶部
+  `<script id="podcast-data" type="application/json">` 占位，录屏脚本把 `{title,vol,series,cues}`
+  写入后落临时 html 再打开（`file://` 下 fetch 本地 json 会被 CORS 拦，query 驱动走不通，
+  2026-08-07 实现时定案）；音频固定同目录相对路径 `podcast.mp3`。页面暴露
+  `window.__start()` / `window.__done` / `window.__t()` 供录屏脚本控制与检测结束。
 
 ### ⑤ 录屏 + 混音
 

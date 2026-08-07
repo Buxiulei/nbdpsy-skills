@@ -533,6 +533,29 @@ def gen_one(text: str, out: str, *, engine: str = "edge", voice: str | None = No
     return {"success": True, "output": str(Path(out).resolve()), "engine": engine, "voice": resolved_voice}
 
 
+# 发音别名：合成时替换为可正确朗读的形式，字幕/cues 保留原文。
+# NBDpsy 整词会被模型瞎拼（实测念成 "nbd pas"），空格分开逐字母念。
+_SPEAK_ALIASES = {
+    "NBDpsy": "N B D P S Y",
+}
+
+
+def _speakable(text: str) -> str:
+    """应用发音别名（只影响送 TTS 的文本，不影响字幕原文）。"""
+    for k, v in _SPEAK_ALIASES.items():
+        text = text.replace(k, v)
+    return text
+
+
+def _make_silence(path: str, seconds: float) -> bool:
+    """生成一段静音 mp3（句间垫片用）。"""
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-t", f"{seconds:.3f}",
+         "-i", "anullsrc=r=44100:cl=mono", "-c:a", "libmp3lame", "-q:a", "2", path],
+        capture_output=True, text=True, timeout=60)
+    return r.returncode == 0
+
+
 def _concat_mp3(parts: list[str], out: str) -> bool:
     """把多句 mp3 顺序拼成一条（重编码保证帧对齐，避免间隙）。"""
     lst = Path(out).with_suffix(".concat.lst")
@@ -548,25 +571,33 @@ def _concat_mp3(parts: list[str], out: str) -> bool:
 def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None = None,
               rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95,
               emotion: str | None = None, emotion_scale: int | None = None,
-              model: str = MINIMAX_DEFAULT_MODEL) -> dict:
+              model: str = MINIMAX_DEFAULT_MODEL, gap: float = 0.45) -> dict:
     """逐句合成 + 实测时间轴：每句单独 TTS、ffprobe 实测时长、拼接成 out，
-    并写 sidecar {out}.cues.json（[{text,start,end}]），供 compose 做字幕真同步。"""
+    并写 sidecar {out}.cues.json（[{text,start,end}]），供 compose 做字幕真同步。
+    gap = 句间静音秒数（2026-08-07 老板定案：上句说完不能立马抢下句——
+    MiniMax 句尾几乎零留白，逐句拼接必须垫间隙；cues 时间轴含间隙偏移）。"""
     text = (text or "").strip()
     if not text:
         return {"success": False, "error": "文本为空"}
     sents = _split_sentences(text)
     tmp = tempfile.mkdtemp(prefix="tts_timed_")
     try:
+        gap = max(0.0, gap)
+        silence = str(Path(tmp) / "gap.mp3")
+        if gap and len(sents) > 1 and not _make_silence(silence, gap):
+            return {"success": False, "error": "句间静音生成失败"}
         parts, cues, t = [], [], 0.0
         for i, s in enumerate(sents):
+            if i and gap:
+                parts.append(silence)
+                t += gap
             part = str(Path(tmp) / f"p{i:03d}.mp3")
-            r = gen_one(s, part, engine=engine, voice=voice, rate=rate, speed=speed,
+            # 发音别名只进合成文本；cue 存原文（字幕要显示 NBDpsy 而不是拆开的字母）
+            r = gen_one(_speakable(s), part, engine=engine, voice=voice, rate=rate, speed=speed,
                         emotion=emotion, emotion_scale=emotion_scale, model=model)
             if not r.get("success"):
                 return {"success": False, "error": f"句{i}合成失败：{r.get('error')}"}
             d = ffprobe_duration(part)
-            # 句内再按逗号等细分为字幕条，按字数比例分配该句实测时长(滚动更细、不一条久挂；
-            # 同步精度仍是句级实测，单句内语速均匀故比例估算误差极小)
             # 一句 = 一条字幕（2026-08-07 老板定案：句号翻页、逗号换行）。
             # 句内逗号的换行由 compose 渲染层处理，这里保留原文标点作为换行依据。
             cues.append({"text": s.strip(), "start": round(t, 3), "end": round(t + d, 3)})
@@ -591,7 +622,7 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
 
 def gen_batch(plan_path: str, out_dir: str, *, engine: str = "edge", voice: str | None = None,
               rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95, timed: bool = False,
-              model: str = MINIMAX_DEFAULT_MODEL) -> dict:
+              model: str = MINIMAX_DEFAULT_MODEL, gap: float = 0.45) -> dict:
     try:
         plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001
@@ -610,7 +641,7 @@ def gen_batch(plan_path: str, out_dir: str, *, engine: str = "edge", voice: str 
             _err(f"[tts] 分镜 {i}: 跳过(无文案)")
             continue
         if timed:
-            r = gen_timed(text, out, engine=engine, voice=voice, rate=rate, speed=speed, model=model)
+            r = gen_timed(text, out, engine=engine, voice=voice, rate=rate, speed=speed, model=model, gap=gap)
         else:
             r = gen_one(text, out, engine=engine, voice=voice, rate=rate, speed=speed, model=model)
         r["index"] = i
@@ -644,15 +675,17 @@ def main() -> None:
                    help="情感强度 1-5（配 --emotion 用）")
     p.add_argument("--timed", action="store_true",
                    help="逐句合成+写 .cues.json 时间轴（字幕真同步，强烈建议）")
+    p.add_argument("--gap", type=float, default=0.45,
+                   help="--timed 句间静音秒数（默认 0.45；上句说完不抢下句）")
     a = p.parse_args()
 
     if a.plan:
         res = gen_batch(a.plan, a.out_dir, engine=a.engine, voice=a.voice, rate=a.rate,
-                        speed=a.speed, timed=a.timed, model=a.model)
+                        speed=a.speed, timed=a.timed, model=a.model, gap=a.gap)
     elif a.text and a.out:
         if a.timed:
             res = gen_timed(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
-                            emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model)
+                            emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model, gap=a.gap)
         else:
             res = gen_one(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
                           emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model)

@@ -18,6 +18,31 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.74.0] — 2026-08-07
+
+### text-to-video：长文播客产线三件落地 + 句间气口 + NBDpsy 逐字母朗读
+
+**「长文播客」实现（配套 v1.73.0 的规格文档）**
+- `scripts/podcast_gen.py synth`：对谈稿（podcast.json）逐行双声合成（复用 minimax 引擎；
+  F=温暖闺蜜 / M=温润男声默认，`--voice-f/--voice-m` 可换）→ `podcast.mp3` + 行级
+  `podcast.cues.json`。**时间轴走 wav 中间件**（mp3 逐段 concat 每段漂 ~46ms 且随行数累积，
+  实测 4 行漂 0.324s——wav 域按样本数累加、仅最终编码一次，cues 由构造精确）；幂等指纹=
+  文本+音色+语速+情感（防换音色复用旧 mp3 串音）；停顿/语气标记只进合成不进字幕。
+- `assets/podcast_player.html`：720×1280 黑金播放器页（期号标题/当前句大字幕·说话人双色/
+  波形动画/栏目名），零外网依赖，`<script id="podcast-data">` 注入数据（file:// 下 fetch 被
+  CORS 拦，query 驱动不可行），暴露 `__start/__done/__t`。
+- `scripts/record_podcast.py`：Playwright 录屏 + ffmpeg 混音（录屏声道弃用、原始音轨保音质；
+  lead_in 反推切除录屏前导；一律以音频为准）。端到端实测 4 行样片通过，
+  silencedetect 独立验证 cues 精确。
+
+**tts_gen 两个口播修正（老板 v18 验收定案）**
+- `--timed` 新增 `--gap`（默认 0.45s）：句间垫静音、cues 含偏移——MiniMax 句尾零留白，
+  逐句拼接必须给气口，否则上句说完立马抢下句；
+- 发音别名 `_SPEAK_ALIASES`：**NBDpsy 合成时替换为「N B D P S Y」逐字母念**（整词被模型
+  瞎拼成 "nbd pas"），字幕/cues 保留原文写法。
+
+---
+
 ## [1.73.0] — 2026-08-07
 
 ### text-to-video：MiniMax 语音引擎 + 逐字稿规范沉淀 + 两种内容形态命名
