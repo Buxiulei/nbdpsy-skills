@@ -10,8 +10,9 @@
     python3 note_ops.py --note <note_id>     # 单条详情（**只有这里返回正文 content_text**）
     python3 note_ops.py --collections 账号名或ID          # 该号的合集
     python3 note_ops.py --activities 账号名或ID [--keyword 心理]   # 可关联的活动
-    python3 note_ops.py --set-components --account 号 --note-id ID   # 九个字段可同批提交
+    python3 note_ops.py --set-components --account 号 --note-id ID   # 十个字段可同批提交
         [--collection-id N] [--remove-collection-id N --remove-collection-name 名]
+        [--set-original-declaration]   # 补录原创声明（只开不关；已是开态 → skipped 零提交）
         [--quoted-note-id ID] [--related-counselor 姓名] [--activity-id N]
         [--set-title 标题] [--set-content 正文 | --set-content-file 路径]
         [--add-image URL...] [--remove-image-index N...] [--expected-image-count N]
@@ -418,6 +419,12 @@ def check_component_request(requested: dict):
         warns.append("带 --remove-collection-id 必须一起给 --remove-collection-name（合集名）："
                      "移出是破坏性操作，服务端比对不上「当前所在合集就是目标」时会拒绝动手，"
                      "报 collection_remove_unverifiable")
+    if requested.get("set_original_declaration") and len(requested) == 1:
+        warns.append("本次只补原创声明：幂等，已是开态就 skipped 且一次发布都不点，重跑安全。"
+                     "但**平台是否在编辑页回显已声明态尚无实测证据**——先跑 1-2 篇，"
+                     "到笔记里人工确认原创标记真的出现了再放量；看到 applied 是 false 别直接重跑"
+                     "（每次重跑都是一次真提交）。批量跨多个号时按号分散（同号每小时有会话帽），"
+                     "看到 queued 是正常排队，别重试")
     if "collection_id" in requested and "collection_name" not in requested:
         warns.append("带 --collection-id 时最好一起给 --collection-name（合集名）："
                      "服务端用它做「已选态」比对，不传且页面解析不出会报 "
@@ -653,6 +660,10 @@ def main():
                     help="--set-components：关联该活动（⚠ 编辑页入口 2026-08-03 起被平台收走，"
                          "大概率设不上；活动改在发布时挂）")
     ap.add_argument("--related-counselor", help="--set-components：关联咨询师姓名（驱动引用自动推导）")
+    ap.add_argument("--set-original-declaration", action="store_true",
+                    help="--set-components：给这篇**补录原创声明**（为 08-05~08-07 那批漏标的补标）。"
+                         "**只支持开启**，服务端不做关闭。幂等：已是开态 → skipped 且一次发布都不点，"
+                         "可安全批量重跑；走的是与发布链同一段协议弹窗逻辑（08-07 那个修复自动覆盖）")
     ap.add_argument("--set-title", metavar="标题",
                     help="--set-components：整体替换标题（传空串=清空；显长>20 服务端 422 不截断）")
     ap.add_argument("--set-content", metavar="正文",
@@ -780,10 +791,14 @@ def main():
             ) if v not in (None, "")}
             if args.set_title is not None:   # 空串是「清空标题」的合法值，不能被过滤掉
                 requested["title"] = args.set_title
+            if args.set_original_declaration:
+                # 只在开启时才带这个键：服务端只支持开启，显式传 false 会 422
+                requested["set_original_declaration"] = True
             if not requested:
                 ap.error("--set-components 至少要给一项：--collection-id / "
                          "--remove-collection-id / --quoted-note-id / "
-                         "--activity-id / --related-counselor / --set-title / --set-content[-file] / "
+                         "--activity-id / --related-counselor / --set-original-declaration / "
+                         "--set-title / --set-content[-file] / "
                          "--add-image / --remove-image-index")
             for w in check_component_request(requested):
                 print(f"⚠ {w}", file=sys.stderr)
