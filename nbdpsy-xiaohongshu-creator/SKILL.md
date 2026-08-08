@@ -1094,6 +1094,19 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
 
 ### 第 7 步 · 发布（自动可选）或交付（人工兜底）
 
+> 🧭 **动手前先自查后端能力（2026-08-08 server 定规，指引全文：
+> `文档/2026-08-08-给skill-后端接口能力自查指引.md`）**：任何发布/编辑/互动/提取任务开工前，
+> 先 `GET https://mcp.nbdpsy.com/api/guide`（带 apikey）——一次返回 capabilities /
+> changelog / **known_limitations（必读）** / meta 四段。**契约以 guide 与 manifest 的
+> 实时返回为准，不以记忆里的旧契约或任何转述为准**（guide 有测试钉着不会腐烂；
+> known_limitations 是活的，后端验掉一条就撤、新踩一坑就补）。`kind=breaking` 逐条看。
+>
+> ⚠️ **`published` ≠ 组件全成——发布后必须逐项核对 `applied` 回执**（2026-08-08 实翻车）：
+> 封面/话题/原创声明失败**不阻断发布**，任务照样 `published`。首批 8 条只看了状态没查回执，
+> 事后发现**播客自定义封面 4/4 静默失败**（cover_exception，线上是平台截的首帧）、
+> **话题 7/8 全空**（视频发布话题失配的在产缺陷波及）。核对项：`applied.components.cover.status`、
+> `topics_applied`、声明回执——`error`/空值就要处置，别拿 `published` 当全绿。
+>
 > 📹 **视频/播客笔记的发布**（2026-08-07 实战跑通，四号齐发 + 播客试水）：
 > `publish_note.py` **目前只支持图文**（无 `--video`/`--audio` 参数），视频与播客要**直接按
 > server 契约调 `POST /api/publish-jobs`**：`video`（或 `audio`）传**服务器侧文件路径**，

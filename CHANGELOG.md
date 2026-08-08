@@ -18,6 +18,21 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.83.1] — 2026-08-08
+
+### xhs：guide 前置自查成为硬规矩 + applied 逐项核对（首批发布回查实翻车）
+
+- **动手前先 `GET /api/guide`**（server 2026-08-08 定规，指引文档已入 NBDpsy/文档）：
+  capabilities/changelog/known_limitations/meta 四段，契约以实时返回为准不以记忆为准；
+  breaking 逐条看；known_limitations 动手前必读。
+- **`published` ≠ 组件全成**：封面/话题/原创声明失败不阻断发布。首批 8 条回查发现
+  播客自定义封面 4/4 静默失败（cover_exception）、话题 7/8 全空（在产缺陷波及）——
+  发布后必须逐项核对 `applied.components.cover.status` / `topics_applied` / 声明回执。
+- 存量修复：8 条 3:4 换封面任务已在跑（note-components cover，08-08 上线并真号首验）；
+  话题补挂待 server 能力（note-components 尚无 topics 参数）。
+
+---
+
 ## [1.83.0] — 2026-08-08
 
 ### text-to-video：成品包扩成三平台通用（视频号 / 小红书 / 公众号）+ 上传优化转码
