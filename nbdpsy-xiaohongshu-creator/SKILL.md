@@ -670,7 +670,7 @@ PUT 成功、`dropped_keys` 也确认过之后两件事：① **把 `00-overview
 - **播客合集**：发播客页的栏目实体（如「NBDpsy心理会客厅」），`POST .../podcast-collections` 建的是这种，**不出现在 picker 列表里**。两套系统同名互不可见，平台**同名不去重**。
 
 **四个动作**（全部异步 202+轮询终态 done/error，均起真浏览器）：
-1. **建笔记合集**：`POST /api/accounts/{id}/note-collections`，body `{name(≤20字), description(≤50字)}`——**无封面字段**（平台不收）；回执带 picker 系统 `collection_id`（创建 API 直取）；同名会被建前拦截。创建**即时落库**，不依赖任何笔记提交。
+1. **建笔记合集**：`POST /api/accounts/{id}/note-collections`，body `{name(≤20字), description(≤50字), carrier_note_id(必填)}`——**无封面字段**（平台不收）；回执带 picker 系统 `collection_id`（创建 API 直取）；同名会被建前拦截。**载体笔记（carrier_note_id）三条语义**（2026-08-10 真号实证）：①平台建集入口在笔记编辑器弹层里，必须指定该号一篇**已发布、公开、图文**笔记当入口载体（视频/播客载体未实证勿用）；②`joined_carrier=0`——载体**不会**被自动挂进新合集，纯创建语义、载体零改动，选谁都无污染风险；③创建**即时落库**（独立 API，不依赖笔记提交；同号多合集复用同一载体未实证，稳妥先跑 1 单确认）。
 2. **挂载**：`POST /api/accounts/{id}/note-components`，body `{note_id, collection_id, collection_name}`——name 是辅助确认字段必带（已在目标合集→`skipped` 视为成功=**幂等安全**）。判据认 `applied.collection:true` 回读，不认 202。
 3. **移出**：同端点传 `{note_id, remove_collection_id, remove_collection_name}`（name 强烈建议带，比对不上绝不点删）；本就不在→skipped 幂等。
 4. **换合集=两步链**：`remove_collection_id` 与 `collection_id` **同传直接 422**——先发移出单、终态确认后再发挂入单。⚠️ 中间态（已移出未挂入）必须补完，别丢单。
@@ -680,6 +680,7 @@ PUT 成功、`dropped_keys` 也确认过之后两件事：① **把 `00-overview
 - **会话闸**：每号每小时 **12 个浏览器会话**（operator 档）。批量挂载全量投放进队列即可（queued 别重试），30 单/号约 3 小时消化；轮询看 `queue.blocked_by=session_cap` 与 `window_resets_at`。
 - **失败处置**：`collection_not_verified` 有时序抖动类（幂等重试约 1/3 转绿）；两跑复现的看笔记本身——**仅自己可见的笔记合集绑定会被平台静默丢弃**、非发布态笔记 `editor_not_ready`，这两类先查笔记状态再说；带引用组件的笔记弹层渲染慢有竞速失败（server 侧修复中）。
 - 发布时挂合集只认 `--collection-id`（发布端点没有 name 字段，传了被静默丢弃）；已发布补挂才有 collection_name。
+- **直调 API 必须用 requests 或显式带常规 User-Agent**：mcp.nbdpsy.com 前面是 Cloudflare，裸 `urllib` 的默认 UA 会被浏览器签名拦截成 `403 error code: 1010`（不是权限问题，别误判成 apikey 失效）；requests 默认 UA 与 curl 实测均无拦。
 
 #### 🎚️ 信息密度档位（**先定档位、再核算承载力**，2026-07-26 老板定案）
 

@@ -18,6 +18,13 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.86.2] — 2026-08-10
+
+### Fixed（nbdpsy-xiaohongshu-creator）
+
+- 合集工具箱「建笔记合集」补漏必填字段 **`carrier_note_id`**（内容线实跑 422 反馈；1.84.0 成文时漏写）：载体三条语义入文——须为该号已发布公开图文笔记（入口载体）、`joined_carrier=0` 载体零改动无污染风险、创建即时落库（多合集复用同载体未实证先跑 1 单）。
+- 新增坑：直调 API 用 requests 或显式带常规 UA——裸 urllib 默认 UA 被 Cloudflare 拦成 `403 error 1010`，易误判为 apikey 失效。
+
 ## [1.86.1] — 2026-08-10
 
 ### Changed（nbdpsy-xiaohongshu-creator）
