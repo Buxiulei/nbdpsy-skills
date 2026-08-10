@@ -18,6 +18,19 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.84.0] — 2026-08-10
+
+### Added（nbdpsy-xiaohongshu-creator）
+
+- **合集运维工具箱**（SKILL.md 议题合集章节新增，2026-08-09/10 全链真号验证）：
+  - 两套合集系统定案：笔记合集(picker)≠播客合集，同名互不可见、平台不去重；
+  - 四动作契约：建笔记合集（`POST /note-collections`，name≤20/desc≤50/无封面）、挂载（`applied.collection` 回读判据+幂等 skipped）、移出（name 比对不上绝不点删）、换合集两步链（remove 与 add 同传 422，中间态必须补完）；
+  - 硬约束：一篇笔记只能属一个合集（`collection_already_in_another` 防呆）；会话闸 12 会话/号/时；失败三类处置（时序抖动重试/私密笔记绑定被静默丢/非发布态 editor_not_ready）。
+
+### Changed
+
+- 议题合集章节补 2026-08-10 实况注记：四号现挂临时名合集（不符 2026-08-07 病症词议题池定案），老板已明确要求按病症建合集，附重构指引（属内容运营 agent 职责）。
+
 ## [1.83.1] — 2026-08-08
 
 ### xhs：guide 前置自查成为硬规矩 + applied 逐项核对（首批发布回查实翻车）
