@@ -87,6 +87,18 @@ def scan_warnings(numbered_lines: list, raw_text: str) -> list:
                 "guidance": "元指令一律放冒号前的括号内，冒号之后只留要画的文字；"
                             "破折号/分号后的说明会被画进图。",
             })
+    # 标题以「的你」结尾：公众号腔标记，实测浏览 5.3% vs 大盘 10.7%（2026-08-10 数据判据）
+    for i, line in enumerate(raw_text.splitlines(), start=1):
+        m = re.match(r"^(?:#+\s*)?(?:标题|发布标题)[:：]\s*(.+)$", line.strip())
+        title = m.group(1).strip() if m else None
+        if title and title.rstrip("！？。!?").endswith("的你"):
+            warnings.append({
+                "rule": "标题的你结尾",
+                "line": i,
+                "text": line.strip()[:120],
+                "guidance": "名词化第二人称结尾是公众号腔标记（实测跑输大盘一半）——"
+                            "改成有具体主语和具体事的句子（见 xiaohongshu-spec 冒号右侧三问）。",
+            })
     return warnings
 
 
