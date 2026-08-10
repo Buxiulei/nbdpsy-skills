@@ -18,6 +18,14 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.86.3] — 2026-08-10
+
+### Fixed（nbdpsy-xiaohongshu-creator）
+
+- **建笔记合集异步语义修正**（内容线实战反馈）：REST 返回 `{job_id,status:queued}` 非同步 collection_id（1.86.2 的「创建 API 直取」是把 server 浏览器层内部实现误写成 REST 契约）；轮询端点 `GET /api/note-collections/{job_id}`；最稳核验=隔窗查 `--collections` 比对名字。
+- **新增红线**：「返回值解析失败」≠「操作失败」——非幂等写操作绝不能据此触发重试（实战反面教材：异步回执被误判失败致同一合集 4 连提，靠同名拦截兜底）。
+- **载体约束收紧+复用定案**：载体须为「不在任何合集里」的已发布公开图文，优先老/冷门笔记（近期科普贴大概率已被挂载、人工挂载台账不可见）；同号多合集复用同一载体已实证可行。
+
 ## [1.86.2] — 2026-08-10
 
 ### Fixed（nbdpsy-xiaohongshu-creator）
