@@ -18,6 +18,12 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.87.1] — 2026-08-10
+
+### Fixed（nbdpsy-xiaohongshu-creator）
+
+- `publish_note.py` 配图收集**按同名去重**（同页 png+jpg 双格式只取一份，优先 jpg，去重时 stderr 告警）——此前 `--images-dir` 全收会把 7 页笔记发成 14 张且零告警（2026-08-10 实战险情，6 篇差点带重复页发出）。
+
 ## [1.87.0] — 2026-08-10
 
 ### Added（nbdpsy-xiaohongshu-creator，运营总管定案+证伪检验批）

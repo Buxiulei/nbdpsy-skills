@@ -199,13 +199,27 @@ def stage_media(path: Path, kind: str) -> str:
 
 
 def collect_images(note_path: Path, images_dir):
-    """默认取笔记同目录 images/<note名>/ 下的图片，按文件名排序（P01→PNN 即页序）。"""
+    """默认取笔记同目录 images/<note名>/ 下的图片，按文件名排序（P01→PNN 即页序）。
+
+    同名不同扩展名视为同一页的两种格式（出图脚本常同时落 png 原图+jpg 压缩图），
+    只取一份——否则一篇 7 页会被发成 14 张且零告警（2026-08-10 实战险情）。
+    同页多格式时优先 jpg/jpeg（体积小、上传快），其次 png/webp。
+    """
     d = Path(images_dir) if images_dir else note_path.parent / "images" / note_path.stem
     if not d.is_dir():
         raise ValueError(f"配图目录不存在: {d}（先出图，或用 --images-dir 指定）")
-    paths = sorted(p for p in d.iterdir() if p.suffix.lower() in IMAGE_EXTS)
+    prefer = {".jpg": 0, ".jpeg": 1, ".png": 2, ".webp": 3}
+    by_stem = {}
+    for p in sorted(p for p in d.iterdir() if p.suffix.lower() in IMAGE_EXTS):
+        old = by_stem.get(p.stem)
+        if old is None or prefer[p.suffix.lower()] < prefer[old.suffix.lower()]:
+            by_stem[p.stem] = p
+    paths = sorted(by_stem.values())
     if not paths:
         raise ValueError(f"配图目录里没有图片: {d}")
+    dropped = sum(1 for p in d.iterdir() if p.suffix.lower() in IMAGE_EXTS) - len(paths)
+    if dropped:
+        print(f"⚠️ 配图目录存在同页多格式，已按 jpg>png>webp 去重：取 {len(paths)} 张、忽略 {dropped} 张重复格式", file=sys.stderr)
     return paths
 
 
