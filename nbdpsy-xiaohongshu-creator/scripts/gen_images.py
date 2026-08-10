@@ -205,9 +205,16 @@ def create_job(api_base, key, prompts, anchor_url):
         raise ValueError(f"单次最多 99 条提示词（服务端硬上限，超出 422），本次 {len(prompts)} 条——用 --pages 分两次提交")
     resp = send_request("POST", f"{api_base}/api/op/consistent-images", key, payload, timeout=60)
     if resp.status_code >= 400:
+        # 5xx（含 Cloudflare 530 源站不可达）：请求没入队、job_id 为 null——
+        # 服务端零状态，直接重试提交是安全的，不会重复出图
+        if resp.status_code >= 500:
+            raise ValueError(f"{api_error(resp)}\n（HTTP {resp.status_code}：任务未入队，重试提交安全、不会重复出图）")
         raise ValueError(api_error(resp))
     data = resp.json()
-    return data.get("job_id"), data.get("session_id")
+    jid = data.get("job_id")
+    if not jid:
+        raise ValueError("服务端 200 但未返回 job_id（任务未入队）——重试提交安全、不会重复出图")
+    return jid, data.get("session_id")
 
 
 def poll_job(api_base, key, session_id, job_id, timeout, interval=10.0, max_transient=3):

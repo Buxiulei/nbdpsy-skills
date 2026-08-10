@@ -36,6 +36,59 @@ YINGGUANG = (
     r"(免费|限时)(领取|名额)|免费测评名额|私信我领|扫码领|评论区扣\d"
 )
 
+# ── warn 级检测（不拉低 ok，输出到 warnings[] 供人工裁决）────────────────────
+# 裸「最」：JIXIAN 只收固定搭配，裸「最」曾致假绿（2026-08-10 内容线实战：
+# 「咨询和给建议最不一样的地方」机检全绿、烧进图片后不可逆）。裸「最」不能一刀
+# fail（方位/时间/引语大量合法），故 warn + 三级人工裁决口径（见 BARE_ZUI_GUIDANCE）。
+# 白名单：方位/时间/固定词/数量限定——这些组合直接豁免不出 warn，减噪。
+BARE_ZUI_WHITELIST = r"最近|最终|最后|最初|最先|最早|最新|最左|最右|最上|最下|最底|最顶|最前|最外|最内|最中间|最坏情况|最多|最少|最低限度"
+BARE_ZUI_GUIDANCE = (
+    "裸「最」需人工三级裁决：🔴对自家服务/内容的最高级断言→必改(广告法风险)；"
+    "🟡对心理现象的最高级(最隐蔽/最伤人)→建议软化；"
+    "⚪引语原文逐字引用→豁免(改了变错引)。方位/时间/固定词已白名单滤除。"
+)
+
+# 提示词元指令残留：`逐字写出这行字：` 之后同一行再出现破折号/分号引导的补充说明，
+# 出图会把说明一并画进主标题（2026-08-10 内容线实战翻车）。规范＝元指令放冒号前
+# 括号内，冒号后只留要画的文字（illustration-spec.md）。
+PROMPT_META_TRAIL = re.compile(r"逐字写出这行字[:：].*[—;；]")
+
+
+def scan_warnings(numbered_lines: list, raw_text: str) -> list:
+    """warn 级扫描：裸「最」（围栏外区块行）+ 提示词元指令残留（全文含围栏内）。
+
+    返回 [{"rule", "line", "text", "guidance"}, ...]；不影响 ok。
+    """
+    warnings = []
+    zui_pat = re.compile(r"最")
+    white_pat = re.compile(BARE_ZUI_WHITELIST)
+    jixian_pat = re.compile(JIXIAN)
+    for line_no, line in numbered_lines:
+        if not zui_pat.search(line):
+            continue
+        if jixian_pat.search(line):
+            continue  # 已被极限词 fail 命中，不重复 warn
+        # 抠掉白名单组合后仍残留「最」才 warn
+        residue = white_pat.sub("", line)
+        if "最" in residue:
+            warnings.append({
+                "rule": "裸最(需人工裁决)",
+                "line": line_no,
+                "text": line.strip(),
+                "guidance": BARE_ZUI_GUIDANCE,
+            })
+    # 提示词元指令残留：提示词在代码围栏内，须扫原始全文
+    for i, line in enumerate(raw_text.splitlines(), start=1):
+        if PROMPT_META_TRAIL.search(line):
+            warnings.append({
+                "rule": "提示词元指令残留",
+                "line": i,
+                "text": line.strip()[:120],
+                "guidance": "元指令一律放冒号前的括号内，冒号之后只留要画的文字；"
+                            "破折号/分号后的说明会被画进图。",
+            })
+    return warnings
+
 
 def remove_fenced_blocks(text: str) -> str:
     """移除所有 ``` 围栏块（用于危机声明检查，不关心行号）。"""
@@ -204,12 +257,15 @@ def main():
         scan_target = numbered_lines
 
     violations = scan_violations(scan_target)
+    warnings = scan_warnings(scan_target, text)
 
     # crisis_required=False（--no-crisis）时，危机声明缺失不再拉低 ok；违禁词照旧一票否决。
+    # warnings 不拉低 ok——warn 是人工裁决信号，不是机器判死。
     ok = len(violations) == 0 and (crisis_ok or not crisis_required)
 
     result = {
         "violations": violations,
+        "warnings": warnings,
         "crisis_ok": crisis_ok,
         "crisis_required": crisis_required,
         "ok": ok,
