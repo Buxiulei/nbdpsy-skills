@@ -1187,6 +1187,18 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
 >   写成只认 `completed|success` 则永远等不到（这两个坑同一天各踩一次）。
 > - 视频笔记同账号串行、跨账号并行；11 分钟级视频的 `publishing` 阶段可长达十几分钟，别当卡死。
 > - 一稿多号发布时**标题/正文/标签必须逐号差异化**（同素材换切入角度），视频文件可复用同一路径。
+>
+> 📡 **广播发布（server 0.22.0「代管账号计划」，2026-08-11 老板直令）**：`POST /api/publish-jobs` 的
+> `account_id` 已转**可选**——**省略＝广播到全部代管号**（现役 1/2/5/6/7/8 六号；9-12 水军号隔离在外，
+> 全景查 `GET /api/managed-accounts`），响应变 `{broadcast:true, jobs:[{account_id,job_id}…]}` 逐号轮询、
+> 各受会话闸；显式传 account_id＝原单号行为不变。**老板口径：以后发笔记除非特指单号，默认全代管齐发**。
+> 两条硬边界：①**广播时 ⛔ 显式传 `quoted_note_id`**（422——跨号引用各号目标不同，用 `related_counselor`
+> 让 server 逐号推导）；②广播≠豁免逐号差异化——标题/正文/标签仍须按上一条差异化后逐号提交，
+> 或明确接受同文（转化类内容慎同文）。
+> ⚠️ 同期上线**每日淘汰机制**：每号笔记台账上限 100，超限按五指标（浏览/赞/藏/评/增粉）加权淘汰
+> 最低者（7 天宽限/单日单号封顶 5/无指标不删/审计流水 `GET /api/retention-runs`）——**发得越多≠留得越多**，
+> 低质笔记会被自动清退，量产前先想清楚这篇能不能活过指标线。台账口径与平台真值有双向漂移
+> （人工删/手工发），差得多先跑 `note-ledger-syncs`。契约细节以 `GET /api/manifest` 实时为准。
 
 先探测本机有没有小红书发布凭据：`python3 {SKILL_DIR}/scripts/nbdpsy_common.py secret ensure NBDPSY_XHS_API_KEY`
 （无输出 = 已配置；输出键名 = 缺。**绝不用 `secret get` 探测**——它会把密钥值打进 stdout/对话转录）。

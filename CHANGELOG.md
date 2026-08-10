@@ -18,6 +18,13 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.88.1] — 2026-08-11
+
+### Changed（nbdpsy-xiaohongshu-creator，对接 server 0.22.0 代管账号计划）
+
+- 发布契约更新：`publish-jobs` 的 `account_id` 转可选——**省略＝广播全部代管号**（1/2/5/6/7/8，水军号隔离），老板口径「除非特指默认全代管齐发」；广播禁显式 `quoted_note_id`（422，跨号引用走 related_counselor 推导）；广播不豁免逐号差异化。
+- 每日淘汰机制知悉入文：每号台账上限 100、五指标加权淘汰最低者（7 天宽限/日封顶 5/审计流水）——量产提示「发得越多≠留得越多」；台账口径双向漂移先跑 note-ledger-syncs。
+
 ## [1.88.0] — 2026-08-10
 
 ### Added（nbdpsy-xiaohongshu-creator，封面版式工程——四版实战对照+三路调研 47 条定案）
