@@ -596,32 +596,57 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
     sents = _split_sentences(text)
     tmp = tempfile.mkdtemp(prefix="tts_timed_")
     try:
+        # ⚠️ 拼接必须走 wav/PCM 域（2026-08-11 修）：mp3 逐段 concat 每段漂 ~46ms 且随句数累积
+        # （8 句实测累计 0.41s，字卡/字幕越到后面越早于语音）——与播客线 2026-08-07 定性的
+        # 死路同因。正解＝逐段解码为统一采样率 PCM，按**样本数**拼接并构造 cues，最后一次性
+        # 编码输出（encoder delay 只发生一次、不随句数累积）。
+        import wave
+        SR = 32000
         gap = max(0.0, gap)
-        silence = str(Path(tmp) / "gap.mp3")
-        if gap and len(sents) > 1 and not _make_silence(silence, gap):
-            return {"success": False, "error": "句间静音生成失败"}
-        parts, cues, t = [], [], 0.0
+        gap_frames = int(round(gap * SR))
+
+        def _mp3_to_pcm(mp3_path: str) -> bytes:
+            wav_path = mp3_path + ".wav"
+            p = subprocess.run(["ffmpeg", "-y", "-i", mp3_path, "-ar", str(SR), "-ac", "1",
+                                "-sample_fmt", "s16", wav_path],
+                               capture_output=True)
+            if p.returncode != 0:
+                raise RuntimeError(f"解码失败: {p.stderr.decode()[-200:]}")
+            with wave.open(wav_path, "rb") as w:
+                return w.readframes(w.getnframes())
+
+        pcm_chunks, cues, frames_t = [], [], 0
         for i, s in enumerate(sents):
-            if i and gap:
-                parts.append(silence)
-                t += gap
+            if i and gap_frames:
+                pcm_chunks.append(b"\x00\x00" * gap_frames)
+                frames_t += gap_frames
             part = str(Path(tmp) / f"p{i:03d}.mp3")
             # 发音别名只进合成文本；cue 存原文（字幕要显示 NBDpsy 而不是拆开的字母）
             r = gen_one(_speakable(s), part, engine=engine, voice=voice, rate=rate, speed=speed,
                         emotion=emotion, emotion_scale=emotion_scale, model=model)
             if not r.get("success"):
                 return {"success": False, "error": f"句{i}合成失败：{r.get('error')}"}
-            d = ffprobe_duration(part)
+            pcm = _mp3_to_pcm(part)
+            n = len(pcm) // 2
             # 一句 = 一条字幕（2026-08-07 老板定案：句号翻页、逗号换行）。
             # 句内逗号的换行由 compose 渲染层处理，这里保留原文标点作为换行依据。
-            cues.append({"text": s.strip(), "start": round(t, 3), "end": round(t + d, 3)})
-            t += d
-            parts.append(part)
+            cues.append({"text": s.strip(), "start": round(frames_t / SR, 3),
+                         "end": round((frames_t + n) / SR, 3)})
+            frames_t += n
+            pcm_chunks.append(pcm)
         Path(out).parent.mkdir(parents=True, exist_ok=True)
-        if len(parts) == 1:
-            shutil.copy(parts[0], out)
-        elif not _concat_mp3(parts, out):
-            return {"success": False, "error": "拼接句子音频失败"}
+        total_wav = str(Path(tmp) / "total.wav")
+        with wave.open(total_wav, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+            for c in pcm_chunks:
+                w.writeframes(c)
+        enc = subprocess.run(["ffmpeg", "-y", "-i", total_wav, "-codec:a", "libmp3lame",
+                              "-b:a", "128k", str(out)], capture_output=True)
+        if enc.returncode != 0:
+            return {"success": False, "error": f"编码输出失败: {enc.stderr.decode()[-200:]}"}
+        # 渲染/混音场景优先用无损 wav（连全局 encoder delay 都没有）
+        wav_sidecar = str(out) + ".wav"
+        shutil.copy(total_wav, wav_sidecar)
         dur = ffprobe_duration(out)
         cues_path = str(out) + ".cues.json"
         Path(cues_path).write_text(

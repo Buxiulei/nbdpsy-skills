@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>字卡短片 v5 · 手作拼贴</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1080px; height:1920px; overflow:hidden; }
+  body{
+    background:#F2E9DB;
+    font-family:"Noto Sans CJK SC","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+    letter-spacing:0; position:relative; color:#33302B;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ══ 纸底：米白纸纹 + 纤维 + 水痕 ══ */
+  #paper{ position:absolute; inset:-40px; z-index:0; background:#F2E9DB;
+    background-image:
+      radial-gradient(circle 420px at 16% 10%, rgba(188,158,108,.09), rgba(188,158,108,0) 72%),
+      radial-gradient(circle 480px at 86% 30%, rgba(174,144,98,.075), rgba(174,144,98,0) 74%),
+      radial-gradient(circle 520px at 26% 74%, rgba(184,154,104,.085), rgba(184,154,104,0) 72%),
+      radial-gradient(circle 440px at 94% 90%, rgba(168,138,94,.07), rgba(168,138,94,0) 74%),
+      radial-gradient(circle 360px at 62% 52%, rgba(196,168,120,.06), rgba(196,168,120,0) 76%),
+      repeating-linear-gradient(0deg, rgba(120,96,60,.035) 0 1px, transparent 1px 4px),
+      repeating-linear-gradient(90deg, rgba(120,96,60,.028) 0 1px, transparent 1px 5px);
+  }
+  #grain{ position:absolute; inset:0; z-index:8; pointer-events:none; opacity:.07;
+    background-image:radial-gradient(#4A3B24 1px, transparent 1.15px); background-size:5px 5px;
+    mix-blend-mode:multiply; }
+  #vig{ position:absolute; inset:0; z-index:9; pointer-events:none;
+    background:radial-gradient(ellipse 74% 62% at 50% 46%, rgba(0,0,0,0) 60%, rgba(92,68,38,.20) 100%); }
+  #flash{ position:absolute; inset:0; z-index:10; pointer-events:none; background:#FFFDF6; opacity:0; }
+
+  #stage{ position:absolute; inset:0; z-index:2; }
+
+  /* ══ 通用手作元件 ══ */
+  .scrap{ position:absolute; opacity:0;
+    box-shadow:0 16px 32px rgba(94,70,40,.16), 0 3px 6px rgba(94,70,40,.13); }
+  .white{ background:#FCF8F1; }
+  .kraft{ background:#DCC49F; background-image:radial-gradient(rgba(118,88,52,.10) 1px, transparent 1.35px);
+    background-size:6px 6px; }
+  .grid{ background:#F3F5EF;
+    background-image:linear-gradient(rgba(118,140,112,.20) 1px, transparent 1px),
+                     linear-gradient(90deg, rgba(118,140,112,.20) 1px, transparent 1px);
+    background-size:40px 40px; }
+  .torn{ box-shadow:none; filter:drop-shadow(0 12px 18px rgba(94,70,40,.22));
+    clip-path:polygon(0% 0%,100% 0%,100% 87%,96% 96%,91% 88%,86% 97%,80% 89%,74% 98%,68% 90%,62% 97%,
+      56% 89%,50% 97%,44% 90%,38% 98%,32% 90%,26% 97%,20% 89%,14% 96%,8% 89%,4% 95%,0% 88%); }
+
+  .txt{ font-weight:700; line-height:1.55; color:#33302B; }
+  .kraft .txt{ color:#463724; }
+  .em{ color:#B4362B; }
+  .l2{ display:inline-block; opacity:0; }
+
+  .tape{ position:absolute; width:168px; height:50px; z-index:3;
+    background:repeating-linear-gradient(112deg, rgba(255,255,255,.32) 0 6px, rgba(255,255,255,0) 6px 14px),
+               linear-gradient(180deg, rgba(234,215,171,.82), rgba(212,190,140,.74));
+    border-left:1px solid rgba(158,136,94,.30); border-right:1px solid rgba(158,136,94,.30);
+    box-shadow:0 3px 7px rgba(90,68,38,.15); }
+  .tape.tl{ left:-48px; top:-22px; transform:rotate(-38deg); }
+  .tape.tr{ right:-48px; top:-22px; transform:rotate(38deg); }
+  .tape.tc{ left:50%; margin-left:-84px; top:-26px; transform:rotate(-2.2deg); }
+
+  .dot{ position:absolute; border-radius:50%;
+    box-shadow:0 3px 7px rgba(90,68,38,.22), inset 0 -5px 9px rgba(0,0,0,.07); }
+
+  .mk{ position:relative; display:inline-block; }
+  .mk > svg{ position:absolute; overflow:visible; pointer-events:none; z-index:2; }
+  .ch{ display:inline-block; }
+
+  /* ══ 常驻散件（只落在页边，永不压字） ══ */
+  #deco{ position:absolute; inset:0; z-index:1; }
+
+  /* ══ c0 ══ */
+  #c0date{ left:96px; top:250px; padding:14px 30px; font-size:38px; font-weight:700; color:#463724; }
+  #c0note{ left:96px; top:400px; width:640px; padding:32px 40px; font-size:44px; }
+  #polaroid{ position:absolute; left:545px; top:590px; width:420px; padding:26px 26px 0; background:#FDFBF6; opacity:0;
+    box-shadow:0 20px 40px rgba(94,70,40,.24), 0 5px 10px rgba(94,70,40,.15); }
+  #polaroid .ph{ width:368px; height:300px; position:relative;
+    background:linear-gradient(158deg,#8E9AA2 0%,#5F6C76 60%,#4C5862 100%); }
+  #polaroid .cap{ height:150px; display:flex; align-items:center; justify-content:center;
+    font-size:96px; font-weight:700; color:#332F28; }
+  #c0main{ left:80px; top:1180px; width:920px; padding:54px 58px; font-size:66px; }
+
+  /* ══ c1 ══ */
+  #c1a{ left:80px; top:330px; width:920px; padding:54px 58px; font-size:66px; }
+  #c1b{ left:120px; top:1000px; width:880px; padding:50px 54px; font-size:62px; }
+  .frm{ position:absolute; width:200px; padding:12px 12px 0; background:#FDFBF6; opacity:0;
+    box-shadow:0 9px 20px rgba(94,70,40,.20); }
+  .frm .ph{ height:190px; background:linear-gradient(158deg,#A2ADB3,#6C7780); }
+  .frm .cap{ height:44px; }
+
+  /* ══ c2 ══ */
+  .slip{ position:absolute; height:92px; padding:26px 30px; opacity:0; }
+  .dsh{ display:block; height:12px; border-radius:6px; background:rgba(90,80,64,.16); margin-bottom:10px; }
+  #c2a{ left:80px; top:740px; width:920px; padding:54px 58px; font-size:66px; }
+  #c2b{ left:160px; top:1030px; width:780px; padding:54px 58px; font-size:66px; }
+
+  /* ══ c3 ══ */
+  #c3a{ left:80px; top:330px; width:620px; padding:54px 58px; font-size:66px; }
+  #c3b{ left:120px; top:620px; width:880px; padding:54px 58px; font-size:66px; }
+  #duty{ left:190px; top:950px; width:700px; height:420px; }
+
+  /* ══ c4 印章 ══ */
+  #stampShadow{ position:absolute; left:180px; top:718px; width:720px; height:452px; opacity:0;
+    background:rgba(116,86,52,.22); border-radius:26px; filter:blur(24px); }
+  #stamp{ position:absolute; left:160px; top:690px; width:760px; height:500px; opacity:0; }
+  #stamp .box{ position:absolute; inset:0; border:14px solid #B4362B; border-radius:16px; }
+  #stamp .box::after{ content:""; position:absolute; inset:15px; border:5px solid #B4362B; border-radius:8px; }
+  #stamp .tx{ position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; color:#B4362B; }
+  #stamp .a{ font-size:92px; font-weight:700; line-height:1.1; }
+  #stamp .b{ font-size:224px; font-weight:700; line-height:1.02; margin-top:10px; }
+  /* 印泥不匀：只用纸色细斑点（与纸底同色，落在纸上不可见，落在红上才显出斑驳） */
+  #stamp .ink{ position:absolute; inset:-8px; pointer-events:none;
+    background-image:
+      radial-gradient(rgba(242,233,219,.95) 1.5px, transparent 1.9px),
+      radial-gradient(rgba(242,233,219,.55) 1.1px, transparent 1.6px),
+      radial-gradient(rgba(242,233,219,.38) 2.2px, transparent 2.8px);
+    background-size:8px 8px, 13px 13px, 29px 31px;
+    background-position:0 0, 4px 3px, 11px 7px; }
+  .inkdot{ position:absolute; border-radius:50%; background:#B4362B; opacity:0; }
+
+  /* ══ c5 雷达 ══ */
+  #radar{ position:absolute; left:240px; top:250px; width:600px; height:600px; }
+  #radar svg{ position:absolute; inset:0; width:600px; height:600px; overflow:visible; }
+  #sweep{ position:absolute; left:20px; top:20px; width:560px; height:560px; border-radius:50%;
+    background:conic-gradient(from -14deg, rgba(180,54,43,.22), rgba(180,54,43,.04) 62deg, transparent 64deg); }
+  .blip{ position:absolute; border-radius:50%; background:#B4362B; opacity:0; }
+  #c5a{ left:80px; top:960px; width:920px; padding:54px 58px; font-size:66px; }
+  #c5b{ left:200px; top:1350px; width:700px; padding:50px 54px; font-size:62px; }
+
+  /* ══ c6 ══ */
+  #c6a{ left:90px; top:430px; width:700px; padding:54px 58px; font-size:66px; }
+  #c6b{ left:130px; top:900px; width:860px; padding:54px 58px; font-size:64px; }
+  #jz{ display:inline-block; }
+
+  /* ══ c7 信纸 ══ */
+  #c7note{ left:90px; top:280px; width:900px; padding:40px 48px; font-size:46px; }
+  #letter{ left:90px; top:640px; width:900px; height:560px; background:#FCFAF3;
+    background-image:linear-gradient(rgba(112,142,176,.22) 1px, transparent 1px);
+    background-size:100% 125px; background-position:0 268px;
+    box-shadow:0 22px 44px rgba(94,70,40,.20), 0 4px 8px rgba(94,70,40,.12); }
+  #letter .marg{ position:absolute; left:52px; top:0; bottom:0; width:2px; background:rgba(178,80,68,.28); }
+  #letter .fold{ position:absolute; left:0; right:0; height:22px;
+    background:linear-gradient(180deg, rgba(120,95,60,0), rgba(120,95,60,.13), rgba(255,255,255,.5), rgba(120,95,60,0)); }
+  #letter .qm{ position:absolute; left:62px; top:14px; font-size:112px; line-height:1; color:#B4362B; opacity:0; }
+  #quote{ position:absolute; left:70px; top:150px; right:70px;
+    font-size:78px; line-height:1.6; font-weight:700; color:#33302B; }
+  #sticker{ position:absolute; left:706px; top:1084px; width:250px; height:96px; opacity:0;
+    background:linear-gradient(180deg,#E7C566,#D8AF48); border-radius:14px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:38px; font-weight:700; color:#4A3B18; letter-spacing:2px;
+    box-shadow:0 8px 18px rgba(94,70,40,.28), inset 0 -6px 12px rgba(0,0,0,.08); }
+
+  /* ══ 落款 + 进度 ══ */
+  #brand{ position:absolute; left:0; right:0; bottom:150px; text-align:center; z-index:11;
+    font-size:38px; font-weight:700; color:#6B5A42; opacity:0; }
+  #brand .lat{ letter-spacing:3px; }
+  #prog{ position:absolute; left:96px; right:96px; bottom:96px; height:14px; z-index:11;
+    background:repeating-linear-gradient(90deg, rgba(96,76,50,.24) 0 11px, rgba(96,76,50,0) 11px 22px);
+    border-radius:7px; }
+  #bar{ position:absolute; left:0; top:-2px; height:18px; width:100%; transform-origin:left; transform:scaleX(0);
+    border-radius:4px;
+    background:repeating-linear-gradient(112deg, rgba(255,255,255,.34) 0 5px, rgba(255,255,255,0) 5px 12px),
+               linear-gradient(180deg, #E7D0A0, #D3B478);
+    box-shadow:0 3px 6px rgba(90,68,38,.20); }
+  #pin{ position:absolute; left:-11px; top:-13px; width:24px; height:40px; border-radius:3px;
+    background:linear-gradient(180deg,#C4A375,#A98757); transform:rotate(-8deg);
+    box-shadow:0 3px 6px rgba(90,68,38,.24); }
+
+  .card{ position:absolute; inset:0; opacity:0; z-index:4; }
+</style>
+</head>
+<body>
+
+<div id="paper"></div>
+
+<div id="stage">
+
+  <!-- ══ 常驻散件：只落在页边 ══ -->
+  <div id="deco">
+    <div class="tape" style="left:-34px; top:96px; width:300px; height:56px; transform:rotate(-8deg)"></div>
+    <div class="tape" style="left:812px; top:1656px; width:300px; height:52px; transform:rotate(6deg)"></div>
+    <div id="clipTop" style="position:absolute; left:948px; top:44px; width:70px; height:126px"></div>
+    <div class="dot" style="left:1014px; top:250px; width:26px; height:26px; background:#7C9A78"></div>
+    <div class="dot" style="left:36px; top:1620px; width:32px; height:32px; background:#D08A5E"></div>
+    <div class="dot" style="left:1030px; top:1470px; width:20px; height:20px; background:#E4B84C"></div>
+  </div>
+
+  <!-- ══ c0 晚上十一点 ══ -->
+  <div class="card" id="c0">
+    <div class="scrap kraft" id="c0date" data-rot="-3.5">晚上 11:00</div>
+    <div class="scrap grid" id="c0note" data-rot="-1.8">
+      <div class="tape tl"></div>
+      <div class="txt">今天那个方案，我再改改哈</div>
+    </div>
+    <div id="polaroid" data-rot="5.5">
+      <div class="ph"><div id="bubHost" style="position:absolute; left:84px; top:74px; width:200px; height:150px"></div></div>
+      <div class="cap">嗯。</div>
+    </div>
+    <div class="scrap white" id="c0main" data-rot="1.2">
+      <div class="tape tc"></div>
+      <div id="clipMain" style="position:absolute; left:44px; top:-38px; width:62px; height:112px"></div>
+      <div class="txt">消息发出去，<br><span class="l2" id="c0l2">对方只回了一个<span class="em">「嗯」</span></span></div>
+    </div>
+  </div>
+
+  <!-- ══ c1 过电影 ══ -->
+  <div class="card" id="c1">
+    <div class="scrap white" id="c1a" data-rot="-1.6">
+      <div class="tape tr"></div>
+      <div class="txt">你开始一帧一帧<span class="mk em" id="mkFilm" data-mk="oval">过电影</span>：</div>
+    </div>
+    <div id="c1arrow" style="position:absolute; left:512px; top:544px; width:180px; height:104px"></div>
+    <div class="frm" data-rot="-4"   style="left:104px; top:648px"><div class="ph" style="background:linear-gradient(152deg,#AEB8BD,#6E7982)"></div><div class="cap"></div></div>
+    <div class="frm" data-rot="2.6"  style="left:328px; top:636px"><div class="ph" style="background:linear-gradient(196deg,#98A3AA,#5D6871)"></div><div class="cap"></div></div>
+    <div class="frm" data-rot="-1.6" style="left:552px; top:652px"><div class="ph" style="background:linear-gradient(126deg,#A7B1B6,#66717A)"></div><div class="cap"></div></div>
+    <div class="frm" data-rot="3.4"  style="left:776px; top:640px"><div class="ph" style="background:linear-gradient(168deg,#8E99A1,#525D67)"></div><div class="cap"></div></div>
+    <div class="scrap white" id="c1b" data-rot="2.2">
+      <div class="txt">白天那句话，<br>是不是说错了？</div>
+    </div>
+    <div id="c1q" style="position:absolute; left:884px; top:1316px; width:106px; height:150px"></div>
+  </div>
+
+  <!-- ══ c2 没人接话 ══ -->
+  <div class="card" id="c2">
+    <div class="scrap white slip" data-rot="-3"   style="left:110px; top:320px; width:300px">
+      <i class="dsh" style="width:150px"></i><i class="dsh" style="width:88px"></i></div>
+    <div class="scrap white slip" data-rot="2.6"  style="left:440px; top:424px; width:330px">
+      <i class="dsh" style="width:180px"></i><i class="dsh" style="width:106px"></i></div>
+    <div class="scrap white slip" data-rot="-1.8" style="left:170px; top:528px; width:290px">
+      <i class="dsh" style="width:140px"></i><i class="dsh" style="width:78px"></i></div>
+    <div class="scrap white" id="c2a" data-rot="1.4">
+      <div class="tape tl"></div>
+      <div class="txt">群里没人接话，</div>
+    </div>
+    <div class="scrap kraft" id="c2b" data-rot="-2.2">
+      <div class="txt">你<span class="mk em" id="mkDoubt" data-mk="wave">先怀疑自己</span></div>
+    </div>
+  </div>
+
+  <!-- ══ c3 情绪值班 ══ -->
+  <div class="card" id="c3">
+    <div class="scrap white" id="c3a" data-rot="-2.2">
+      <div class="tape tr"></div>
+      <div class="txt">和人相处，</div>
+    </div>
+    <div class="scrap white" id="c3b" data-rot="1.6">
+      <div class="txt">你总在替对方的情绪<span class="mk em" id="mkDuty" data-mk="oval">值班</span></div>
+    </div>
+    <div class="scrap grid" id="duty" data-rot="2.4"><div class="tape tc"></div></div>
+  </div>
+
+  <!-- ══ c4 这不是多心（印章） ══ -->
+  <div class="card" id="c4">
+    <div id="stampShadow"></div>
+    <div id="stamp">
+      <div class="box"></div>
+      <div class="tx"><div class="a">这不是</div><div class="b">多心</div></div>
+      <div class="ink"></div>
+    </div>
+    <div id="shockHost" style="position:absolute; left:290px; top:690px; width:500px; height:500px; opacity:0"></div>
+    <div id="hitHost" style="position:absolute; left:100px; top:630px; width:880px; height:620px"></div>
+    <div class="inkdot" style="left:146px; top:648px; width:14px; height:14px"></div>
+    <div class="inkdot" style="left:958px; top:702px; width:11px; height:11px"></div>
+    <div class="inkdot" style="left:198px; top:1226px; width:16px; height:16px"></div>
+    <div class="inkdot" style="left:926px; top:1204px; width:10px; height:10px"></div>
+    <div class="inkdot" style="left:548px; top:618px; width:9px; height:9px"></div>
+    <div class="inkdot" style="left:566px; top:1248px; width:13px; height:13px"></div>
+  </div>
+
+  <!-- ══ c5 读脸色雷达 ══ -->
+  <div class="card" id="c5">
+    <div id="radar">
+      <div id="sweep"></div>
+      <div class="blip" style="left:158px; top:198px; width:26px; height:26px"></div>
+      <div class="blip" style="left:392px; top:330px; width:22px; height:22px"></div>
+      <div class="blip" style="left:246px; top:424px; width:24px; height:24px"></div>
+    </div>
+    <div class="scrap white" id="c5a" data-rot="-1.3">
+      <div class="tape tl"></div>
+      <div class="txt">很多人小时候练出来的<br><span class="mk em" id="mkRadar" data-mk="rect">读脸色雷达</span>，</div>
+    </div>
+    <div class="scrap kraft" id="c5b" data-rot="2.4">
+      <div class="txt">一开就是二十年</div>
+    </div>
+  </div>
+
+  <!-- ══ c6 当年保护 → 现在紧张 ══ -->
+  <div class="card" id="c6">
+    <div class="scrap kraft torn" id="c6a" data-rot="-2.4">
+      <div class="txt">它当年保护过你，</div>
+    </div>
+    <div id="shieldHost" style="position:absolute; left:830px; top:452px; width:150px; height:162px"></div>
+    <div id="c6arrow" style="position:absolute; left:400px; top:640px; width:300px; height:250px"></div>
+    <div class="scrap white" id="c6b" data-rot="1.8">
+      <div class="tape tr"></div>
+      <div class="txt">现在却让你替所有人<span class="em" id="jz">紧张</span></div>
+    </div>
+    <div id="arcHost" style="position:absolute; left:906px; top:928px; width:80px; height:130px"></div>
+  </div>
+
+  <!-- ══ c7 信纸金句 ══ -->
+  <div class="card" id="c7">
+    <div class="scrap kraft" id="c7note" data-rot="-1.6">
+      <div class="tape tl"></div>
+      <div class="txt">下次脑补启动的那一刻，<br><span class="l2" id="c7l2">试着叫出它的名字：</span></div>
+    </div>
+    <div class="scrap" id="letter" data-rot="0.9">
+      <div class="marg"></div>
+      <div class="fold" style="top:176px"></div>
+      <div class="fold" style="top:368px"></div>
+      <div class="qm">「</div>
+      <div id="quote">我的雷达，<br>还在用<span class="mk em" id="mkOld" data-mk="wave">旧方式</span>保护我</div>
+    </div>
+    <div id="sticker" data-rot="-9">NBDpsy</div>
+  </div>
+
+</div>
+
+<div id="grain"></div>
+<div id="vig"></div>
+<div id="flash"></div>
+<div id="brand"><span class="lat">NBDpsy</span> 心理科普</div>
+<div id="prog"><i id="bar"></i><b id="pin"></b></div>
+
+<script src="gsap.min.js"></script>
+<script src="SplitText.min.js"></script>
+<script src="DrawSVGPlugin.min.js"></script>
+<script src="CustomEase.min.js"></script>
+<script>
+gsap.registerPlugin(SplitText, DrawSVGPlugin, CustomEase);
+
+const CUES = __CUES__;
+const TAIL = 1.8;
+const total = CUES[CUES.length - 1].end + TAIL;
+const tl = gsap.timeline({ paused: true });
+
+/* 手写笔触 ease：起笔快、行笔顿一下、收笔稳 */
+CustomEase.create("pen", "M0,0 C0.12,0.36 0.2,0.68 0.36,0.8 0.52,0.92 0.6,0.9 0.72,0.94 0.84,0.98 0.9,1 1,1");
+
+const $  = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const NS = "http://www.w3.org/2000/svg";
+const node = e => (typeof e === "string" ? document.querySelector(e) : e);
+const rotOf = e => parseFloat(node(e).dataset.rot || 0);
+
+/* ══════════ 手绘路径生成（纯确定性公式，无 Math.random / Date.now） ══════════ */
+function handOval(cx, cy, rx, ry, turns, ph, amp){
+  const k = (amp === undefined ? 1 : amp);
+  const N = Math.round(70 * turns), a0 = -0.55 + ph, a1 = a0 + Math.PI * 2 * turns;
+  let d = "";
+  for (let i = 0; i <= N; i++){
+    const a = a0 + (a1 - a0) * i / N;
+    const w = 1 + k * (0.048 * Math.sin(a * 3 + ph * 2.1) + 0.022 * Math.sin(a * 7 + 1.3));
+    const x = cx + rx * w * Math.cos(a) + 2.4 * k * Math.sin(a * 5 + ph);
+    const y = cy + ry * w * Math.sin(a) + 1.9 * k * Math.cos(a * 6 + ph * 1.7);
+    d += (i ? "L" : "M") + x.toFixed(1) + "," + y.toFixed(1);
+  }
+  return d;
+}
+function handRect(x, y, w, h, ph){
+  const P = [[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y],[x+w*0.2,y-3]];
+  let d = "M" + x.toFixed(1) + "," + y.toFixed(1);
+  for (let s = 0; s < P.length - 1; s++){
+    const a = P[s], b = P[s+1], N = 12;
+    for (let i = 1; i <= N; i++){
+      const t = i / N;
+      const jx = 2.5 * Math.sin(t * 6.1 + s * 2.3 + ph), jy = 2.5 * Math.cos(t * 5.3 + s * 1.7 + ph);
+      d += "L" + (a[0] + (b[0]-a[0]) * t + jx).toFixed(1) + "," + (a[1] + (b[1]-a[1]) * t + jy).toFixed(1);
+    }
+  }
+  return d;
+}
+function handWave(x, y, w, amp, cycles, ph){
+  const N = 76; let d = "";
+  for (let i = 0; i <= N; i++){
+    const t = i / N;
+    const px = x + w * t;
+    const py = y + amp * Math.sin(t * Math.PI * 2 * cycles + ph) + 1.7 * Math.sin(t * 17 + ph);
+    d += (i ? "L" : "M") + px.toFixed(1) + "," + py.toFixed(1);
+  }
+  return d;
+}
+function handLine(x0, y0, x1, y1, ph, amp){
+  const N = 24; let d = "";
+  const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1;
+  const nx = -dy / L, ny = dx / L;
+  for (let i = 0; i <= N; i++){
+    const t = i / N;
+    const off = (amp === undefined ? 2 : amp) * Math.sin(t * 5.4 + ph) * Math.sin(t * Math.PI);
+    d += (i ? "L" : "M") + (x0 + dx * t + nx * off).toFixed(1) + "," + (y0 + dy * t + ny * off).toFixed(1);
+  }
+  return d;
+}
+/* 曲线箭头：返回 [杆, 头] 两条路径 d */
+function handArrow(x0, y0, cx, cy, x1, y1, ph, hs){
+  const N = 44; let d = "", lx = x0, ly = y0, px = x0, py = y0;
+  for (let i = 0; i <= N; i++){
+    const t = i / N, mt = 1 - t;
+    const x = mt*mt*x0 + 2*mt*t*cx + t*t*x1 + 1.7 * Math.sin(t * 9 + ph);
+    const y = mt*mt*y0 + 2*mt*t*cy + t*t*y1 + 1.7 * Math.cos(t * 8 + ph);
+    if (i === N - 1){ lx = x; ly = y; }
+    if (i === N){ px = x; py = y; }
+    d += (i ? "L" : "M") + x.toFixed(1) + "," + y.toFixed(1);
+  }
+  const ang = Math.atan2(py - ly, px - lx), s = hs || 30;
+  const h1x = px - s * Math.cos(ang - 0.42), h1y = py - s * Math.sin(ang - 0.42);
+  const h2x = px - s * Math.cos(ang + 0.42), h2y = py - s * Math.sin(ang + 0.42);
+  const head = "M" + h1x.toFixed(1) + "," + h1y.toFixed(1) +
+               "L" + px.toFixed(1) + "," + py.toFixed(1) +
+               "L" + h2x.toFixed(1) + "," + h2y.toFixed(1);
+  return [d, head];
+}
+/* 把若干 path 塞进一个绝对定位 svg */
+function svgIn(host, w, h, ds, color, sw, style){
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+  svg.style.cssText = "position:absolute;left:0;top:0;width:" + w + "px;height:" + h + "px;overflow:visible;" + (style || "");
+  const out = [];
+  ds.forEach(d => {
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", d); p.setAttribute("fill", "none");
+    p.setAttribute("stroke", color); p.setAttribute("stroke-width", sw);
+    p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(p); out.push(p);
+  });
+  host.appendChild(svg);
+  return out;
+}
+
+/* ══════════ 自建字符切分（保留 .mk / <br> 等子元素，比 SplitText 更可控） ══════════ */
+function splitChars(root){
+  const out = [];
+  (function walk(node){
+    Array.from(node.childNodes).forEach(n => {
+      if (n.nodeType === 3){
+        const frag = document.createDocumentFragment();
+        Array.from(n.nodeValue).forEach(c => {
+          if (c === " "){ frag.appendChild(document.createTextNode(c)); return; }
+          const s = document.createElement("span");
+          s.className = "ch"; s.textContent = c;
+          frag.appendChild(s); out.push(s);
+        });
+        n.parentNode.replaceChild(frag, n);
+      } else if (n.nodeType === 1 && n.tagName !== "BR"){
+        walk(n);
+      }
+    });
+  })(root);
+  return out;
+}
+const quoteChars = splitChars($("#quote"));
+
+/* ══════════ 关键词手绘标记（圈选 / 方框 / 波浪线），几何按字形实测 ══════════ */
+const MK = {};
+$$(".mk").forEach((el, i) => {
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const fs = parseFloat(getComputedStyle(el).fontSize);
+  const gt = (h - fs) / 2;              // 字形顶相对行盒
+  const ph = [0.7, 2.1, 3.4, 5.2, 1.3][i % 5];
+  let box, ds;
+  if (el.dataset.mk === "oval"){
+    const bw = w + 68, bh = fs + 40;
+    box = { l:-34, t: gt - 20, w: bw, h: bh };
+    ds = [handOval(bw / 2, bh / 2, bw / 2 - 4, bh / 2 - 3, 1.08, ph)];
+  } else if (el.dataset.mk === "rect"){
+    const bw = w + 52, bh = fs + 34;
+    box = { l:-26, t: gt - 17, w: bw, h: bh };
+    ds = [handRect(5, 5, bw - 10, bh - 10, ph)];
+  } else { // wave
+    const bw = w + 28, bh = 32;
+    box = { l:-14, t: gt + fs + 4, w: bw, h: bh };
+    ds = [handWave(3, 16, bw - 6, 7, 2.6, ph)];
+  }
+  const paths = svgIn(el, box.w, box.h, ds, "#B4362B", 7,
+    "left:" + box.l + "px;top:" + box.t + "px;");
+  MK[el.id] = paths[0];
+});
+
+/* ══════════ 固定位置的手绘涂鸦 ══════════ */
+const PENCIL = "#5A5142";
+// c0 拍立得里的空对话框
+const D_BUBBLE = svgIn($("#bubHost"), 200, 150, [
+  "M14,20 C14,9 22,5 34,5 L166,7 C178,8 184,14 184,25 L184,97 C184,109 176,113 164,113 L74,113 L34,142 L45,113 L30,111 C18,109 14,103 14,93 Z"
+], "rgba(255,255,255,.86)", 5)[0];
+// c1 箭头 + 问号
+const A1 = handArrow(16, 10, 96, 58, 158, 88, 1.1, 28);
+const D_C1ARROW = svgIn($("#c1arrow"), 180, 104, A1, PENCIL, 6);
+const D_C1Q = svgIn($("#c1q"), 106, 150, [
+  "M16,44 C18,14 76,6 88,34 C99,60 58,66 54,96",
+  "M52,124 L52,140"
+], "#B4362B", 9);
+// c3 值班表：静态格线 + 14 个逐个画上的勾
+(function(){
+  const host = $("#duty"), grid = [], ticks = [];
+  for (let r = 1; r <= 3; r++) grid.push(handLine(20, r * 105, 680, r * 105, r * 1.7, 1.4));
+  for (let c = 1; c <= 6; c++) grid.push(handLine(c * 100, 24, c * 100, 396, c * 1.1, 1.4));
+  svgIn(host, 700, 420, grid, "rgba(90,80,60,.28)", 3);
+  for (let i = 0; i < 14; i++){
+    const col = i % 7, row = (i / 7) | 0;
+    const x = col * 100 + 30, y = row * 105 + 130;
+    ticks.push("M" + x + "," + (y + 16) + " C" + (x + 6) + "," + (y + 22) + " " + (x + 11) + "," + (y + 30) + " " + (x + 16) + "," + (y + 38)
+             + " C" + (x + 24) + "," + (y + 22) + " " + (x + 32) + "," + (y + 10) + " " + (x + 42) + "," + y);
+  }
+  window.D_TICKS = svgIn(host, 700, 420, ticks, "#B4362B", 7);
+})();
+// c4 落章震波（手绘圆环，随冲击炸开）
+svgIn($("#shockHost"), 500, 500, [handOval(250, 250, 205, 205, 1.0, 1.4, 1)], "#B4362B", 9);
+// c4 冲击线
+const D_HIT = svgIn($("#hitHost"), 880, 620, [
+  handLine(56, 56, 8, 8, 0.4, 3), handLine(824, 56, 872, 8, 1.2, 3),
+  handLine(56, 564, 8, 612, 2.0, 3), handLine(824, 564, 872, 612, 2.8, 3),
+  handLine(440, 44, 440, 2, 3.6, 3), handLine(440, 576, 440, 618, 4.4, 3),
+  handLine(46, 310, 2, 310, 5.2, 3), handLine(834, 310, 878, 310, 6.0, 3)
+], "#B4362B", 8);
+// c5 雷达：手绘同心圆 + 十字线
+const D_RC = svgIn($("#radar"), 600, 600, [
+  handOval(300, 300, 95, 95, 1.03, 0.6, 0.5),
+  handOval(300, 300, 180, 180, 1.02, 2.4, 0.75),
+  handOval(300, 300, 262, 262, 1.01, 4.1, 1)
+], "#B4362B", 6, "opacity:.75");
+const D_CROSS = svgIn($("#radar"), 600, 600, [
+  handLine(300, 24, 300, 576, 1.9, 3), handLine(24, 300, 576, 300, 3.3, 3)
+], "rgba(90,81,66,.45)", 4);
+// 雷达外圈刻度（12 道短划，手绘感）
+const D_SCALE = (function(){
+  const ds = [];
+  for (let i = 0; i < 12; i++){
+    const a = i * Math.PI / 6 - Math.PI / 2;
+    const r0 = 272, r1 = 296;
+    ds.push(handLine(300 + r0 * Math.cos(a), 300 + r0 * Math.sin(a),
+                     300 + r1 * Math.cos(a), 300 + r1 * Math.sin(a), i * 0.7, 1.6));
+  }
+  return svgIn($("#radar"), 600, 600, ds, "rgba(180,54,43,.55)", 5);
+})();
+// c6 盾牌 + 箭头 + 抖动弧
+const D_SHIELD = svgIn($("#shieldHost"), 150, 162, [
+  "M75,8 C52,23 30,29 13,29 C13,76 33,124 75,152 C117,124 137,76 137,29 C120,29 98,23 75,8",
+  "M50,74 C58,82 63,90 68,99 C79,80 92,62 106,48"
+], PENCIL, 6);
+const A6 = handArrow(160, 12, 250, 130, 66, 234, 2.6, 32);
+const D_C6ARROW = svgIn($("#c6arrow"), 300, 250, A6, PENCIL, 6);
+const D_ARCS = svgIn($("#arcHost"), 80, 130, [
+  "M18,92 C4,74 4,50 18,32", "M42,102 C22,76 22,46 42,20", "M66,112 C40,80 40,44 66,10"
+], "#B4362B", 6);
+// 常驻回形针
+function clipPaths(host, w, h){
+  const s = w / 70;
+  return svgIn(host, w, h, [
+    "M" + 20*s + "," + (h - 8) + " L" + 20*s + "," + 30*s + " C" + 20*s + "," + 8*s + " " + 50*s + "," + 8*s + " " + 50*s + "," + 30*s +
+    " L" + 50*s + "," + (h - 34) + " C" + 50*s + "," + (h - 16) + " " + 30*s + "," + (h - 16) + " " + 30*s + "," + (h - 34) +
+    " L" + 30*s + "," + 44*s
+  ], "#8E887A", 7 * s)[0];
+}
+clipPaths($("#clipTop"), 70, 126);
+clipPaths($("#clipMain"), 62, 112);
+
+/* ══════════ 动画原语：一切初始态都在 t=0 显式落定，fromTo 一律 immediateRender:false ══════════ */
+function seed(el, from){ tl.set(el, from, 0); }
+function play(el, from, to, at){
+  seed(el, from);
+  tl.fromTo(el, from, Object.assign({ immediateRender: false }, to), at);
+}
+/* 甩入：斜着飞进来，过冲后落定 */
+function fling(el, at, o){
+  o = o || {};
+  const r = rotOf(el);
+  play(el,
+    { opacity:0, x:(o.x !== undefined ? o.x : -260), y:(o.y !== undefined ? o.y : -70),
+      rotation:r + (o.dr !== undefined ? o.dr : -14), scale:1.05, transformOrigin:"50% 50%" },
+    { opacity:1, x:0, y:0, rotation:r, scale:1,
+      duration:(o.d || 0.6), ease:"back.out(1.5)" }, at);
+}
+/* 贴上：像手把纸片按上去 */
+function paste(el, at, o){
+  o = o || {};
+  const r = rotOf(el);
+  play(el,
+    { opacity:0, scale:1.16, rotation:r + (o.dr !== undefined ? o.dr : 4),
+      y:(o.y !== undefined ? o.y : -20), transformOrigin:"50% 50%" },
+    { opacity:1, scale:1, rotation:r, y:0,
+      duration:(o.d || 0.5), ease:"back.out(2.1)" }, at);
+}
+/* 描画 */
+function draw(paths, at, dur, stg){
+  (Array.isArray(paths) ? paths : [paths]).forEach((p, i) => {
+    play(p, { drawSVG:"0%" }, { drawSVG:"100%", duration:dur, ease:"pen" }, at + i * (stg || 0));
+  });
+}
+function fadeIn(el, at, d, o){
+  play(el, { opacity:0, y:(o && o.y !== undefined ? o.y : 14) },
+           { opacity:1, y:0, duration:(d || 0.45), ease:"power2.out" }, at);
+}
+function fade(el, at, d){ tl.to(el, { opacity:0, duration:(d || 0.4), ease:"power1.out" }, at); }
+/* 整张手帐页被抽走 */
+function exitCard(card, at, d){
+  tl.to(card, { opacity:0, y:-52, rotation:-1.4, scale:0.985, transformOrigin:"50% 60%",
+                duration:(d || 0.44), ease:"power2.in" }, at);
+}
+const S = i => CUES[i].start, E = i => CUES[i].end;
+const PRE = 0.22;   // 纸片先于口播 0.22s 落下，消除翻页空屏
+
+tl.set("#stage", { x:0, y:0 }, 0);
+/* 纸底极慢推进，全片微呼吸 */
+play("#paper", { scale:1 }, { scale:1.035, duration:total, ease:"none" }, 0);
+
+/* ══ c0 · 0.0–4.9 晚上十一点 ══ */
+{
+  const s = S(0);
+  tl.set("#c0", { opacity:1 }, s);
+  paste("#c0date", s + 0.05, { dr:-9 });
+  fling("#c0note", s + 0.72, { x:-300, y:-40, dr:-13 });
+  paste("#c0main", s + 1.18, { dr:5 });
+  fadeIn("#c0l2", s + 2.42, 0.5, { y:16 });
+  fling("#polaroid", s + 3.02, { x:320, y:-160, dr:24, d:0.74 });
+  draw(D_BUBBLE, s + 3.58, 0.55);
+  exitCard("#c0", E(0) - 0.32);
+}
+
+/* ══ c1 · 5.4–10.2 一帧一帧过电影 ══ */
+{
+  const s = S(1);
+  tl.set("#c1", { opacity:1 }, s - PRE);
+  fling("#c1a", s - 0.16, { x:-320, y:-60, dr:-12 });
+  draw(D_C1ARROW, s + 0.52, 0.34, 0.16);
+  const frames = $$("#c1 .frm");
+  frames.forEach((f, i) => paste(f, s + 0.75 + i * 0.22, { dr:(i % 2 ? -7 : 7), d:0.42 }));
+  draw(MK.mkFilm, s + 1.10, 0.62);
+  paste("#c1b", s + 2.18, { dr:-6 });
+  draw(D_C1Q, s + 3.50, 0.42, 0.22);
+  exitCard("#c1", E(1) - 0.26);
+}
+
+/* ══ c2 · 10.7–13.6 没人接话 ══ */
+{
+  const s = S(2);
+  tl.set("#c2", { opacity:1 }, s - PRE);
+  fling("#c2a", s - 0.16, { x:-300, y:-50, dr:-11 });
+  $$("#c2 .slip").forEach((el, i) => paste(el, s + 0.42 + i * 0.20, { dr:(i % 2 ? 6 : -6), d:0.40 }));
+  fling("#c2b", s + 1.58, { x:300, y:60, dr:12 });
+  draw(MK.mkDoubt, s + 2.28, 0.50);
+  exitCard("#c2", E(2) - 0.30);
+}
+
+/* ══ c3 · 14.1–17.7 替对方的情绪值班 ══ */
+{
+  const s = S(3);
+  tl.set("#c3", { opacity:1 }, s - PRE);
+  fling("#c3a", s - 0.16, { x:-300, y:-50, dr:-12 });
+  paste("#c3b", s + 1.28, { dr:6 });
+  paste("#duty", s + 1.86, { dr:-7, d:0.55 });
+  draw(MK.mkDuty, s + 2.20, 0.60);
+  draw(window.D_TICKS, s + 2.26, 0.24, 0.062);
+  exitCard("#c3", E(3) - 0.26);
+}
+
+/* ══ c4 · 18.1–19.5 这不是多心（落章·全片情绪最强点） ══ */
+{
+  const s = S(4), hit = s - 0.20, land = hit + 0.40;
+  tl.set("#c4", { opacity:1 }, s - PRE);
+  // 印章：从高空俯冲盖下，power4.in 让冲击落在最后一刻
+  play("#stamp",
+    { opacity:0, scale:3.1, rotation:-19, filter:"blur(10px)", transformOrigin:"50% 50%" },
+    { opacity:0.88, scale:1, rotation:-6.5, filter:"blur(0px)", duration:0.40, ease:"power4.in" }, hit);
+  tl.to("#stamp", { scale:1.03, duration:0.08, ease:"power2.out" }, land);
+  tl.to("#stamp", { scale:1, duration:0.42, ease:"elastic.out(1,0.5)" }, land + 0.08);
+  // 压痕
+  play("#stampShadow", { opacity:0, scale:0.72, transformOrigin:"50% 50%" },
+                       { opacity:1, scale:1, duration:0.26, ease:"power2.out" }, land);
+  // 纸片群震动（含常驻散件）
+  play("#stage", { x:0 }, { x:10, duration:0.045, repeat:7, yoyo:true, ease:"none" }, land);
+  play("#stage", { y:0 }, { y:-7, duration:0.06,  repeat:5, yoyo:true, ease:"none" }, land);
+  // 闪一下 + 印泥飞溅 + 冲击线
+  play("#flash", { opacity:0 }, { opacity:0.34, duration:0.05, ease:"none" }, land);
+  tl.to("#flash", { opacity:0, duration:0.3, ease:"power2.out" }, land + 0.05);
+  draw(D_HIT, land + 0.03, 0.2, 0.012);
+  fade(D_HIT, land + 0.42, 0.5);
+  play("#shockHost", { opacity:0, scale:0.34, transformOrigin:"50% 50%" },
+                     { opacity:0.55, scale:1.05, duration:0.16, ease:"power2.out" }, land);
+  tl.to("#shockHost", { scale:2.3, opacity:0, duration:0.62, ease:"power2.out" }, land + 0.16);
+  $$("#c4 .inkdot").forEach((d, i) =>
+    play(d, { opacity:0, scale:0.2, transformOrigin:"50% 50%" },
+            { opacity:0.75, scale:1, duration:0.22, ease:"back.out(2.4)" }, land + 0.04 + i * 0.03));
+  exitCard("#c4", E(4) - 0.30, 0.38);
+}
+
+/* ══ c5 · 20.0–24.6 读脸色雷达 ══ */
+{
+  const s = S(5);
+  tl.set("#c5", { opacity:1 }, s - PRE);
+  tl.set("#radar", { opacity:1 }, s);
+  draw(D_RC[0], s - 0.14, 0.66);
+  draw(D_RC[1], s + 0.30, 0.78);
+  draw(D_RC[2], s + 0.52, 0.90);
+  draw(D_CROSS, s + 0.86, 0.5, 0.12);
+  draw(D_SCALE, s + 1.06, 0.18, 0.028);
+  play("#sweep", { rotation:0, transformOrigin:"50% 50%", opacity:0 },
+                 { rotation:360 * 2.1, opacity:1, duration:E(5) - s - 0.3, ease:"none" }, s + 0.15);
+  paste("#c5a", s - 0.16, { dr:5 });
+  draw(MK.mkRadar, s + 1.55, 0.72);
+  $$("#c5 .blip").forEach((b, i) => {
+    const at = s + 1.25 + i * 0.8;
+    play(b, { opacity:0, scale:0.3, transformOrigin:"50% 50%" },
+            { opacity:0.9, scale:1, duration:0.22, ease:"back.out(2.2)" }, at);
+    tl.to(b, { opacity:0, duration:0.66, ease:"power1.out" }, at + 0.5);
+  });
+  fling("#c5b", s + 2.68, { x:300, y:70, dr:14 });
+  fade("#radar", E(5) - 0.5, 0.4);
+  exitCard("#c5", E(5) - 0.3);
+}
+
+/* ══ c6 · 25.1–29.0 当年保护 → 现在紧张 ══ */
+{
+  const s = S(6);
+  tl.set("#c6", { opacity:1 }, s - PRE);
+  fling("#c6a", s - 0.16, { x:-300, y:-60, dr:-13 });
+  draw(D_SHIELD, s + 0.72, 0.6, 0.28);
+  draw(D_C6ARROW, s + 1.28, 0.42, 0.18);
+  fling("#c6b", s + 1.58, { x:310, y:70, dr:13 });
+  play("#jz", { x:0, rotation:0, transformOrigin:"50% 60%" },
+              { x:5, rotation:1.8, duration:0.06, repeat:13, yoyo:true, ease:"none" }, s + 2.46);
+  draw(D_ARCS, s + 2.50, 0.26, 0.1);
+  fade(D_ARCS, s + 3.30, 0.4);
+  exitCard("#c6", E(6) - 0.30);
+}
+
+/* ══ c7 · 29.5–36.9 信纸展开 · 金句 ══ */
+{
+  const s = S(7);
+  tl.set("#c7", { opacity:1 }, s - PRE);
+  paste("#c7note", s - 0.16, { dr:-6 });
+  fadeIn("#c7l2", s + 1.38, 0.5, { y:16 });
+  // 信纸从折叠状态展开
+  play("#letter",
+    { opacity:0, scaleY:0.06, rotation:rotOf($("#letter")), transformOrigin:"50% 50%" },
+    { opacity:1, scaleY:1, rotation:rotOf($("#letter")), duration:0.8, ease:"back.out(1.15)" }, s + 2.06);
+  play("#letter .qm", { opacity:0, scale:0.2, rotation:-16, transformOrigin:"50% 80%" },
+                      { opacity:1, scale:1, rotation:0, duration:0.5, ease:"back.out(2)" }, s + 2.92);
+  // 金句：口播 +3.0s 起逐字写上，带固定手写抖动
+  const JIT = [0.34,-0.71,0.52,-0.19,0.85,-0.43,0.14,-0.9,0.61,-0.26,0.77,-0.58,0.06,-0.82,0.4,-0.35];
+  quoteChars.forEach((ch, i) => {
+    const rr = JIT[i % JIT.length] * 2.6, yy = JIT[(i + 7) % JIT.length] * 5;
+    play(ch, { opacity:0, y:yy + 20, scale:0.84, rotation:rr, transformOrigin:"50% 80%" },
+             { opacity:1, y:yy, scale:1, rotation:rr, duration:0.34, ease:"back.out(2)" },
+         s + 3.0 + i * 0.055);
+  });
+  draw(MK.mkOld, s + 4.7, 0.55);
+  paste("#sticker", s + 5.5, { dr:-11, d:0.55 });
+  // 尾部定格：信纸极缓推近
+  play("#letter", { scale:1 }, { scale:1.022, duration:total - (s + 3.1), ease:"none" }, s + 3.1);
+  tl.to("#brand", { opacity:1, duration:0.9, ease:"power2.out" }, E(7) - 0.7);
+}
+
+/* ══ 进度：纸胶带贴过去，一枚小夹子领着走 ══ */
+play("#bar", { scaleX:0 }, { scaleX:1, duration:total, ease:"none" }, 0);
+play("#pin", { x:0 },      { x:888,   duration:total, ease:"none" }, 0);
+
+window.TOTAL = total;
+window.SEEK  = t => { tl.seek(Math.min(t, total - 0.001), false); };
+</script>
+</body>
+</html>

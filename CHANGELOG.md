@@ -18,6 +18,17 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.89.0] — 2026-08-11
+
+### Added（nbdpsy-text-to-video，第三形态「字卡短片」老板验收入库）
+
+- **字卡短片产线**：口播驱动 GSAP 动效竖版短片（30-40s，逐帧渲染帧级同步，边际成本 ≈¥0.2/条、改字 1 分钟重出）。四版式模板入库 `assets/card-templates/`（basic 品牌动效/camera 电影运镜/collage 手作拼贴/kinetic 动力学文字，各带适用与已知代价）；`scripts/render_card.py`（cues/词表注入+逐帧 seek 截图+ffmpeg 混音，wav 优先）；`scripts/extract_word_timings.py`（faster-whisper 词级时间戳，kinetic 卡点用，含简体 prompt/开头吞词/错字容错三坑）。
+- `references/card-video-spec.md`：产线五步、渲染契约、音画同步双层根因、GSAP 逐帧渲染七坑（immediateRender/from 终值隐形/行内高亮块巨字溢出须 inline-block/零时长硬切等）、上传直链 MIME 坑。
+
+### Fixed（nbdpsy-text-to-video，🩸 影响所有 --timed 用户）
+
+- **`tts_gen.gen_timed` mp3 拼接漂移根治**：逐段 mp3 concat 每段漂 ~46ms 随句数累积（8 句实测 0.41s，字幕/字卡越后越提前于语音——与播客线 2026-08-07 定性死路同因，此路径漏修）。改 wav/PCM 域按样本数拼接+cues 按样本数构造+一次性编码（残差 ~43ms 不累积），另出无损 `.wav` sidecar 供渲染混音。检验法：音频实长 vs cues 尾差 >0.1s 即旧版产物。
+
 ## [1.88.2] — 2026-08-11
 
 ### Changed（nbdpsy-xiaohongshu-creator）

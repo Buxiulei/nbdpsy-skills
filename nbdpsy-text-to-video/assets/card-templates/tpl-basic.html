@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>字卡短片 v2</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1080px; height:1920px; overflow:hidden; }
+  body { background:#E8D8C4; font-family:"Noto Sans CJK SC","Source Han Sans SC","PingFang SC",sans-serif; position:relative; }
+  #grain { position:absolute; inset:0; opacity:.05; pointer-events:none;
+    background-image:radial-gradient(#2B3A4A 1px, transparent 1px); background-size:7px 7px; z-index:3; }
+  #darkbg { position:absolute; inset:0; background:#2B3A4A; opacity:0; z-index:1; }
+  /* 氛围粒子层 */
+  #particles { position:absolute; inset:0; z-index:2; }
+  .pt { position:absolute; border-radius:50%; background:#A8B5C4; }
+  /* 冲击圆环 */
+  .ring { position:absolute; left:50%; top:46%; width:300px; height:300px; margin:-150px 0 0 -150px;
+    border:6px solid #D97757; border-radius:50%; opacity:0; z-index:2; }
+  .card { position:absolute; inset:0; display:flex; flex-direction:column;
+    justify-content:center; align-items:flex-start; padding:0 108px; opacity:0; z-index:4; }
+  .line { font-weight:700; color:#2B3A4A; font-size:76px; line-height:1.5; word-break:break-word; }
+  .em { color:#A34B3A; font-weight:900; display:inline-block; }
+  .u-wrap { position:relative; display:inline-block; }
+  .uline { position:absolute; left:0; right:0; bottom:2px; height:10px; background:#A34B3A;
+    border-radius:5px; transform-origin:left; transform:scaleX(0); opacity:.85; }
+  .focus .line { font-weight:900; font-size:150px; line-height:1.35; color:#E8D8C4; }
+  .focus .line .em { color:#D97757; }
+  .final .line { font-weight:900; font-size:96px; line-height:1.5; color:#2B3A4A; }
+  .final .quote-mark { font-size:140px; color:#A34B3A; font-weight:900; line-height:1; margin-bottom:24px; }
+  #brand { position:absolute; left:0; right:0; bottom:150px; text-align:center;
+    font-size:40px; letter-spacing:6px; color:#5A6B7B; opacity:0; font-weight:400; z-index:5; }
+  .tag { font-size:44px; color:#5A6B7B; font-weight:400; margin-bottom:48px; opacity:.85; }
+  #progress { position:absolute; left:108px; right:108px; bottom:96px; height:6px;
+    background:rgba(43,58,74,.12); border-radius:3px; z-index:5; }
+  #progress i { display:block; height:100%; width:100%; background:#A34B3A;
+    border-radius:3px; transform-origin:left; transform:scaleX(0); }
+
+  /* ── c0 聊天气泡剧场 ── */
+  #chat { position:absolute; left:108px; right:108px; top:560px; z-index:4; }
+  .bubble { max-width:70%; padding:36px 48px; border-radius:36px; font-size:52px; line-height:1.4;
+    margin-bottom:40px; opacity:0; position:relative; }
+  .b-me { background:#A8B5C4; color:#2B3A4A; margin-left:auto; border-bottom-right-radius:8px; }
+  .b-them { background:#FBF6EE; color:#2B3A4A; border-bottom-left-radius:8px;
+    box-shadow:0 4px 18px rgba(43,58,74,.08); }
+  .b-them .em { font-size:64px; }
+  #dots { display:inline-flex; gap:12px; }
+  #dots i { width:16px; height:16px; border-radius:50%; background:#8A97A8; display:block; }
+
+  /* ── c1 胶片帧 ── */
+  #film { position:absolute; left:0; right:0; top:1180px; height:330px; z-index:2; opacity:0; }
+  #filmtrack { position:absolute; display:flex; gap:36px; left:0; top:40px; }
+  .frame { width:340px; height:250px; background:#D9C6AC; border-radius:16px; flex:none;
+    border:6px solid rgba(43,58,74,.18); position:relative; }
+  .frame::before, .frame::after { content:""; position:absolute; left:12px; right:12px; height:14px;
+    background-image:radial-gradient(rgba(43,58,74,.28) 5px, transparent 5px); background-size:40px 14px; }
+  .frame::before { top:8px; } .frame::after { bottom:8px; }
+
+  /* ── c5 雷达 ── */
+  #radarbox { position:absolute; left:50%; top:390px; transform:translateX(-50%); z-index:2;
+    width:560px; height:560px; opacity:0; }
+  #radarbox svg { width:100%; height:100%; }
+  #sweep { position:absolute; inset:0; border-radius:50%;
+    background:conic-gradient(from 0deg, rgba(163,75,58,.4), rgba(163,75,58,0) 80deg, transparent 80deg);
+    transform-origin:center; }
+  .blip { position:absolute; width:22px; height:22px; border-radius:50%; background:#A34B3A; opacity:0; }
+</style>
+</head>
+<body>
+<div id="darkbg"></div>
+<div id="particles"></div>
+<div id="grain"></div>
+<div class="ring" id="ring1"></div>
+<div class="ring" id="ring2"></div>
+
+<!-- c0 场景：聊天剧场 + 文案 -->
+<div class="card" id="c0" style="justify-content:flex-start; padding-top:340px;">
+  <div class="tag">晚上 11:00</div>
+  <div id="chat">
+    <div class="bubble b-me" id="bb1">今天那个方案，我再改改哈</div>
+    <div class="bubble b-them" id="bb2"><span id="dots"><i></i><i></i><i></i></span><span id="bb2t" style="display:none" class="em">嗯</span></div>
+  </div>
+  <div class="line" id="c0line" style="position:absolute; left:108px; right:108px; top:1150px;">消息发出去，<br>对方只回了一个<span class="em">「嗯」</span></div>
+</div>
+
+<div class="card" id="c1"><div class="line">你开始一帧一帧<span class="em">过电影</span>：<br>白天那句话，<br>是不是说错了？</div></div>
+<div id="film"><div id="filmtrack">
+  <div class="frame"></div><div class="frame"></div><div class="frame"></div>
+  <div class="frame"></div><div class="frame"></div><div class="frame"></div><div class="frame"></div>
+</div></div>
+
+<div class="card" id="c2"><div class="line">群里没人接话，<br>你<span class="u-wrap"><span class="em">先怀疑自己</span><i class="uline" id="ul2"></i></span></div></div>
+<div class="card" id="c3"><div class="line">和人相处，<br>你总在替对方的情绪<span class="u-wrap"><span class="em">值班</span><i class="uline" id="ul3"></i></span></div></div>
+<div class="card focus" id="c4"><div class="line">这不是<br><span class="em">多心</span></div></div>
+
+<div class="card" id="c5" style="justify-content:flex-start; padding-top:1080px;">
+  <div class="line">很多人小时候练出来的<br><span class="em">读脸色雷达</span>，<br>一开就是二十年</div></div>
+<div id="radarbox">
+  <svg viewBox="0 0 560 560">
+    <circle id="rc1" cx="280" cy="280" r="90"  fill="none" stroke="#A34B3A" stroke-width="3" opacity=".55"/>
+    <circle id="rc2" cx="280" cy="280" r="170" fill="none" stroke="#A34B3A" stroke-width="3" opacity=".4"/>
+    <circle id="rc3" cx="280" cy="280" r="255" fill="none" stroke="#A34B3A" stroke-width="3" opacity=".3"/>
+    <line x1="280" y1="25" x2="280" y2="535" stroke="#A34B3A" stroke-width="2" opacity=".2"/>
+    <line x1="25" y1="280" x2="535" y2="280" stroke="#A34B3A" stroke-width="2" opacity=".2"/>
+  </svg>
+  <div id="sweep"></div>
+  <div class="blip" style="left:150px; top:180px;" id="bl1"></div>
+  <div class="blip" style="left:390px; top:300px;" id="bl2"></div>
+  <div class="blip" style="left:250px; top:420px;" id="bl3"></div>
+</div>
+
+<div class="card" id="c6"><div class="line">它当年<span class="em">保护</span>过你，<br>现在却让你<br>替所有人<span class="em" id="jinzhang">紧张</span></div></div>
+<div class="card final" id="c7"><div class="quote-mark">「</div><div class="line" id="c7line">我的雷达，<br>还在用<span class="em">旧方式</span><br>保护我</div></div>
+
+<div id="brand">NBDpsy 心理科普</div>
+<div id="progress"><i id="bar"></i></div>
+
+<script src="gsap.min.js"></script>
+<script src="SplitText.min.js"></script>
+<script src="DrawSVGPlugin.min.js"></script>
+<script src="CustomEase.min.js"></script>
+<script>
+gsap.registerPlugin(SplitText, DrawSVGPlugin, CustomEase);
+
+const CUES = __CUES__;
+const TAIL = 1.8;
+const total = CUES[CUES.length - 1].end + TAIL;
+const tl = gsap.timeline({ paused: true });
+
+/* ── 氛围粒子：固定伪随机 16 粒，全程缓慢上浮 ── */
+const P = [[90,1700,14,.5],[300,1850,9,.35],[520,1620,18,.45],[760,1780,11,.3],
+  [960,1690,15,.5],[180,1500,8,.25],[660,1560,13,.4],[880,1450,10,.3],
+  [60,1300,12,.35],[420,1400,16,.45],[980,1250,9,.3],[240,1150,11,.4],
+  [720,1230,14,.35],[560,1050,8,.25],[130,950,10,.3],[860,1000,12,.4]];
+P.forEach(([x,y,s,o],i)=>{
+  const d=document.createElement('div'); d.className='pt';
+  d.style.cssText=`left:${x}px;top:${y}px;width:${s}px;height:${s}px;opacity:${o*0.6}`;
+  document.getElementById('particles').appendChild(d);
+  tl.to(d,{y:-(1400+i*60), duration:total, ease:'none'},0);
+  tl.to(d,{opacity:0, duration:3, ease:'power1.in'},total-4);
+});
+
+const cardOf=i=>document.getElementById('c'+i);
+
+/* 通用退场：模糊+缩放推出 */
+function exitCard(card,t){ tl.to(card,{opacity:0, scale:1.06, filter:'blur(14px)', duration:0.42, ease:'power2.in'},t); }
+/* 通用 Ken Burns 微推 */
+function kenburns(card,t0,t1){ tl.fromTo(card,{scale:1},{scale:1.025, duration:t1-t0, ease:'none',immediateRender:false},t0); }
+
+/* ── c0 聊天剧场 ── */
+{
+  const c=CUES[0], card=cardOf(0);
+  tl.set(card,{opacity:1},c.start);
+  kenburns(card,c.start,c.end);
+  tl.fromTo('#bb1',{opacity:0,x:120},{opacity:1,x:0,duration:.45,ease:'power3.out',immediateRender:false},c.start+0.1);
+  tl.fromTo('#bb2',{opacity:0,x:-120},{opacity:1,x:0,duration:.45,ease:'power3.out',immediateRender:false},c.start+0.9);
+  // 点点点打字动画（两轮呼吸）
+  tl.fromTo('#dots i',{opacity:.25},{opacity:1,stagger:{each:.14,repeat:3,yoyo:true},duration:.14,immediateRender:false},c.start+1.05);
+  // 「嗯」弹出替换点点点
+  tl.set('#dots',{display:'none'},c.start+2.2);
+  tl.set('#bb2t',{display:'inline-block'},c.start+2.2);
+  tl.from('#bb2t',{scale:0,duration:.5,ease:'back.out(2.5)'},c.start+2.2);
+  // 主文案
+  const sp=new SplitText('#c0line',{type:'chars'});
+  tl.from(sp.chars,{y:46,opacity:0,duration:.45,stagger:.026,ease:'power3.out'},c.start+2.5);
+  tl.from(card.querySelector('.tag'),{y:-24,opacity:0,duration:.4},c.start);
+  exitCard(card,c.end-0.3);
+}
+
+/* ── c1 过电影：胶片横移 ── */
+{
+  const c=CUES[1], card=cardOf(1);
+  tl.set(card,{opacity:1},c.start); kenburns(card,c.start,c.end);
+  const sp=new SplitText(card.querySelector('.line'),{type:'chars'});
+  tl.from(sp.chars,{y:46,opacity:0,duration:.45,stagger:.028,ease:'power3.out'},c.start+0.05);
+  tl.fromTo('#film',{opacity:0},{opacity:1,duration:.5,immediateRender:false},c.start+0.2);
+  tl.fromTo('#filmtrack',{x:0},{x:-1600,duration:c.end-c.start,ease:'none',immediateRender:false},c.start);
+  tl.to('#film',{opacity:0,duration:.4},c.end-0.4);
+  exitCard(card,c.end-0.3);
+}
+
+/* ── c2/c3 下划线描画 ── */
+[2,3].forEach(i=>{
+  const c=CUES[i], card=cardOf(i);
+  tl.set(card,{opacity:1},c.start); kenburns(card,c.start,c.end);
+  const sp=new SplitText(card.querySelector('.line'),{type:'chars'});
+  tl.from(sp.chars,{y:46,opacity:0,duration:.45,stagger:.028,ease:'power3.out'},c.start+0.05);
+  tl.to('#ul'+i,{scaleX:1,duration:.5,ease:'power2.inOut'},c.start+0.9);
+  exitCard(card,c.end-0.3);
+});
+
+/* ── c4 焦点句：暗场+弹性字+冲击环+微震 ── */
+{
+  const c=CUES[4], card=cardOf(4);
+  tl.to('#darkbg',{opacity:1,duration:.4,ease:'power2.inOut'},c.start-0.18);
+  tl.set(card,{opacity:1},c.start);
+  const sp=new SplitText(card.querySelector('.line'),{type:'chars'});
+  tl.from(sp.chars,{y:110,opacity:0,scale:.6,duration:.6,stagger:.09,ease:'back.out(1.9)'},c.start+0.05);
+  // 双冲击环
+  tl.fromTo('#ring1',{scale:.3,opacity:.9},{scale:3.4,opacity:0,duration:1.1,ease:'power2.out',immediateRender:false},c.start+0.35);
+  tl.fromTo('#ring2',{scale:.3,opacity:.7},{scale:2.4,opacity:0,duration:1.0,ease:'power2.out',immediateRender:false},c.start+0.55);
+  // 微震
+  tl.fromTo(card,{x:0},{x:6,duration:.05,repeat:5,yoyo:true,ease:'none',immediateRender:false},c.start+0.4);
+  tl.to('#darkbg',{opacity:0,duration:.5,ease:'power2.inOut'},c.end-0.2);
+  exitCard(card,c.end-0.28);
+}
+
+/* ── c5 雷达 ── */
+{
+  const c=CUES[5], card=cardOf(5);
+  tl.set(card,{opacity:1},c.start); kenburns(card,c.start,c.end);
+  tl.set('#radarbox',{opacity:1},c.start);
+  tl.from('#rc1',{drawSVG:'0%',duration:.5},c.start+0.1);
+  tl.from('#rc2',{drawSVG:'0%',duration:.6},c.start+0.25);
+  tl.from('#rc3',{drawSVG:'0%',duration:.7},c.start+0.4);
+  tl.fromTo('#sweep',{rotation:0},{rotation:360*2.2,duration:c.end-c.start,ease:'none',immediateRender:false},c.start);
+  [['#bl1',1.3],['#bl2',2.1],['#bl3',3.0]].forEach(([id,dt])=>{
+    tl.fromTo(id,{opacity:0,scale:.4},{opacity:1,scale:1,duration:.25,ease:'back.out(2)',immediateRender:false},c.start+dt);
+    tl.to(id,{opacity:0,duration:.6},c.start+dt+0.5);
+  });
+  const sp=new SplitText(card.querySelector('.line'),{type:'chars'});
+  tl.from(sp.chars,{y:46,opacity:0,duration:.45,stagger:.028,ease:'power3.out'},c.start+0.3);
+  tl.to('#radarbox',{opacity:0,duration:.4},c.end-0.4);
+  exitCard(card,c.end-0.3);
+}
+
+/* ── c6 紧张微抖 ── */
+{
+  const c=CUES[6], card=cardOf(6);
+  tl.set(card,{opacity:1},c.start); kenburns(card,c.start,c.end);
+  const sp=new SplitText(card.querySelector('.line'),{type:'chars'});
+  tl.from(sp.chars,{y:46,opacity:0,duration:.45,stagger:.028,ease:'power3.out'},c.start+0.05);
+  tl.fromTo('#jinzhang',{x:0},{x:4,duration:.07,repeat:11,yoyo:true,ease:'none',immediateRender:false},c.start+1.6);
+  exitCard(card,c.end-0.3);
+}
+
+/* ── c7 金句：引号弹出+逐词+光泽扫过+落款 ── */
+{
+  const c=CUES[7], card=cardOf(7);
+  tl.set(card,{opacity:1},c.start);
+  tl.from(card.querySelector('.quote-mark'),{scale:0,opacity:0,duration:.5,ease:'back.out(1.7)'},c.start);
+  const sp=new SplitText('#c7line',{type:'words,chars'});
+  // 金句等语音铺垫：引导半句约 3.2s 后逐字浮现
+  tl.from(sp.chars,{y:60,opacity:0,duration:.5,stagger:.045,ease:'power3.out'},c.start+3.0);
+  // 光泽扫过（用亮色 clip 层模拟）
+  tl.to('#brand',{opacity:1,duration:.8,ease:'power2.out'},c.end-0.2);
+  // 尾部定格微推
+  tl.fromTo(card,{scale:1},{scale:1.02,duration:TAIL+2,ease:'none',immediateRender:false},c.start+3.0);
+}
+
+tl.to('#bar',{scaleX:1,duration:total,ease:'none'},0);
+
+window.TOTAL = total;
+window.SEEK = t => { tl.seek(Math.min(t, total - 0.001), false); };
+</script>
+</body>
+</html>

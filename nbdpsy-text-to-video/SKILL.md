@@ -17,12 +17,18 @@ description: >-
 
 **一句话心智**：这是「**你当导演、脚本跑腿、每条人工终审**」的半自动产线，不是一键批量出片机。质量取决于分镜脚本的用心 + 中文打磨，不是堆钱。
 
-**两种内容形态**（2026-08-07 命名定案）：
+**三种内容形态**（2026-08-07 命名定案两种＋2026-08-11 新增一种）：
 - **「笔记微电影」**——小红书笔记短内容 → 电影化动画短片（1–3 分钟，几秒一个分镜，
   Seedance 画面 + 口播旁白 + 分页字幕 + 品牌收尾）。本文十步产线就是它；创作方法论见
   `references/cinematic-direction.md`，旁白逐字稿规范见 `references/narration-spec.md`。
 - **「长文播客」**——长文 → 一男一女对谈播客视频（声音+字幕为主，HTML 播放器画面录屏，
   黑底大字幕+波形+栏目名）。规格见 `references/podcast-video-spec.md`。
+- **「字卡短片」**（2026-08-11 老板验收入库）——笔记文案 → 口播驱动的 GSAP 动效字卡竖版短片
+  （30–40 秒，逐帧渲染帧级音画同步，四个版式模板：basic 品牌动效/camera 电影运镜/collage 手作拼贴/
+  kinetic 动力学文字）。**边际成本 ≈¥0.2/条、改字 1 分钟重出**，三形态里量产成本最低。
+  规格与工程坑清单见 `references/card-video-spec.md`，模板在 `assets/card-templates/`，
+  渲染 `scripts/render_card.py`，kinetic 词级卡点须先跑 `scripts/extract_word_timings.py`。
+  ⚠️ 依赖本 skill 2026-08-11 后的 `tts_gen --timed`（wav 域拼接修复版）——旧版 cues 有累积漂移必不同步。
 
 **路径约定**：以下命令中 `{SKILL_DIR}` 指本文件（SKILL.md）所在目录；`{workspace}` 指内容工作区根目录，用 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace` 查询实际路径。
 

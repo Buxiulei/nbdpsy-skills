@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>字卡短片 V6 · 动力学文字</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1080px; height:1920px; overflow:hidden; }
+  body {
+    background:#F5F0E8;
+    font-family:"Noto Sans CJK SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+    position:relative; letter-spacing:0; -webkit-font-smoothing:antialiased;
+  }
+
+  /* ── 背景色板：叠层，z 递增，只开不关，最后开的那层即当前底色 ── */
+  .bgl { position:absolute; inset:0; opacity:0; }
+
+  /* ── 胶片颗粒（中性灰点，压在底色上、文字下；无 blend-mode 依赖）── */
+  #grain { position:absolute; inset:0; z-index:8; pointer-events:none; opacity:.075;
+    background-image:radial-gradient(rgba(128,128,128,.95) 1px, transparent 1px);
+    background-size:6px 6px; }
+
+  /* ── 焦点句前的爆闪 ── */
+  #flash { position:absolute; inset:0; background:#FFFDF7; opacity:0; z-index:26; }
+
+  /* ── 字组舞台 ── */
+  #stage { position:absolute; inset:0; z-index:10; }
+  .unit { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:0 40px; }
+  .unit.bleed { padding:0; }
+  .ubox { flex:none; text-align:center; white-space:nowrap; opacity:0; filter:blur(0px); letter-spacing:0; line-height:1.34; }
+
+  .m-light { color:#111111; }
+  .m-light b { color:#A34B3A; font-weight:inherit; }
+  .m-dark  { color:#F5F0E8; }
+  .m-dark  b { display:inline-block; color:#F5F0E8; background:#A34B3A; padding:.10em .16em .12em; margin:.05em .02em; border-radius:.06em; line-height:1.05; font-weight:inherit; vertical-align:baseline; }
+  .m-red   { color:#F5F0E8; }
+  .m-red   b { color:#F5F0E8; font-weight:inherit; }
+  .m-light.dim { color:rgba(17,17,17,.46); }
+  .m-dark.dim  { color:rgba(245,240,232,.46); }
+  /* 只装了 Regular/Bold，巨字用描边补足「黑体」的重量感 */
+  .heavy { -webkit-text-stroke:.015em currentColor; }
+
+  /* ── 金句：全片唯一的「慢」，用字重/字号反差承接前面的暴力 ── */
+  #quote { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    z-index:12; opacity:0; }
+  #qbox { text-align:center; color:#F5F0E8; font-weight:400; letter-spacing:0; }
+  #qbox .q { white-space:nowrap; line-height:1.66; }
+  #qbox .q1, #qbox .q3 { font-size:132px; }
+  #qbox .q2 { font-size:104px; }
+
+  /* ── 落款：极小 ── */
+  #brand { position:absolute; left:0; right:0; bottom:188px; text-align:center;
+    font-size:30px; font-weight:400; color:#F5F0E8; opacity:0; z-index:14; }
+  #brand .ls { letter-spacing:9px; }
+
+  /* ── 进度条：八段「破折号」，一句一段 ── */
+  #prog { position:absolute; left:60px; right:60px; bottom:96px; height:5px;
+    display:flex; gap:14px; z-index:20; }
+  .seg { flex:1 1 0; height:5px; background:rgba(17,17,17,.16); overflow:hidden; }
+  .pf { display:block; height:100%; width:100%; background:#111111;
+    transform-origin:left center; transform:scaleX(0); }
+</style>
+</head>
+<body>
+
+<div id="bgs"></div>
+<div id="grain"></div>
+<div id="stage"></div>
+
+<div id="quote">
+  <div id="qbox">
+    <div class="q q1">我的雷达，</div>
+    <div class="q q2">还在用旧方式</div>
+    <div class="q q3">保护我</div>
+  </div>
+</div>
+
+<div id="brand"><span class="ls">NBDpsy</span> 心理科普</div>
+<div id="flash"></div>
+<div id="prog"></div>
+
+<script src="gsap.min.js"></script>
+<script src="SplitText.min.js"></script>
+<script src="DrawSVGPlugin.min.js"></script>
+<script src="CustomEase.min.js"></script>
+<script>
+gsap.registerPlugin(SplitText, DrawSVGPlugin, CustomEase);
+
+const CUES  = __CUES__;
+const WORDS = __WORDS__;   // ASR 实测词级时间戳，渲染器注入
+const TAIL  = 1.8;
+const total = CUES[CUES.length - 1].end + TAIL;
+const tl    = gsap.timeline({ paused: true });
+
+/* 全部时刻都从 cue 起点派生，随注入的 cues 自动对齐 */
+const S = i => CUES[i].start;
+const E = i => CUES[i].end;
+
+const SLAM  = CustomEase.create("slam",  "M0,0 C0.09,0.86 0.16,1 1,1");
+const PUNCH = CustomEase.create("punch", "M0,0 C0.05,1.02 0.12,1 1,1");
+
+const CREAM = '#F5F0E8', INK = '#111111', RED = '#A34B3A';
+
+/* ══════════════ 1. 背景翻转表（情绪驱动） ══════════════
+   米白=平静陈述 / 黑=质问自我怀疑 / 赭红=全片唯一焦点句           */
+const BG = [
+  [ S(1) + 3.50, INK   ],   //  8.88 「是不是说错了？」→ 黑底
+  [ S(3)       , CREAM ],   // 14.06 「和人相处」→ 回米白
+  [ S(4) - 0.06, RED   ],   // 18.05 「这不是多心」→ 全屏赭红（唯一）
+  [ S(5) - 0.10, CREAM ],   // 19.90 → 回米白
+  [ S(6)       , INK   ],   // 25.09 「它当年保护过你」→ 黑（过去）
+  [ S(6) + 2.00, CREAM ],   // 27.09 「现在却让你」→ 米白（现在，反转）
+  [ S(7) - 0.02, INK   ],   // 29.45 硬切黑场，静默 0.5s 后进金句
+];
+{
+  const bgs = document.getElementById('bgs');
+  BG.forEach(([t, color], i) => {
+    const d = document.createElement('div');
+    d.className = 'bgl';
+    d.style.background = color;
+    d.style.zIndex = i + 1;
+    bgs.appendChild(d);
+    tl.fromTo(d, { opacity: 0 }, { opacity: 1, duration: 0.001, ease: 'none', immediateRender: false }, t);
+  });
+}
+
+/* ══════════════ 2. 词组表 ══════════════
+   c=cue序号  a=入场(相对cue起点)  b=出场  m=色彩模式  fw=字重
+   sz=字号上限(会按宽度自动收敛)  en=入场方式  fx=特效               */
+const U = [
+  /* ── cue0 平静叙事，米白底 ── */
+  { c:0, a:0.15, b:1.25, m:'light', fw:700, sz: 96, en:'F', h:'晚上 11:00', dim:1 },
+  { c:0, a:1.25, b:1.90, m:'light', fw:700, sz:300, en:'L', h:'消息' },
+  { c:0, a:1.90, b:2.62, m:'light', fw:700, sz:300, en:'R', h:'发出去' },
+  { c:0, a:2.62, b:3.10, m:'light', fw:700, sz:150, en:'D', h:'对方',       dim:1 },
+  { c:0, a:3.10, b:3.88, m:'light', fw:700, sz:186, en:'U', h:'只回了一个', dim:1 },
+  { c:0, a:3.88, b:5.30, m:'light', fw:700, sz:520, en:'Z', h:'<b>嗯</b>', fx:'punch' },
+
+  /* ── cue1 反刍开始 ── */
+  { c:1, a:0.07, b:0.70, m:'light', fw:700, sz:140, en:'U', h:'你开始' },
+  { c:1, a:0.70, b:2.00, m:'light', fw:700, sz:215, en:'S', h:'一帧一帧' },   // 逐帧抽搐前进
+  { c:1, a:2.00, b:2.77, m:'light', fw:700, sz:310, en:'Z', h:'<b>过电影</b>' },
+  { c:1, a:2.77, b:3.47, m:'light', fw:700, sz:160, en:'L', h:'白天那句话' },
+  /* ▼ 8.88 翻黑底 */
+  { c:1, a:3.52, b:4.98, m:'dark',  fw:700, sz:250, en:'O', h:'是不是<br>说错了？', fx:'pulse' },
+
+  /* ── cue2 黑底自我怀疑 ── */
+  { c:2, a:0.10, b:1.40, m:'dark',  fw:700, sz:160, en:'D', h:'群里没人接话' },
+  { c:2, a:1.40, b:1.80, m:'dark',  fw:700, sz:560, en:'Z', h:'你' },
+  { c:2, a:1.80, b:3.38, m:'dark',  fw:700, sz:300, en:'U', h:'<b>先怀疑</b><br><b>自己</b>' },
+  /* ▼ 14.06 回米白 */
+
+  /* ── cue3 命名模式 ── */
+  { c:3, a:0.05, b:1.00, m:'light', fw:700, sz:210, en:'L', h:'和人相处' },
+  { c:3, a:1.00, b:1.68, m:'light', fw:700, sz:230, en:'R', h:'你总在' },
+  { c:3, a:1.68, b:2.80, m:'light', fw:700, sz:235, en:'U', h:'替对方的<br>情绪' },
+  { c:3, a:2.80, b:3.85, m:'light', fw:700, sz:450, en:'Z', h:'<b>值班</b>', fx:'punch' },
+  /* ▼ 18.00 爆闪 → 18.05 全屏赭红 */
+
+  /* ── cue4 焦点句：全片唯一红底，反复放大压迫 ── */
+  { c:4, a:0.05, b:0.48, m:'red',   fw:700, sz:215, en:'D', h:'这不是' },
+  { c:4, a:0.48, b:1.76, m:'red',   fw:700, sz:420, en:'Z', h:'多心', fx:'press' },
+  /* ▼ 19.90 回米白 */
+
+  /* ── cue5 解释：二十年巨字滚过全屏 ── */
+  { c:5, a:0.05, b:1.20, m:'light', fw:700, sz:158, en:'L', h:'很多人小时候' },
+  { c:5, a:1.20, b:1.92, m:'light', fw:700, sz:220, en:'R', h:'练出来的' },
+  { c:5, a:1.92, b:3.08, m:'light', fw:700, sz:310, en:'Z', h:'<b>读脸色</b><br><b>雷达</b>' },
+  { c:5, a:3.08, b:3.78, m:'light', fw:700, sz:200, en:'U', h:'一开就是' },
+  { c:5, a:3.78, b:5.08, m:'light', fw:700, sz:380, en:'X', h:'二十年', bleed:1 },
+  /* ▼ 25.09 翻黑底 */
+
+  /* ── cue6 前半黑（当年）/ 后半米白（现在）── */
+  { c:6, a:0.05, b:0.80, m:'dark',  fw:700, sz:200, en:'F', h:'它当年' },
+  { c:6, a:0.80, b:1.95, m:'dark',  fw:700, sz:330, en:'Z', h:'<b>保护</b><br>过你' },
+  /* ▼ 27.09 回米白 */
+  { c:6, a:2.05, b:3.00, m:'light', fw:700, sz:190, en:'D', h:'现在却让你' },
+  { c:6, a:3.00, b:3.62, m:'light', fw:700, sz:235, en:'L', h:'替所有人' },
+  { c:6, a:3.62, b:4.34, m:'light', fw:700, sz:470, en:'Z', h:'<b>紧张</b>', fx:'quake' },
+  /* ▼ 29.45 硬切黑场 → 静默 0.5s */
+
+  /* ── cue7 节奏骤停：小字、慢速、克制 ── */
+  { c:7, a:0.50, b:1.87, m:'dark',  fw:400, sz:122, en:'F', h:'下次脑补启动的<br>那一刻', dim:1 },
+  { c:7, a:1.87, b:2.98, m:'dark',  fw:400, sz:158, en:'F', h:'试着叫出<br>它的名字' },
+];
+
+/* ── 宽度收敛：中日韩全角=1，拉丁=0.56，空格=0.3；保证永不横向溢出 ── */
+const MAXW = 930;
+function lw(s) {
+  let w = 0;
+  for (const ch of s) {
+    if (/[　-〿一-鿿＀-￯]/.test(ch)) w += 1;
+    else if (ch === ' ') w += 0.3;
+    else w += 0.56;
+  }
+  return w;
+}
+
+/* ── 建 DOM ── */
+{
+  const stage = document.getElementById('stage');
+  U.forEach((u, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'unit' + (u.bleed ? ' bleed' : '');
+    const box = document.createElement('div');
+    box.id = 'u' + i;
+    box.innerHTML = u.h;
+    const plain = u.h.replace(/<\/?b>/g, '');
+    const lines = plain.split(/<br\s*\/?>/);
+    let mw = 0;
+    lines.forEach(l => { mw = Math.max(mw, lw(l)); });
+    const fs = u.bleed ? u.sz : Math.min(u.sz, Math.floor(MAXW / mw));
+    box.className = 'ubox m-' + u.m + (u.dim ? ' dim' : '') + (fs >= 250 ? ' heavy' : '');
+    box.style.fontSize   = fs + 'px';
+    box.style.fontWeight = u.fw;
+    box.style.lineHeight = fs >= 200 ? 1.1 : 1.3;
+    wrap.appendChild(box);
+    stage.appendChild(wrap);
+    u.el = box; u.fs = fs;
+    u.t  = S(u.c) + u.a;
+    u.o  = S(u.c) + u.b;
+  });
+
+  /* ── ASR 词级对齐（2026-08-11）：卡点从"句内均匀估算"换成实测词时刻 ──
+     顺序游标消费词表（文本顺序=语音顺序），首 2 字匹配；未命中回退估算值。
+     出场=同 cue 内下一单元的入场（衔接不留缝），cue 末单元保留原出场。 */
+  if (WORDS && WORDS.length) {
+    const clean = t => t.replace(/<br\s*\/?\s*>/g,'').replace(/<[^>]+>/g,'').replace(/[^\u4e00-\u9fff？?]/g,'');
+    let wcur = 0;
+    U.forEach(u => {
+      const key = clean(u.h).slice(0, 2);
+      if (!key) return;
+      for (let j = wcur; j < WORDS.length; j++) {
+        const ww = clean(WORDS[j].w);
+        const nx = j + 1 < WORDS.length ? clean(WORDS[j+1].w) : '';
+        if (ww && ww[0] === key[0] && (key.length < 2 || (ww + nx).includes(key))) {
+          u.t = WORDS[j].s; wcur = j + 1; break;
+        }
+      }
+    });
+    for (let i = 0; i < U.length; i++) {
+      if (i + 1 < U.length && U[i+1].c === U[i].c) {
+        U[i].o = Math.max(U[i+1].t, U[i].t + 0.18);   // 至少可见 0.18s
+      } else {
+        U[i].o = Math.max(U[i].o, U[i].t + 0.30);
+      }
+    }
+  }
+
+}
+
+/* ══════════════ 3. 逐词砸屏 ══════════════
+   同一元素上的补间一律按时间先后 add，保证正/反向 seek 都由最早的那条赢。
+   显隐一律用 duration:0 的 fromTo（硬切，零帧交叠也零帧空档）：
+   逐帧取样时「上一词消失」与「下一词已在画面里运动」发生在同一帧。          */
+const SNAP = (el, from, to, t) =>
+  tl.fromTo(el, { opacity:from }, { opacity:to, duration:0, ease:'none', immediateRender:false }, t);
+
+U.forEach(u => {
+  const el = u.el, t = u.t, op = u.dim ? 0.46 : 1;
+
+  switch (u.en) {
+    case 'F':   // 轻浮入（只用在「刻意留白之后」，故允许真淡入）
+      tl.fromTo(el, { opacity:0, y:36 },
+        { opacity:op, y:0, duration:.52, ease:'power2.out', immediateRender:false }, t);
+      break;
+    case 'L':   // 从左冲入（切入那一帧词已进画 ~1/3，绝不空屏）
+      SNAP(el, 0, op, t);
+      tl.fromTo(el, { x:-560, filter:'blur(26px)' },
+        { x:0, filter:'blur(0px)', duration:.34, ease:SLAM, immediateRender:false }, t);
+      break;
+    case 'R':   // 从右冲入
+      SNAP(el, 0, op, t);
+      tl.fromTo(el, { x:560, filter:'blur(26px)' },
+        { x:0, filter:'blur(0px)', duration:.34, ease:SLAM, immediateRender:false }, t);
+      break;
+    case 'U':   // 由下顶起
+      SNAP(el, 0, op, t);
+      tl.fromTo(el, { y:430, filter:'blur(20px)' },
+        { y:0, filter:'blur(0px)', duration:.36, ease:SLAM, immediateRender:false }, t);
+      break;
+    case 'D':   // 由上砸落
+      SNAP(el, 0, op, t);
+      tl.fromTo(el, { y:-430, filter:'blur(20px)' },
+        { y:0, filter:'blur(0px)', duration:.36, ease:SLAM, immediateRender:false }, t);
+      break;
+    case 'Z':   // z 轴迎面砸来：scale 4 → 1
+      SNAP(el, 0, op, t);
+      tl.fromTo(el, { scale:4, filter:'blur(34px)' },
+        { scale:1, filter:'blur(0px)', duration:.40, ease:SLAM, immediateRender:false }, t);
+      break;
+    case 'O':   // 由远及近穿越：scale 0.1 → 1
+      SNAP(el, 0, op, t);
+      tl.fromTo(el, { scale:0.1, filter:'blur(12px)' },
+        { scale:1, filter:'blur(0px)', duration:.46, ease:'back.out(1.45)', immediateRender:false }, t);
+      break;
+    case 'S': { // 「一帧一帧」逐帧抽搐前进：steps ease
+      SNAP(el, 0, op, t);
+      const ch = new SplitText(el, { type:'chars' }).chars;
+      tl.fromTo(ch, { opacity:0 },
+        { opacity:1, duration:0, stagger:0.13, ease:'none', immediateRender:false }, t);
+      tl.fromTo(el, { x:96 },
+        { x:-96, duration:1.24, ease:'steps(8)', immediateRender:false }, t);
+      tl.fromTo(ch, { y:-18 },
+        { y:18, duration:.30, ease:'steps(2)', repeat:3, yoyo:true, stagger:{ each:0.05 }, immediateRender:false }, t + 0.14);
+      break;
+    }
+    case 'X':   // 「二十年」巨字滚过全屏：右→定格→左
+      SNAP(el, 0, op, t);
+      tl.fromTo(el, { x:1000, scale:1.12 },
+        { x:0, scale:1, duration:.44, ease:SLAM, immediateRender:false }, t);
+      tl.to(el, { x:-64, duration:.42, ease:'none' }, t + 0.46);
+      tl.to(el, { x:-1720, duration:.42, ease:'power2.in' }, t + 0.88);
+      break;
+  }
+
+  /* ── 落地后的追加冲击 ── */
+  if (u.fx === 'punch') {           // 砸实后的一次回弹 + 高频抖
+    tl.to(el, { scale:1.07, duration:.10, ease:PUNCH }, t + 0.40);
+    tl.to(el, { scale:1.00, duration:.32, ease:'power2.out' }, t + 0.50);
+    [-12, 9, -6, 4, -2, 0].forEach((v, i) => {
+      tl.to(el, { x:v, duration:.033, ease:'none' }, t + 0.40 + i * 0.033);
+    });
+  }
+  if (u.fx === 'pulse') {           // 质问句：两次逼近
+    tl.to(el, { scale:1.08, duration:.18, ease:'power2.out' }, t + 0.50);
+    tl.to(el, { scale:1.00, duration:.20, ease:'power2.in'  }, t + 0.68);
+    tl.to(el, { scale:1.11, duration:.20, ease:'power2.out' }, t + 0.98);
+    tl.to(el, { scale:1.02, duration:.34, ease:'power2.inOut' }, t + 1.18);
+  }
+  if (u.fx === 'press') {           // 焦点句：反复放大压迫，越压越大
+    tl.to(el, { scale:1.12, duration:.16, ease:'power2.out' }, t + 0.42);
+    tl.to(el, { scale:1.00, duration:.14, ease:'power2.in'  }, t + 0.58);
+    tl.to(el, { scale:1.26, duration:.20, ease:'power2.out' }, t + 0.72);
+    tl.to(el, { scale:1.15, duration:.16, ease:'power2.in'  }, t + 0.92);
+    tl.to(el, { scale:1.24, duration:.60, ease:'power1.inOut' }, t + 1.08);
+  }
+  if (u.fx === 'quake') {           // 「紧张」：持续高频震颤
+    [17, -15, 13, -12, 10, -9, 7, -6, 4, 0].forEach((v, i) => {
+      tl.to(el, { x:v, duration:.038, ease:'none' }, t + 0.34 + i * 0.038);
+    });
+  }
+
+  /* ── 硬切出场：零帧清零，前后卡绝不同框 ── */
+  SNAP(el, op, 0, u.o);
+});
+
+/* ══════════════ 4. 焦点句前的爆闪（1 帧全亮 + 3 帧衰减） ══════════════ */
+tl.fromTo('#flash', { opacity:0 }, { opacity:1, duration:.001, ease:'none', immediateRender:false }, S(4) - 0.11);
+tl.to('#flash', { opacity:0, duration:.10, ease:'power2.in' }, S(4) - 0.08);
+
+/* ══════════════ 5. 金句：黑场静默 → 一字一字缓慢浮现 ══════════════ */
+{
+  const t0 = S(7);
+  tl.fromTo('#quote', { opacity:0 }, { opacity:1, duration:0, ease:'none', immediateRender:false }, t0 + 2.98);
+  const qc = new SplitText('#qbox .q', { type:'chars' }).chars;
+  tl.fromTo(qc, { opacity:0, y:30 },
+    { opacity:1, y:0, duration:.55, stagger:0.082, ease:'power2.out', immediateRender:false }, t0 + 3.00);
+  tl.fromTo('#quote', { scale:1 },
+    { scale:1.028, duration:4.3, ease:'none', immediateRender:false }, t0 + 4.75);
+  tl.fromTo('#brand', { opacity:0, y:14 },
+    { opacity:.42, y:0, duration:1.0, ease:'power2.out', immediateRender:false }, t0 + 6.10);
+}
+
+/* ══════════════ 6. 进度条：八段破折号，一句一段，色随底色翻转 ══════════════ */
+{
+  const prog = document.getElementById('prog');
+  CUES.forEach((c, i) => {
+    const seg = document.createElement('span'); seg.className = 'seg';
+    const f = document.createElement('i'); f.className = 'pf';
+    seg.appendChild(f); prog.appendChild(seg);
+    tl.fromTo(f, { scaleX:0 },
+      { scaleX:1, duration:Math.max(c.end - c.start, .01), ease:'none', immediateRender:false }, c.start);
+  });
+  // 底色为米白时用墨色条，底色为黑/红时用米白条
+  const LIGHT_ON_DARK = [CREAM, 'rgba(245,240,232,.22)'];
+  const DARK_ON_LIGHT = [INK,   'rgba(17,17,17,.16)'];
+  const PC = [DARK_ON_LIGHT].concat(BG.map(([, col]) => col === CREAM ? DARK_ON_LIGHT : LIGHT_ON_DARK));
+  for (let i = 1; i < PC.length; i++) {
+    const t = BG[i - 1][0];
+    tl.fromTo('.pf',  { backgroundColor:PC[i-1][0] },
+      { backgroundColor:PC[i][0], duration:.001, ease:'none', immediateRender:false }, t);
+    tl.fromTo('.seg', { backgroundColor:PC[i-1][1] },
+      { backgroundColor:PC[i][1], duration:.001, ease:'none', immediateRender:false }, t);
+  }
+  tl.to('#prog', { opacity:0, duration:.6, ease:'power2.in' }, total - 1.2);
+}
+
+window.TOTAL = total;
+window.SEEK  = t => { tl.seek(Math.min(t, total - 0.001), false); };
+</script>
+</body>
+</html>
