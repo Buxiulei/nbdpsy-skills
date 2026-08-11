@@ -398,8 +398,14 @@ def check_component_request(requested: dict):
                      "只传合集/活动/编辑项不再顺带推导。要挂引用得显式给 "
                      "--related-counselor（推荐，服务端按规则推导）或 --quoted-note-id")
     content = requested.get("content")
+    # 编辑路径上限＝平台真实天花板 1000（server 0.23.2 起）；900-1000 区间服务端按
+    # 「新正文长度 ≤ max(900, 该笔记当前长度)」判（只许不变长），本地不重复实现、放行给权威判据。
+    # ⛔ 新发路径的 900 安全值在 publish_note.py，那里是对的，别动。
+    if content is not None and len(content) > 1000:
+        raise ValueError(f"正文 {len(content)} 字超平台硬上限 1000，服务端必拒")
     if content is not None and len(content) > 900:
-        raise ValueError(f"正文 {len(content)} 字超 900，服务端会拒绝")
+        warns.append(f"正文 {len(content)} 字在 900-1000 区间：仅当不长于该笔记线上当前长度时"
+                     "服务端才放行（编辑期「只许不变长」判据，server 0.23.2）")
     if content is not None:
         warns.append("整体替换正文会**丢掉既有话题实体**（含发布时精选的），平台行为不重建；"
                      "丢了哪些会在结果的 topics_dropped 里")
@@ -667,7 +673,8 @@ def main():
     ap.add_argument("--set-title", metavar="标题",
                     help="--set-components：整体替换标题（传空串=清空；显长>20 服务端 422 不截断）")
     ap.add_argument("--set-content", metavar="正文",
-                    help="--set-components：整体替换正文（≤900 字；**会丢既有话题实体**；"
+                    help="--set-components：整体替换正文（≤1000 字硬上限；900-1000 区间服务端"
+                         "只许不变长；**会丢既有话题实体**；"
                          "话题标签之间不能留空格，须连写 #A[话题]##B[话题]#）")
     ap.add_argument("--set-content-file", metavar="路径",
                     help="--set-components：从文件读正文（长文本别塞命令行）")

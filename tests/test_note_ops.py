@@ -398,8 +398,11 @@ def test_image_ops_require_expected_count_guard():
 
 def test_content_length_and_warnings():
     import note_ops
+    # 编辑路径上限=平台天花板 1000（server 0.23.2 只许不变长）；901 只 warn 放行给服务端判
     with pytest.raises(ValueError):
-        note_ops.check_component_request({"content": "字" * 901})
+        note_ops.check_component_request({"content": "字" * 1001})
+    over_900 = " ".join(note_ops.check_component_request({"content": "字" * 901}))
+    assert "只许不变长" in over_900 or "900-1000" in over_900
     warns = note_ops.check_component_request(
         {"content": "短正文", "activity_id": "1", "collection_id": "c"})
     joined = " ".join(warns)

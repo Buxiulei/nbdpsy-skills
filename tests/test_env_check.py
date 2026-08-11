@@ -134,3 +134,19 @@ def test_subprocess_real_xhs_profile_exits_zero_with_pure_json_stdout():
     payload = json.loads(r.stdout)  # stdout 必须是纯 JSON，无杂散文本
     assert payload["ready"] is True
     assert payload["profile"] == "xhs"
+
+
+# ---------- 7. teardown 的必需 CLI 缺失必须阻塞 ready（防假绿，2026-08-11 审查 B1） ----------
+
+def test_teardown_missing_required_cli_blocks_ready(monkeypatch):
+    monkeypatch.setattr(env_check.shutil, "which", lambda name: None)
+    result = env_check.run("teardown", install=False)
+    assert result["ready"] is False
+    ffmpeg = next(c for c in result["checks"] if c["name"] == "ffmpeg")
+    assert ffmpeg["status"] == "missing" and "必需" in ffmpeg["detail"]
+
+
+def test_teardown_ready_when_required_cli_present(monkeypatch):
+    monkeypatch.setattr(env_check.shutil, "which", lambda name: "/usr/bin/" + name)
+    result = env_check.run("teardown", install=False)
+    assert result["ready"] is True

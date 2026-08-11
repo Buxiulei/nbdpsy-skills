@@ -18,6 +18,23 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.90.0] — 2026-08-11
+
+### Added（新增第十个 skill：对标内容拆解 `nbdpsy-content-teardown`）
+
+- **定位**：把别人的爆款（小红书笔记/视频号视频/新闻/音频/手机录屏/任意视频文件）稳定拆成「拆解素材单」——数据判型 → 文字稿还原 → 形式逐秒拆解 → 钩子公式 → 可以学/不要学/差异化机会 → 落到具体产线的复刻蓝图。只产分析不产成片。由 2026-08-07 小红书拆解与 2026-08-11 视频号「皮质醇」四条对标两次实战沉淀。
+- `scripts/dissect_video.py`：视频/录屏/音频一键解剖——ffprobe 元数据 + 16k 抽音 + faster-whisper 转写（**幻觉守卫**：纯音乐片自动判「疑无口播」并导向字幕稿路径，防 31.7s 片被幻觉出 55s 空段的实测事故）+ 抽帧 4×4 看板 + REPORT.md 素材单骨架。
+- `scripts/sph_meta.py`：视频号分享链元数据探针（finder-preview API 截获：账号/标题/四互动数/发布时间/封面即时落盘——**封面 CDN 链过期极快，实测最短仅 ~2h**，到期时刻随 sph_meta.json 带出）。正片微信外必拿不到，SKILL.md 内置「人工录屏 → 博客配套视频上传口回传」流程。
+- `scripts/fetch_xhs_note.py`：小红书笔记提取（server `POST /api/notes/extract`）。**正文同步秒回不用轮询**；轮询只服务可选的 `--comments N --account <号>`（评论走真实浏览器会话、烧一次会话额度，非必要别抓）。⚠️ 必须用分享按钮生成的链接（xhslink.cn 短链或带 xsec_token 完整链），裸 /explore 链 400；结果有 24h 缓存，二抓增速须 `--refresh`。产 note.json + 人读版 note.md。
+- `references/teardown-playbook.md`：数据判型速查（收藏/赞≥50%=工具型、转发/赞≥3×=转发利他型…）、文字稿三条路、形式拆解清单（双钩子/循环体/信任杠杆）、素材单模板全文、十条坑典（账号名误读成数据/商品笔记漏斗/ASR 幻觉与繁体漂移/录屏复合载体切条与群聊隐私/裸链 400 与 24h 缓存等）。
+- `env_check` 新增 `teardown` profile：**ffmpeg/ffprobe 走新增的 `cli_required` 桶（缺=missing=不就绪）**，faster-whisper、playwright、XHS key 可降级只 warn（playwright 的 chromium 内核 env_check 不查，sph_meta 运行时兜底提示）；`sync_shared.py`、install.sh/ps1、plugin/marketplace、README、guide 向导（九个技能表新增「拆解别人的爆款」入口）已同步。
+
+### Fixed（nbdpsy-xiaohongshu-creator，对齐 server 0.23.2 编辑期长度判据）
+
+- **`note_ops.py --set-components` 本地预检与 server 0.23.2 脱节**：旧「>900 即拒（服务端会拒绝）」在编辑路径已不真——server 已把 REST 硬上限放到平台天花板 **1000**，900-1000 区间按「新正文 ≤ max(900, 该笔记线上当前长度)」放行（**只许不变长**，为编辑既存超限笔记开的口）。本地预检改为 >1000 才拒、900-1000 warn 放行给服务端权威判据；实证两条 930+ 字调价单被旧预检零点击挡下。⛔ 新发路径 ≤900 安全值不动（publish_note.py，给标签留余量）。
+- SKILL.md 补验收口径：**编辑正文/标题后别拿 explore 公开页验收**（分钟级 CDN/索引延迟，会把真改成功误判假绿）——即时真值＝job `read_back`（0.23.3 起 done 直带摘要）或台账 `content_text`。⚠️ 台账 `content_text` 长度**含话题 `[话题]#` 标记**，比提交正文长几十字（实测 932→1004）——验收比对关键内容串（如价格），**别拿长度做等值判断**。
+- 实战验证（2026-08-11 晚内容线回报）：四条 ¥800→¥600 调价单 4/4 全绿，其中两条 918/932 字正是被旧预检挡下的，0.23.2 编辑期判据客户端侧首验通过。
+
 ## [1.89.0] — 2026-08-11
 
 ### Added（nbdpsy-text-to-video，第三形态「字卡短片」老板验收入库）

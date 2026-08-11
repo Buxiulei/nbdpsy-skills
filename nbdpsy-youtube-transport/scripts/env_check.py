@@ -3,7 +3,7 @@
 此文件真源在仓库 shared/，由 tools/sync_shared.py 同步到各 skill 的 scripts/，勿单独改副本。
 
 用法：
-  python3 env_check.py --profile {seo|xhs|reviewer|pipeline} [--install]
+  python3 env_check.py --profile {seo|xhs|reviewer|pipeline|teardown} [--install]
 
 输出契约：
   stdout = 纯 JSON {"ready": bool, "profile": str,
@@ -31,7 +31,8 @@ sys.path.insert(0, str(_HERE))
 import nbdpsy_common  # noqa: E402  同目录 import，sys.path[0] 即脚本目录
 
 # 模块探测名 → pip 安装名（find_spec 用左边，pip install 用右边）
-MODULE_PIP_NAME = {"yaml": "pyyaml", "PIL": "pillow", "requests": "requests"}
+MODULE_PIP_NAME = {"yaml": "pyyaml", "PIL": "pillow", "requests": "requests",
+                   "faster_whisper": "faster-whisper"}
 
 # profile → 需求：Python 模块 / 可选模块（缺失只 warn、--install 仍自动补装）/ 必需凭据 /
 #           可选凭据（缺失只 warn）/ 可选 CLI 工具（缺失只 warn，不阻塞 ready）
@@ -42,6 +43,11 @@ PROFILES = {
     "reviewer": {"modules": ["yaml", "requests", "PIL"], "credentials": [], "cli": ["ffmpeg", "ffprobe"]},
     "pipeline": {"modules": ["yaml", "requests", "PIL"], "credentials": ["NBDPSY_BLOG_API_KEY"],
                  "credentials_optional": ["NBDPSY_XHS_API_KEY"], "cli": ["ffmpeg", "ffprobe"]},
+    # 对标拆解：ffmpeg/ffprobe 是 dissect 主路径硬依赖（cli_required，缺=不就绪）；
+    # ASR 与视频号探针可降级只 warn；小红书提取凭据同 xhs 可选
+    "teardown": {"modules": ["requests"], "modules_optional": ["faster_whisper", "playwright"],
+                 "credentials": [], "credentials_optional": ["NBDPSY_XHS_API_KEY"],
+                 "cli": [], "cli_required": ["ffmpeg", "ffprobe"]},
 }
 
 _SYSTEM_FIX = "系统依赖：运行仓库根 setup.py 或让我现场执行"
@@ -81,14 +87,15 @@ def _check_credential(key: str, optional: bool = False) -> dict:
     }
 
 
-def _check_cli(name: str) -> dict:
+def _check_cli(name: str, required: bool = False) -> dict:
     present = shutil.which(name) is not None
-    return {
-        "name": name,
-        "status": "ok" if present else "warn",
-        "detail": "已安装" if present else "未安装（仅审视频需要，不阻塞就绪）",
-        "fix": "" if present else _SYSTEM_FIX,
-    }
+    if present:
+        return {"name": name, "status": "ok", "detail": "已安装", "fix": ""}
+    if required:  # cli_required 桶：缺了就 missing，阻塞 ready（teardown 的 ffmpeg 属此类）
+        return {"name": name, "status": "missing", "detail": "未安装（本 profile 必需）",
+                "fix": _SYSTEM_FIX}
+    return {"name": name, "status": "warn",
+            "detail": "未安装（仅审视频需要，不阻塞就绪）", "fix": _SYSTEM_FIX}
 
 
 def _pip_install(pip_name: str) -> None:
@@ -136,6 +143,9 @@ def run(profile: str, install: bool) -> dict:
 
     for tool in spec["cli"]:
         checks.append(_check_cli(tool))
+
+    for tool in spec.get("cli_required", []):
+        checks.append(_check_cli(tool, required=True))
 
     if profile == "pipeline":
         checks.append({
