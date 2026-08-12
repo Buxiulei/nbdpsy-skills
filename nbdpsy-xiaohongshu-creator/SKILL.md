@@ -1260,6 +1260,10 @@ python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/images/po
    `--job <id>` 复查到终态为止；轮询超时仍在跑同理。多篇逐条串行发，别并发轰同一账号。
    **同账号发布共享一把锁、严格串行**：前一个任务卡住会把后面全部堵住，所以批量发布前先
    `--list-jobs --account <id> --status pending` 看一眼队列，别对着堵住的队列继续灌。
+   **发布前配图必须转 JPG**（2026-08-11 实测）：PNG 八张约 11MB 会把 Cloudflare 100s 网关
+   撑爆（HTTP **524**），转 JPG 后 ~1.7MB 一次过。⚠️ **524 的语义是「结果未知」不是「失败」**，
+   与 `outcome=unknown` 同族——绝不盲重试，先 `--list-jobs --account <id>` 查任务是否已建上
+   （查到 0 条才可重发）。
 3. **失败排障**：
    - 报 `Host not allowed` / proxy blocked / 恒超时 → Claude 沙盒拦网：先跑
      `python3 {SKILL_DIR}/scripts/nbdpsy_common.py sandbox allow` 写入放行名单，提醒运营**重启
