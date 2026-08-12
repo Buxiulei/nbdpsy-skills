@@ -18,6 +18,13 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.93.2] — 2026-08-12
+
+### Fixed（nbdpsy-text-to-video：分片提速数字勘误 + 存量一致性哈希实证）
+
+- **性能数字勘误**：v1.93.0 的「camera 131s→38s」是单跑噪声且为「GPU+4 片」合成数（GPU 现已默认关）。复测各两遍的真值：**CPU 4 片 32/33s（默认路径 131→33s，4.0×）**、GPU 4 片 28/28s——**分片后 GPU 只多买 ~1.15×**，进一步坐实默认关 GPU 的改判。spec 补「分片耗时受同机负载影响明显，做决策跑两遍」纪律。⚠️ 0d98d88 提交信息里的 38s 留在历史不改写，以本节为准。
+- **存量一致性从假设变实证**：改造前原始启动参数 vs 新默认路径各渲 222 帧（同开 --deterministic），帧哈希逐字节相同（`0a5485a6…`）；新默认下 wrapper 双跑 mp4 md5 一致。测试补 4 条（默认路径不得含任何 GPU 参数等），test_render_card 69 条、全仓 1226 全绿。
+
 ## [1.93.1] — 2026-08-12
 
 ### Changed（nbdpsy-text-to-video：字卡 GPU 默认口径改判——默认关，与存量批次和 EMDR 线统一）
@@ -31,7 +38,7 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 ### Added（nbdpsy-text-to-video：字卡产线 GPU 光栅 + 分片并行渲染，老板指定沉淀）
 
 - **`render_card.py` GPU 光栅化**：`--enable-gpu --ignore-gpu-blocklist --use-angle=vulkan`（`--angle vulkan|egl|swiftshader` 可选，⚠️ Chromium 的 `egl` 不是合法值会**静默回落 SwiftShader**，真名 `gl-egl` 已做映射）；GL_RENDERER 打印进 stderr、含 SwiftShader 即降级警告。对照实测证实现版一直在 CPU 软光栅，4090 全程闲置。
-- **分片并行**：`--shard I N`（帧域连续切分、全局连续帧号、跳 mux）+ `render_sharded.sh <tpl> <out> <N>`（N 片并行 → 帧连续性校验 → 统一 mux，Ctrl-C 全链清杀）；另有 `--verify-frames` / `--mux-only` 子模式。**实测 tpl-camera 131s(CPU)→38s(GPU 4 片)**；GPU 本身仅 1.6-1.8×（重负载受益反而更小，推翻原假设），大头来自分片；N=2-4 为宜（4 片已进递减区）。
+- **分片并行**：`--shard I N`（帧域连续切分、全局连续帧号、跳 mux）+ `render_sharded.sh <tpl> <out> <N>`（N 片并行 → 帧连续性校验 → 统一 mux，Ctrl-C 全链清杀）；另有 `--verify-frames` / `--mux-only` 子模式。**实测 tpl-camera 默认路径 131s→33s(4 片)、GPU 4 片 28s（勘误见 1.93.2）**；GPU 本身仅 1.6-1.8×（重负载受益反而更小，推翻原假设），大头来自分片；N=2-4 为宜（4 片已进递减区）。
 - **帧目录自锁**：`.render.pid` 三行制（pid/slot/started）按槽位判冲突——整片与任何渲染互斥、兄弟分片放行、死锁接管；wrapper **预清之前先认锁**（防「先清后拒」清掉别人的帧）。EMDR 线已拍板取用本实现为 canonical。
 - **🩸 阻断级基线发现**：md5 确定性闸门在本次改动之前就是红的——默认路径 SEEK 后不等合成器提交即截图，同配置双跑 md5 必不同（CPU/GPU 皆然，差异 ≤6/255 肉眼无感）。新增 `--deterministic`（seek 后等两个 rAF，1.7×代价，三跑 md5 全同）；**验收与复现必须带它双跑，批量建议带**。分片数 N 亦属渲染配置（不同 N md5 不同），同批必须固定。
 - `card-video-spec.md` 新增「GPU 加速与分片渲染」节（三纪律：换后端双跑 md5 验确定性／整批统一后端与 N 不得混用／撞帧目录后来者拒绝启动绝不清帧）；`tests/test_render_card.py` 65 条。

@@ -58,37 +58,45 @@
 
 ## GPU 加速与分片渲染
 
-逐帧截图默认走 GPU 光栅（`--enable-gpu --ignore-gpu-blocklist --use-angle=vulkan`）。
-headless Chromium 不加这些参数时用的是 SwiftShader 纯 CPU 软光栅——`render_card.py` 启动后会把
-实际后端打进 stderr（`GL_RENDERER[--angle=vulkan]: ANGLE (NVIDIA … RTX 4090 …)`），
-**落回 SwiftShader 会打醒目警告**，看到就别往下渲。
+**提速主路是分片，不是 GPU。** 逐帧截图**默认 CPU 光栅**（SwiftShader）——与 2026-08-11 验收入库的
+存量字卡片逐字节同一套参数（已实测校验：默认路径与改造前原始启动参数的 222 帧哈希同为
+`0a5485a6…`）。GPU 要显式开，且**开了就整批开**（理由见纪律②）。
 
 ```bash
-# 整片（默认 GPU）
+# 整片（默认 CPU，与存量批次像素一致）
 python3 render_card.py tpl-basic.html out.mp4
 # 分片并行：预清帧目录 → N 片并行 → 帧连续性校验 → 合帧混音，一条命令收口
 bash render_sharded.sh tpl-camera.html out.mp4 4
 # 逐字节可复现模式（跑验收闸门时用，见纪律①）
 bash render_sharded.sh tpl-camera.html out.mp4 4 --deterministic
-# vulkan 起不来的退路 / 强制回软光栅
+# 显式开 GPU（⚠️ 会改像素，整批统一才用）／vulkan 起不来的退路
+python3 render_card.py tpl.html out.mp4 --angle vulkan
 python3 render_card.py tpl.html out.mp4 --angle egl
-python3 render_card.py tpl.html out.mp4 --angle swiftshader
 ```
 
-`--angle` 只收 `vulkan|egl|swiftshader`。⚠️ `--use-angle=egl` 不是 ANGLE 的合法取值、会**静默**回落
-SwiftShader，所以 `--angle egl` 内部映射成 `gl-egl`（2026-08-12 实测）。
+`render_card.py` 启动后把实际后端打进 stderr：默认路径打一行中性说明
+（`ℹ️ 当前 CPU 光栅（与存量批次一致）`）；**显式要了 GPU 却落回 SwiftShader 才打醒目警告**，
+看到就别往下渲。⚠️ `--use-angle=egl` 不是 ANGLE 的合法取值、会**静默**回落 SwiftShader，
+所以 `--angle egl` 内部映射成 `gl-egl`（2026-08-12 实测）。
 
 **实测（本机 RTX 4090 + Playwright 1.58 headless，1080×1920，2026-08-12）**：
 
-| 模板 | 帧数 | CPU 软光栅 | GPU 整片 | GPU 2 片 | GPU 4 片 |
-|---|---|---|---|---|---|
-| tpl-basic | 222 | 20s | 11s（1.8×） | — | — |
-| tpl-camera | 415 | 131s | 83s（1.6×） | 43s | 38s（合计 3.4×） |
+| 模板 | 帧数 | CPU 整片（默认） | CPU 4 片 | GPU 整片 | GPU 2 片 | GPU 4 片 |
+|---|---|---|---|---|---|---|
+| tpl-basic | 222 | 20s | 14s（2 片） | 11s（1.8×） | — | — |
+| tpl-camera | 415 | 131s | **32-33s（4.0×）** | 83s（1.6×） | 43s | 28s |
 
-结论与原先的猜测相反：**GPU 本身只给 1.6-1.8×，且重负载模板（camera）受益反而略小**；
-真正的提速来自分片——camera 上 2 片近乎翻倍，4 片开始因 GPU/内存争抢收益递减。
+**分片是提速主力，而且它零像素变化**：默认 CPU 路径上 camera **131s→33s（4.0×）**，全部来自分片。
+在此之上再开 GPU 只多买到 33s→28s（约 1.15×）——用「与全部存量片字形不一致」换 15%，不划算，
+所以默认关。GPU 单跑那 1.6-1.8× 在分片之后基本被吃掉了。
+另注：GPU 提速比与模板负载**无正相关**——重负载的 camera 受益反而略小（1.6× vs basic 的 1.8×），
+瓶颈在截图编码与 IPC，不在光栅。
+
+⚠️ 上表分片数字**逐条复测过**：首测 GPU 4 片 38s 是单跑噪声，复跑两次稳定 28s。
+分片耗时受同机其他负载影响明显，**要拿它做决策就跑两遍**（本节的教训之一）。
+
 N 按内存定不按核数定：一路 Chromium 逐帧渲染峰值可吃到数 GB（EMDR 线 R15 有 7.1GB 被 OOM 杀的实例），
-**2-4 是安全区**。`--deterministic` 约慢 1.7×（tpl-basic 11s→20s）。
+**2-4 是安全区**；4 片相对 2 片已进入争抢递减区。`--deterministic` 约慢 1.7×。
 
 ### 三条纪律
 
@@ -118,10 +126,12 @@ md5 各不相同，差在 1 帧、383 个像素、最大通道差 1——这个�
 
 **同一批：后端一致 + N 一致。**
 
-⚠️ **存量片是 CPU 渲的**：2026-08-11 老板验收入库的首片与四版式样片，都出自开 GPU 之前的默认路径。
-按本纪律，**要跟那批保持一致就得 `--angle swiftshader`**；只有新开的批次才适合直接吃 GPU 默认值。
+⚠️ **正因为此，默认后端是 CPU**：2026-08-11 验收入库的首片与四版式样片都是 CPU 渲的，
+默认开 GPU 等于让新片跟存量不是一套字。要用 GPU 就**整批都用**（含同批的补渲、返工重出），
+别只给某几条开。EMDR 线基于同一条理由也把 GPU 关掉了，两线口径一致。
+
 另：EMDR 线报告 vulkan 下 `page.screenshot` 会间歇性抛 `Unable to capture screenshot`
-（本线 tpl-basic/tpl-camera 十余次整片与分片实跑未复现，但换重模板时要留意，遇到就退 `--angle swiftshader`）。
+（本线 tpl-basic/tpl-camera 十余次整片与分片实跑未复现，但显式开 GPU 时要留意，遇到就退回默认 CPU）。
 
 **③ 两个全量渲染撞同一帧目录＝后来者拒绝启动，绝不清对方的帧**。
 帧目录里放 `.render.pid`（整片）/ `.render.pid.s{i}of{N}`（分片），首行是 pid。开渲前扫一遍：

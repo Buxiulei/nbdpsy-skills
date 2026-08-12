@@ -29,7 +29,7 @@ description: >-
   规格与工程坑清单见 `references/card-video-spec.md`，模板在 `assets/card-templates/`，
   渲染 `scripts/render_card.py`（默认 CPU 光栅与存量批次像素一致；⚠️ GPU 会改像素，显式
   `--angle vulkan` 且开了就整批开），赶时间用 `scripts/render_sharded.sh <tpl> <out> 4`
-  分片并行（**分片零像素变化，是提速主路**，camera 类实测 131s→38s），kinetic 词级卡点
+  分片并行（**分片零像素变化，是提速主路**，camera 类默认 CPU 路径实测 131s→33s），kinetic 词级卡点
   须先跑 `scripts/extract_word_timings.py`。
   ⚠️ 依赖本 skill 2026-08-11 后的 `tts_gen --timed`（wav 域拼接修复版）——旧版 cues 有累积漂移必不同步。
 
