@@ -1650,6 +1650,7 @@ python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9
 | 参考样本模仿规格（第 0.5 步用：三形态判定 + 页角色拆解 + **样本卡逐字模板** + 优先级链 + 红线三层与留痕格式 + 锚点衔接 + 版权护栏） | `references/reference-mimicry-spec.md` |
 | **路线② 文字版规格**（第 0.6 步选了②就整篇按它走：路线判据 + 文本改造四道工序（去引用/口语化/排版标记）+ 输入契约 + 两套主题 + 正文写法 + **与既有规格的适用性对照** + 验收清单） | `references/longform-typeset-spec.md` |
 | 单篇笔记黄金范例（从 CPTSD pillar 拆出，对照学习） | `assets/example-xhs-note.md` |
+| 品牌矢量 logo（六变体 SVG + 色值与用法，合成/末页推介/水印用，禁位图抠图） | `assets/brand/brand-logo.md` |
 | 拉取源长文（--slug 单篇 / --list 列表） | `scripts/fetch_post.py` |
 | 拉取咨询师公开资料（--list 概览 / --emp 单人详情，已删 contracted_price；`--avatar-out <路径>` 把系统头像下载到本地供末页推介页出图） | `scripts/fetch_counselor.py` |
 | 咨询师照片本地合成进 P1 封面留白区（备选保真路线；等比裁剪+圆角+品牌色描边，绝不喂 AI；--region top/left） | `scripts/compose_photo.py` |

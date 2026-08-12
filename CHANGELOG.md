@@ -18,6 +18,14 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.94.0] — 2026-08-12
+
+### Added（nbdpsy-text-to-video + nbdpsy-xiaohongshu-creator：品牌矢量 logo 资产入包）
+
+- 两个出图/出片 skill 各内置 `assets/brand/`：**6 个矢量 SVG logo 变体**（全标/徽记×渐变金/纯金/单色酒红/单色金/反白）+ `brand-logo.md`（色值、深底规则、最小尺寸、安全空间、取用方式）。由 2816px 原始位图 potrace 描摹（徽记 8 条贝塞尔复合路径），任意分辨率无损；**此后片头/收尾/水印/合成一律取矢量，禁止再用 JPEG logo 抠图**。
+- 矢量真源与印刷格式（PDF/EPS+完整规格）在主仓 `NBDpsy/frontend/marketing-web/public/brand/`，公网 `https://www.nbdpsy.com/brand/svg/*.svg` 可直取。
+- nbdpsy-guide 无需同步：纯内部资产，不新增运营入口/触发语。
+
 ## [1.93.2] — 2026-08-12
 
 ### Fixed（nbdpsy-text-to-video：分片提速数字勘误 + 存量一致性哈希实证）
