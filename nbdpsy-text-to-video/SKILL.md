@@ -328,6 +328,8 @@ What-If/How-to-Tell 双路概念 → 结构选型 → 剧本 → 内部自检硬
 
 **逐字稿规范（写稿六律 / DeepSeek 三轮本土化审校 / TTS 引语坑 / 表演标记纪律）见
 `references/narration-spec.md`——口播稿定稿前必须走完该文档的审校流程。**
+**屏显文字排版铁律（2026-08-13 老板令，全形态）见同文档 §七**：逗号=换行、句号/问号/
+省略号=翻页、每句独立成页禁多句连排；任何文字渲染路径必须过同一排版规则。
 口语化、共情、**忠于原文不编造**；不下诊断、不承诺疗效。`subtitle` 是无旁白镜的兜底固定字幕（每镜 1–2 行、每行 ≤ ~16 字）；有旁白+cues 时字幕逐句真同步、无需手写。shots.json 里的 `narration_text`/`subtitle` 由 TTS 与合成清单消费，`jimeng_gen` 生成画面时会忽略它们（只吃 operation/prompt/duration/ratio/model/image）。
 
 ---
