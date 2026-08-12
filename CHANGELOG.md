@@ -18,6 +18,14 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [1.93.1] — 2026-08-12
+
+### Changed（nbdpsy-text-to-video：字卡 GPU 默认口径改判——默认关，与存量批次和 EMDR 线统一）
+
+- **`render_card.py` 光栅后端默认改回 CPU（SwiftShader），GPU 须显式 `--angle vulkan` 且开了就整批开**。改判依据（v1.93.0 发出后 EMDR 线独立实测互证）：①GPU 会改像素——tpl-basic 同模板同 cues 下 CPU vs GPU **222/222 帧全不同**、最严重一帧差 30 万像素（14.5%），EMDR 线带阴影内容最大分量差 35/255；②**存量已过审字卡片全是 CPU 渲的**，默认开 GPU=新片与存量不是一套字形，违背纪律②自身逻辑；③提速大头本来在分片（131→83s 是 GPU、83→38s 是分片），**分片零像素变化**。
+- swiftshader 档走与存量**逐字节相同**的原始启动参数集（不带任何 GPU 参数）；默认路径下 SwiftShader 为预期态改中性提示，显式要 GPU 却落软光栅才打降级警告。card-video-spec 补 `--deterministic` 场景表（验收/复现必带、批量建议带、迭代预览不必带）与像素差异实测数。
+- ⚠️ 跨线方言警告（EMDR 平移前必对齐）：分片序号基（本实现 1-indexed / EMDR t2 0-indexed）、锁文件命名（`.render.pid.s{i}of{N}` 三行制 / `.shard-{i}.pid`）——同一条命令两脚本含义不同，会渲错帧域且不报错。
+
 ## [1.93.0] — 2026-08-12
 
 ### Added（nbdpsy-text-to-video：字卡产线 GPU 光栅 + 分片并行渲染，老板指定沉淀）

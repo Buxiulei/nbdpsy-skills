@@ -254,8 +254,8 @@ def spy(monkeypatch):
 
 def test_旧契约_两个位置参数解析不变(spy):
     assert rc.main(["tpl-basic.html", "out.mp4"]) == 0
-    assert spy["args"] == ("tpl-basic.html", "out.mp4", None, "vulkan", False), \
-        "不带新参数时必须还是「整片渲染+混音」，且分片为 None"
+    assert spy["args"] == ("tpl-basic.html", "out.mp4", None, "swiftshader", False), \
+        "不带新参数时必须还是「整片渲染+混音」、分片为 None、且后端默认 CPU（与存量批次一致）"
 
 
 def test_分片参数解析(spy):
@@ -277,6 +277,28 @@ def test_egl映射到gl_egl而不是裸egl():
     """实测 `--use-angle=egl` 不是合法取值、会静默回落 SwiftShader——必须映射成 gl-egl。"""
     assert rc.ANGLE_BACKEND["egl"] == "gl-egl"
     assert rc.ANGLE_BACKEND["vulkan"] == "vulkan"
+
+
+def test_默认CPU路径不带任何GPU启动参数():
+    """存量已过审的字卡片都是「只有 BASE_ARGS」渲的——默认路径必须逐字节复现那套参数，
+    多传一个 --enable-gpu 都可能换掉光栅路径。"""
+    assert rc.launch_args("swiftshader") == rc.BASE_ARGS
+    for flag in rc.GPU_ARGS + ["--use-angle=swiftshader"]:
+        assert flag not in rc.launch_args("swiftshader")
+
+
+@pytest.mark.parametrize("angle,backend", [("vulkan", "vulkan"), ("egl", "gl-egl")])
+def test_显式开GPU才加GPU参数(angle, backend):
+    args = rc.launch_args(angle)
+    assert args[:len(rc.BASE_ARGS)] == rc.BASE_ARGS
+    for flag in rc.GPU_ARGS:
+        assert flag in args
+    assert f"--use-angle={backend}" in args
+
+
+def test_launch_args不污染BASE_ARGS():
+    rc.launch_args("swiftshader").append("--脏")
+    assert "--脏" not in rc.BASE_ARGS
 
 
 def test_分片序号越界在开渲前就报错(spy):

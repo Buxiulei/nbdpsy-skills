@@ -6,7 +6,7 @@
   render_card.py <tpl.html> <out.mp4> --shard 1 4     只渲第 1/4 片（跳过混音，帧号仍全局连续）
   render_card.py <tpl.html> --verify-frames [--expect N]   帧连续性校验（缺号/重号/残留）
   render_card.py <tpl.html> <out.mp4> --mux-only      只合帧混音（分片渲完后收口）
-  通用 --angle vulkan|egl|swiftshader                 光栅后端，默认 vulkan
+  通用 --angle swiftshader|vulkan|egl                 光栅后端，默认 swiftshader（CPU）
 
 ⚠️ 路径基准是脚本自身所在目录（HERE），不是 cwd——每条视频必须独立工作目录、各带一份本脚本副本。
 """
@@ -16,12 +16,25 @@ from pathlib import Path
 HERE = Path(__file__).parent
 FPS = 30
 
-# 逐帧截图默认走 GPU 光栅。headless 下 Chromium 默认 SwiftShader（纯 CPU 软光栅），
-# 这三个参数把 ANGLE 顶到独显上；--angle 是 vulkan 起不来时的退路。
+# 光栅后端**默认 CPU**（headless Chromium 不给 GPU 参数时就是 SwiftShader 软光栅）。
+# 不默认开 GPU 的理由（2026-08-12 定）：GPU 与 CPU 是两套字形抗锯齿实现，实测 tpl-basic
+# 同模板同 cues 下 222/222 帧全不同、最严重一帧差 30 万像素——而**存量已过审的字卡片全是 CPU 渲的**，
+# 默认开 GPU 等于让新片和存量不是一套字。提速走分片（零像素变化），GPU 只在整批都用时显式开。
 BASE_ARGS = ["--force-device-scale-factor=1", "--hide-scrollbars"]
 GPU_ARGS = ["--enable-gpu", "--ignore-gpu-blocklist"]
 # ⚠️ `--use-angle=egl` 不是合法取值，会静默回落 SwiftShader；真正的 EGL 路径叫 gl-egl（实测 2026-08-12）。
 ANGLE_BACKEND = {"vulkan": "vulkan", "egl": "gl-egl", "swiftshader": "swiftshader"}
+
+
+def launch_args(angle: str):
+    """按后端拼 Chromium 启动参数。
+
+    swiftshader（默认）走**与存量批次逐字节相同**的原始参数集——一个多余的 --enable-gpu 都可能
+    换掉光栅路径，所以这里不图省事跟 GPU 分支合并。
+    """
+    if angle == "swiftshader":
+        return list(BASE_ARGS)
+    return BASE_ARGS + GPU_ARGS + [f"--use-angle={ANGLE_BACKEND[angle]}"]
 
 GL_RENDERER_JS = """() => {
   const c = document.createElement('canvas');
@@ -185,13 +198,20 @@ def _probe_gl_renderer(page, angle: str):
         print(f"⚠️ GL_RENDERER 探测失败（{type(e).__name__}），无法确认光栅后端", file=sys.stderr)
         return None
     print(f"GL_RENDERER[--angle={angle}]: {r}", file=sys.stderr)
-    if "swiftshader" in str(r).lower() and angle != "swiftshader":
+    is_sw = "swiftshader" in str(r).lower()
+    if is_sw and angle != "swiftshader":
+        # 用户显式要 GPU 却落到软光栅 = 真降级，醒目警告
         print(
             "⚠️⚠️ GPU 未生效，正在 CPU 软光栅（SwiftShader），速度慢 5-10 倍！\n"
             "     换 --angle egl 再试；仍是 SwiftShader 就先查驱动/Vulkan ICD。\n"
-            "     ⛔ 别拿这批帧跟 GPU 渲的帧混进同一批视频——亚像素差异会让风格漂移。",
+            "     ⛔ 别拿这批帧跟 GPU 渲的帧混进同一批视频——像素差异会让风格漂移。",
             file=sys.stderr,
         )
+    elif is_sw:
+        # 默认路径：CPU 软光栅是预期态（与存量批次像素一致），中性提示即可
+        print("ℹ️ 当前 CPU 光栅（与存量批次一致）。提速用 render_sharded.sh 分片，"
+              "或显式 --angle vulkan 开 GPU（⚠️ 开了就整批开，GPU 会改像素）。",
+              file=sys.stderr)
     return r
 
 
@@ -209,7 +229,7 @@ def mux(html_name: str, out_name: str) -> str:
     return str(out)
 
 
-def render(html_name: str, out_name: str = None, shard=None, angle: str = "vulkan",
+def render(html_name: str, out_name: str = None, shard=None, angle: str = "swiftshader",
            deterministic: bool = False) -> str:
     cues = json.load(open(HERE / "narration.mp3.cues.json"))
     if isinstance(cues, dict):
@@ -234,7 +254,7 @@ def render(html_name: str, out_name: str = None, shard=None, angle: str = "vulka
         t0 = time.time()
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            b = p.chromium.launch(args=BASE_ARGS + GPU_ARGS + [f"--use-angle={ANGLE_BACKEND[angle]}"])
+            b = p.chromium.launch(args=launch_args(angle))
             pg = b.new_page(viewport={"width": 1080, "height": 1920})
             _probe_gl_renderer(pg, angle)
             errs = []
@@ -275,13 +295,14 @@ def render(html_name: str, out_name: str = None, shard=None, angle: str = "vulka
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="字卡短片逐帧渲染（GPU 光栅 + 可分片）")
+    ap = argparse.ArgumentParser(description="字卡短片逐帧渲染（默认 CPU 光栅 + 可分片并行）")
     ap.add_argument("html", help="模板 HTML（相对本脚本所在目录）")
     ap.add_argument("out", nargs="?", help="输出 MP4（相对本脚本所在目录）")
     ap.add_argument("--shard", nargs=2, type=int, metavar=("I", "N"),
                     help="只渲第 I/N 片（I 从 1 起），帧号保持全局连续，跳过混音")
-    ap.add_argument("--angle", choices=sorted(ANGLE_BACKEND), default="vulkan",
-                    help="光栅后端：vulkan(默认独显) / egl(退路) / swiftshader(强制 CPU 软光栅)")
+    ap.add_argument("--angle", choices=sorted(ANGLE_BACKEND), default="swiftshader",
+                    help="光栅后端：swiftshader(默认 CPU 软光栅，与存量批次像素一致) / "
+                         "vulkan(独显 GPU，⚠️ 会改像素、开了就整批开) / egl(GPU 退路)")
     ap.add_argument("--deterministic", action="store_true",
                     help="每帧等两个 rAF 再截，换来逐字节可复现（跑双跑 md5 验收时必开），约慢 1.7×")
     ap.add_argument("--verify-frames", action="store_true", help="只校验帧目录连续性")
