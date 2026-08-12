@@ -95,3 +95,27 @@ def test_missing_file_errors_to_stdout(tmp_path):
     r = subprocess.run([sys.executable, str(SCRIPT), str(missing)], capture_output=True, text=True)
     d = json.loads(r.stdout)          # 错误 JSON 打 stdout，而非 stderr
     assert r.returncode == 2 and "error" in d and r.stderr.strip() != ""
+
+
+def _inflate_fixture(tmp_path, extra):
+    """在 fixture 正文节首插入 extra 个汉字，其余结构（页数/标题）保持合法。"""
+    fx = FIXTURE.read_text(encoding="utf-8")
+    m = re.search(r"^## *(发布文案|正文).*$", fx, re.M)
+    t = fx[:m.end()] + "\n" + "字" * extra + fx[m.end():]
+    f = tmp_path / "inflated.md"
+    f.write_text(t, encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    return r.returncode, json.loads(r.stdout)
+
+
+def test_body_over_reference_warns_but_passes(tmp_path):
+    """2026-08-12 老板定性：450 是参考值不判 FAIL（硬上限逼出压句病文）；只有平台 900 才硬。"""
+    rc, out = _inflate_fixture(tmp_path, 300)   # 正文 ~600 字
+    assert rc == 0 and out["ok"] is True and out["ok_body"] is False
+    assert "参考区间" in out["body_warn"] and "删段落" in out["body_warn"]
+
+
+def test_body_over_platform_safe_fails(tmp_path):
+    rc, out = _inflate_fixture(tmp_path, 700)   # 正文 ~1000 字，超平台安全值
+    assert rc == 2 and out["ok"] is False and out["ok_platform"] is False
+    assert "平台安全值 900" in out["title_reason"]

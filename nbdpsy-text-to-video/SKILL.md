@@ -27,7 +27,8 @@ description: >-
   （30–40 秒，逐帧渲染帧级音画同步，四个版式模板：basic 品牌动效/camera 电影运镜/collage 手作拼贴/
   kinetic 动力学文字）。**边际成本 ≈¥0.2/条、改字 1 分钟重出**，三形态里量产成本最低。
   规格与工程坑清单见 `references/card-video-spec.md`，模板在 `assets/card-templates/`，
-  渲染 `scripts/render_card.py`，kinetic 词级卡点须先跑 `scripts/extract_word_timings.py`。
+  渲染 `scripts/render_card.py`（默认 GPU 光栅），赶时间用 `scripts/render_sharded.sh <tpl> <out> 4`
+  分片并行（camera 类实测 131s→38s），kinetic 词级卡点须先跑 `scripts/extract_word_timings.py`。
   ⚠️ 依赖本 skill 2026-08-11 后的 `tts_gen --timed`（wav 域拼接修复版）——旧版 cues 有累积漂移必不同步。
 
 **路径约定**：以下命令中 `{SKILL_DIR}` 指本文件（SKILL.md）所在目录；`{workspace}` 指内容工作区根目录，用 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace` 查询实际路径。

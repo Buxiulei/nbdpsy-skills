@@ -8,6 +8,7 @@ from pathlib import Path
 
 # 阈值（移植自 count_xhs.sh）
 DEFAULT_TARGET = 300
+PLATFORM_BODY_SAFE = 900   # 平台物理约束：正文+标签共 1000，给标签留 ~100 的安全值（唯一硬上限）
 PAGE_MIN = 6
 PAGE_MAX = 9
 TITLE_MAX = 20  # 小红书标题硬限 20 字（xiaohongshu-spec §1）——此前 spec 写了红线但脚本零守卫
@@ -241,15 +242,32 @@ def main():
     pages = count_pages(text)
     title, title_chars, title_found = count_title_chars(text)
 
-    # 阈值检查：正文字数区间默认由 DEFAULT_TARGET 派生（210–450），可被 --body-min/max 覆盖
+    # 阈值检查：正文字数区间默认由 DEFAULT_TARGET 派生（210–450），可被 --body-min/max 覆盖。
+    # ⚠️ 2026-08-12 老板定性降级：这个区间是**产品偏好的参考值，不再判 FAIL**——对照实验证明
+    # 硬上限会逼写手在边缘反复剪句子，剪出「在认错」式指代悬空病句（坏的不是写手是规格）。
+    # 唯一硬的是平台物理约束：正文+标签共 1000，安全值 900——超它才 FAIL。
     lo = body_min if body_min is not None else DEFAULT_TARGET * 70 // 100
     hi = body_max if body_max is not None else DEFAULT_TARGET * 150 // 100
 
-    ok_body = lo <= body_chars <= hi
+    ok_body = lo <= body_chars <= hi          # 现语义=「落在参考区间内」，不再参与 ok 判定
+    if ok_body:
+        body_warn = ""
+    elif body_chars > hi:
+        body_warn = (f"正文 {body_chars} 字超参考区间 {lo}–{hi}（参考值不判 FAIL；"
+                     "超长优先删段落、⛔ 不压句子——压句必出指代悬空）")
+    else:
+        body_warn = (f"正文 {body_chars} 字低于参考区间 {lo}–{hi}（参考值不判 FAIL；"
+                     "「正文=钩子、完整表达在图/视频」架构下短正文合法，确认完整版已进轮播图即可）")
+    ok_platform = body_chars <= PLATFORM_BODY_SAFE
+    platform_reason = "" if ok_platform else (
+        f"正文 {body_chars} 字超平台安全值 {PLATFORM_BODY_SAFE}"
+        "（正文+标签共 1000 硬上限）：删段落回 900 内，或改走文字版形态（正文进图）")
     ok_pages = page_min <= pages <= page_max
     # 标题缺失不判 FAIL（范例/片段文件可能无 frontmatter）；有则必须 <=20 字
     ok_title = (not title_found) or (title_chars <= TITLE_MAX)
     reasons = []
+    if platform_reason:
+        reasons.append(platform_reason)
     if title_found and title_chars > TITLE_MAX:
         reasons.append(f"标题 {title_chars} 字，超硬限 {TITLE_MAX} 字")
 
@@ -300,7 +318,7 @@ def main():
                     "内容页超每页信息点上限 %d 个：%s（信息点为保守估算，判超限时请人工复核该页）"
                     % (density_points, "、".join(f"{p['page']} {p['points']} 个" for p in over)))
 
-    ok = ok_body and ok_pages and ok_title and ok_density
+    ok = ok_platform and ok_pages and ok_title and ok_density
 
     result = {
         "body_chars": body_chars,
@@ -312,6 +330,8 @@ def main():
         "title_keyword_pos": title_keyword_pos,
         "title_reason": "；".join(reasons),
         "ok_body": ok_body,
+        "body_warn": body_warn,
+        "ok_platform": ok_platform,
         "ok_pages": ok_pages,
         "ok_title": ok_title,
     }

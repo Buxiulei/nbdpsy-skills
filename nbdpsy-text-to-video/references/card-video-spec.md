@@ -53,7 +53,75 @@
 4. 绝对定位装饰层与文字分区布局，禁止重叠遮字；
 5. 词组切换用 `duration:0` 的 fromTo 硬切（出场 to 与入场撞同帧时，普通补间在自身 start 渲染 progress 0 会出空帧）；
 6. 渲染性能：多层 text-shadow/大面积 blur 拖慢逐帧截图（tpl-camera 251s vs tpl-kinetic 58s），量产优先轻负载模板；
+   重负载模板走分片并行可把墙钟时间压回来（见下节「GPU 加速与分片渲染」）；
 7. 双格式落盘防重（出图目录 png+jpg 同名会被发布脚本收两遍——publish_note 已去重，但落盘仍建议单格式）。
+
+## GPU 加速与分片渲染
+
+逐帧截图默认走 GPU 光栅（`--enable-gpu --ignore-gpu-blocklist --use-angle=vulkan`）。
+headless Chromium 不加这些参数时用的是 SwiftShader 纯 CPU 软光栅——`render_card.py` 启动后会把
+实际后端打进 stderr（`GL_RENDERER[--angle=vulkan]: ANGLE (NVIDIA … RTX 4090 …)`），
+**落回 SwiftShader 会打醒目警告**，看到就别往下渲。
+
+```bash
+# 整片（默认 GPU）
+python3 render_card.py tpl-basic.html out.mp4
+# 分片并行：预清帧目录 → N 片并行 → 帧连续性校验 → 合帧混音，一条命令收口
+bash render_sharded.sh tpl-camera.html out.mp4 4
+# 逐字节可复现模式（跑验收闸门时用，见纪律①）
+bash render_sharded.sh tpl-camera.html out.mp4 4 --deterministic
+# vulkan 起不来的退路 / 强制回软光栅
+python3 render_card.py tpl.html out.mp4 --angle egl
+python3 render_card.py tpl.html out.mp4 --angle swiftshader
+```
+
+`--angle` 只收 `vulkan|egl|swiftshader`。⚠️ `--use-angle=egl` 不是 ANGLE 的合法取值、会**静默**回落
+SwiftShader，所以 `--angle egl` 内部映射成 `gl-egl`（2026-08-12 实测）。
+
+**实测（本机 RTX 4090 + Playwright 1.58 headless，1080×1920，2026-08-12）**：
+
+| 模板 | 帧数 | CPU 软光栅 | GPU 整片 | GPU 2 片 | GPU 4 片 |
+|---|---|---|---|---|---|
+| tpl-basic | 222 | 20s | 11s（1.8×） | — | — |
+| tpl-camera | 415 | 131s | 83s（1.6×） | 43s | 38s（合计 3.4×） |
+
+结论与原先的猜测相反：**GPU 本身只给 1.6-1.8×，且重负载模板（camera）受益反而略小**；
+真正的提速来自分片——camera 上 2 片近乎翻倍，4 片开始因 GPU/内存争抢收益递减。
+N 按内存定不按核数定：一路 Chromium 逐帧渲染峰值可吃到数 GB（EMDR 线 R15 有 7.1GB 被 OOM 杀的实例），
+**2-4 是安全区**。`--deterministic` 约慢 1.7×（tpl-basic 11s→20s）。
+
+### 三条纪律
+
+**① 换渲染后端必须双跑 md5 验确定性**——同模板同 cues 双跑，mp4 md5 一致才可用。
+GSAP 渲染契约禁 `Math.random`/`Date.now` 正是为此服务。
+🩸 **但双跑必须带 `--deterministic`**：不带它时逐帧截图**本来就不是**逐字节可复现的（seek 后不等合成器
+提交就取图），实测同配置三跑出两三个不同 md5，CPU 与 GPU 都一样、和分片无关——
+**这是 2026-08-12 之前就有的老毛病，不是 GPU 引进的**。差异 ≤6/255、落在 <0.4% 像素上，肉眼与成片无感，
+但拿裸默认路径跑 md5 闸门＝闸门永远红，会把人引去查根本不存在的 bug。
+
+口径按场景写死（2026-08-12 定）：
+
+| 场景 | `--deterministic` |
+|---|---|
+| 验收、复现、换后端/换 N 前后对比 | **必须带**，否则闸门无意义 |
+| 批量产线出片 | **建议带**——1.7× 代价用分片买回来（camera 4 片仍比 CPU 整片快 2 倍多） |
+| 迭代调模板、预览看效果 | 不必带，默认路径快且与旧版逐字节兼容 |
+
+**② 整批视频统一后端不得混用**——GPU/CPU 光栅存在亚像素差异，混用＝同批风格漂移。
+**分片数 N 同样算渲染配置的一部分**：实测（`--deterministic`，tpl-basic）整片 vs 2 片 vs 3 片三份 mp4
+md5 各不相同，差在 1 帧、383 个像素、最大通道差 1——看不出来，但同批混用就是无谓的不一致。
+**同一批：后端一致 + N 一致。**
+
+**③ 两个全量渲染撞同一帧目录＝后来者拒绝启动，绝不清对方的帧**。
+帧目录里放 `.render.pid`（整片）/ `.render.pid.s{i}of{N}`（分片），首行是 pid。开渲前扫一遍：
+凡是**会写到同一批帧**的活锁存在就 exit 1 并报出持锁 pid；只有「同一 N 的不同分片」算互不冲突，
+其余组合（任一为整片 / 同一片重入 / N 不同）一律挡。锁主已死则打印接管说明后接管。
+`render_sharded.sh` 在**预清帧目录之前**也做同一道检查——否则"先清后拒"照样把别人的活清光了。
+
+> 事故由来（EMDR 线 R15/R16，2026-08-12）：两个渲染进程开在同一个工作目录，各自开渲前
+> `unlink` 了对方的帧，成片音画混轨，而当时的 QA 量具查不出来——**帧目录被静默清空是最伤的失败模式，
+> 因为它不报错**。归因还有一层：那两起"双渲"都是**自撞**（chain 已接管渲染，人又按派工单手跑了一遍），
+> 所以自锁必须挡的是"任何会写同一批帧的第二个进程"，不分敌我。
 
 ## 交付与发布
 
