@@ -19,3 +19,10 @@
 - 安全空间：四周 ≥ 徽记高度 1/4；最小尺寸：全标屏幕 ≥96px 高、徽记 ≥24px
 - 视频/图片管线取用：SVG 直接喂 Chromium/ffmpeg overlay，或按需转 PNG：`python3 -c "..."` / rsvg；**不要拉伸变形、不要改色、不要加描边阴影**
 - 印刷格式（PDF/EPS）与完整规格 README 在主仓 `NBDpsy/frontend/marketing-web/public/brand/`，公网 https://www.nbdpsy.com/brand/svg/nbdpsy-emblem.svg 等同路径可直取
+
+## 分享图铁律（2026-08-13 老板拍板，全平台强制）
+小红书/小程序/服务号等一切**对外分享位**的品牌图，一律用标准锁定版式分享卡（本目录
+`nbdpsy-share-card.svg` 矢量母版 / `nbdpsy-share-square-1080.png` 1:1 成品）：
+暖米 #FFFCF5 底 + 渐变金徽记 + 酒红「NBDpsy / 心理咨询工作室」双行名。
+**禁**纯徽记单独作分享图（logo 传达不了任何信息）、**禁**酒红满版底作分享图。
+其他尺寸成品公网直取：www.nbdpsy.com/brand/share/（square-1080 / mp-520x416 / og-1200x630）。
