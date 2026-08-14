@@ -14,11 +14,15 @@
      它值得做的理由是另两条：平台按 1080p 档处理、二次压缩更温和；手机端不必客户端拉伸。
      ⛔ 别把它当"变高清"卖给运营。
 
+⛔ **`--cover` 必填**（2026-08-14 起）：投放封面一律走主流程③（xiaohongshu-creator 工序③，
+三形态共用同一道封面闸门），把③的产物显式传进来。**此前不传 --cover 时会静默抽一帧当 `cover.jpg`**
+——那正是 2026-08-14 事故第一次绕规范的形态（拿片子的帧当封面，老板当场发现）。
+成品包里躺着一个叫 `cover.jpg` 的文件，下一个接手的人就会当它是封面，所以这条兜底不是方便，是陷阱。
+
 用法:
-    python3 video_pack.py --video final.mp4 --title "标题" --text 文案.txt --out 成品包/
+    python3 video_pack.py --video final.mp4 --title "标题" --text 文案.txt --out 成品包/ --cover 封面.jpg
     python3 video_pack.py ... --for-upload   # 上传优化：短边升到 1080 + 提码率（推荐发布前跑）
     python3 video_pack.py ... --fix          # 只修不合规编码（h265/HDR → H.264/SDR），不动分辨率
-    python3 video_pack.py ... --cover-at 3.5 # 指定抽封面的秒数（默认 2.0）
 
 输出: stdout 纯 JSON。三平台**全部**可发才 ok=true；否则 exit 1，但 platforms 里逐家给判定
 ——某家超限不代表另两家不能发，别一刀切放弃。
@@ -171,8 +175,7 @@ def main(argv=None) -> int:
     ap.add_argument("--title", required=True, help="标题/短标题")
     ap.add_argument("--text", help="文案文件（纯文本）")
     ap.add_argument("--out", required=True, help="成品包输出目录")
-    ap.add_argument("--cover", help="指定封面图；不给则从视频抽帧")
-    ap.add_argument("--cover-at", type=float, default=2.0, help="抽封面的秒数（默认 2.0）")
+    ap.add_argument("--cover", help="投放封面图（**必填**，须是主流程③ 的产物；⛔ 抽帧/截帧不算封面）")
     ap.add_argument("--for-upload", action="store_true",
                     help="上传优化：短边升到 1080 + 提码率（发布前推荐；不增细节，见文件头说明）")
     ap.add_argument("--fix", action="store_true", help="只修不合规编码（h265/HDR），不动分辨率")
@@ -186,6 +189,23 @@ def main(argv=None) -> int:
     src = Path(args.video)
     if not src.is_file():
         print(json.dumps({"ok": False, "error": f"视频不存在：{src}"}, ensure_ascii=False))
+        return 1
+
+    # 封面闸门：没有③步产出的封面就**不产包**。⛔ 绝不退回抽帧兜底——
+    # 那个兜底会在包里留下一个叫 cover.jpg 的假封面，下一个人照发就是第二次绕规范。
+    if not args.cover:
+        print(json.dumps({
+            "ok": False,
+            "error": "⛔ --cover 必填：投放封面必须走主流程③（xiaohongshu-creator 工序③，"
+                     "三形态共用同一道封面闸门），⛔ 抽帧/截帧/成片首帧都不是封面。",
+            "hint": "先出封面：gen_images.py --note <post-NN.md> --cover-only（会自动落产出凭证 "
+                    "P01.meta.json），过缩略图验收后把那张图用 --cover 传进来；"
+                    "发布时 publish_video.py 还会再校验一次凭证，没凭证照样拒发。",
+        }, ensure_ascii=False))
+        return 1
+    cover_src = Path(args.cover)
+    if not cover_src.is_file():
+        print(json.dumps({"ok": False, "error": f"封面不存在：{cover_src}"}, ensure_ascii=False))
         return 1
 
     out = Path(args.out)
@@ -218,14 +238,9 @@ def main(argv=None) -> int:
         hits += scan_text(text)
     (out / "标题.txt").write_text(args.title.strip(), encoding="utf-8")
 
-    cover = out / "cover.jpg"
-    if args.cover:
-        shutil.copy2(args.cover, cover)
-        cover_from = "指定图"
-    else:
-        r = run(["ffmpeg", "-y", "-ss", str(args.cover_at), "-i", str(final),
-                 "-frames:v", "1", "-q:v", "2", str(cover)])
-        cover_from = f"抽帧 @{args.cover_at}s" if r.returncode == 0 and cover.is_file() else None
+    cover = out / ("cover" + cover_src.suffix.lower())
+    shutil.copy2(cover_src, cover)
+    cover_from = f"③步产物 {cover_src.name}"
 
     all_ok = all(v["ok"] for v in platforms.values())
     ok = all_ok and not hits

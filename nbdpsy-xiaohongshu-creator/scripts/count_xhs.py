@@ -21,6 +21,12 @@ USAGE = ("usage: count_xhs.py <file> [--page-min N] [--page-max N] "
 # 页面文字块里的「结构标签」——它们是版面角色标注、不是要渲染进图的字，计数时剔标签词本身、保留冒号后的值；
 # 且这些行不算「信息点」（大标题/副标题是版面元素，不是一条独立信息）。2026-07-26 老板定案的密度档位化配套。
 DENSITY_LABELS = ("大标题", "主标题", "副标题", "标题", "页脚", "底部结语", "结语", "底部")
+
+# 口径 B（2026-08-14 老板定案）：每页＝对标一篇 400 字小文里的一小节，**图内落字 150–250 汉字**。
+# 这两个数是**报告模式的越界标记线**，不是裁决线——默认档一律不判 FAIL（见 DENSITY_RULE）。
+# 📌 旧值留痕：此前脚本内嵌口径为 200–400，已于 2026-08-14 随口径 B 作废。
+DENSITY_REPORT_MIN = 150
+DENSITY_REPORT_MAX = 250
 DENSITY_RULE = (
     "字数＝该页「**页面文字**」块的汉字数（口径同 body_chars）；"
     "信息点＝该块剔除结构标签行后剩余的非空行数。\n"
@@ -32,11 +38,20 @@ DENSITY_RULE = (
     "（末页必须承载「行动建议＋品牌一句＋12356 危机声明」，字数天然高于内容页）；"
     "这两页照常输出实测值（`density_pages` 里 `counted: false`）供人工参考，**不参与 `ok_density` 判定**。"
     "（2026-07-26 决策 2：密度档位只约束内容页）\n"
-    "⚠️ **本项只在传参时启用**——传了 --density-max／--density-points 即代表运营指定了密度档，"
+    f"📏 **报告模式（默认恒开，2026-08-14 裁决 3）**：不传任何密度参数也**逐页输出实测字数**"
+    f"（`density_pages`），并按口径 B 的 {DENSITY_REPORT_MIN}–{DENSITY_REPORT_MAX} 汉字标注越界"
+    f"（`warn: low` = 低于 {DENSITY_REPORT_MIN}＝页太薄；`warn: high` = 高于 {DENSITY_REPORT_MAX}＝撑爆版面）。"
+    "**标记不改 exit 码、不参与裁决**——它只是把量具交到人手里（此前默认档连实测值都不输出，"
+    "「每页太薄」这一失败模式全链零覆盖）。\n"
+    "⚠️ **判够不够的是三元组（观点／证据（机制）／落点），不是字数**："
+    f"`warn: low` 的页先去看三元组填不填得出；三元组齐、{DENSITY_REPORT_MIN} 字也可能是对的，"
+    "三元组缺、字数达标一样返工（illustration-spec §1-b④）。\n"
+    "⚠️ **裁决只在传参时启用**——传了 --density-max／--density-points 即代表运营指定了密度档，"
     "超限即判（`ok_density=false` → `ok=false`，exit 2）；默认档不传参、本项不参与裁决。"
     "注意 exit 2 由正文字数／页数／标题／密度任一不达标触发，"
     "**是否密度问题只看 `ok_density` 与 `density_reason`，不看 exit code**。\n"
-    "（2026-07-26 老板定案：运营指定的密度档是硬上限，默认档 200–400 的上限不判 FAIL；"
+    "（2026-07-26 老板定案：运营指定的密度档是硬上限；默认档的区间是建议值不判 FAIL——"
+    f"数值口径 2026-08-14 按老板口径 B 修订为 {DENSITY_REPORT_MIN}–{DENSITY_REPORT_MAX}，"
     "裁决语义与「保守下界／只数汉字」口径 2026-07-26 依 v1.37.0 修补契约 V2#3／V2#4 写明）"
 )
 
@@ -177,6 +192,43 @@ def split_structural_label(line: str) -> tuple:
     return (s, False)
 
 
+def density_warn(chars: int, counted: bool):
+    """报告模式的越界标记（口径 B 150–250）。**只标内容页**——封面 P1／末页 PN 天然不在这个区间，
+    给它们打标只会制造噪音、逼人学会忽略警告。返回 "low" / "high" / None。"""
+    if not counted:
+        return None
+    if chars < DENSITY_REPORT_MIN:
+        return "low"
+    if chars > DENSITY_REPORT_MAX:
+        return "high"
+    return None
+
+
+def density_report(pages: list) -> str:
+    """把逐页实测汇总成一句人话（默认档恒输出，**不判 FAIL**）。"""
+    judged = [p for p in pages if p["counted"]]
+    if not judged:
+        return ("没有可计的内容页（未找到「**页面文字**」块，或全篇只有封面与末页）——"
+                "拿不到实测值就等于没有量具，先补页面文字块")
+    low = [p for p in judged if p["warn"] == "low"]
+    high = [p for p in judged if p["warn"] == "high"]
+    bits = [f"内容页 {len(judged)} 页，实测 "
+            + "、".join(f"{p['page']} {p['chars']}字" for p in judged)]
+    if low:
+        bits.append(f"⚠️ {len(low)} 页低于 {DENSITY_REPORT_MIN}（"
+                    + "、".join(f"{p['page']} {p['chars']}字" for p in low)
+                    + "）＝页太薄：先核这几页的三元组（观点／证据（机制）／落点）填不填得出，"
+                      "填不出就是返工，⛔ 别靠加字凑数")
+    if high:
+        bits.append(f"⚠️ {len(high)} 页高于 {DENSITY_REPORT_MAX}（"
+                    + "、".join(f"{p['page']} {p['chars']}字" for p in high)
+                    + "）＝撑爆版面：压措辞，⛔ 不砍证据或落点")
+    if not low and not high:
+        bits.append(f"全部落在口径 B {DENSITY_REPORT_MIN}–{DENSITY_REPORT_MAX} 内")
+    bits.append("（默认档只报不判：这几个数不参与 exit 码，判够不够的是三元组）")
+    return "；".join(bits)
+
+
 def count_page_density(lines: list) -> tuple:
     """数一页「页面文字」的字数与信息点数，口径见 DENSITY_RULE。返回 (汉字数, 信息点数)。"""
     chars, points = 0, 0
@@ -195,9 +247,12 @@ def main():
     # 正文字数区间可覆盖：默认沿用 DEFAULT_TARGET 派生的 210–450（兼容科普笔记）；
     # 咨询师推介笔记正文更长，传 --body-min 400 --body-max 800。
     # 标题长尾词校验为**可选**：不传 --title-keyword 时行为与历史版本完全一致（只校 20 字硬限）。
-    # 密度档位校验同样为**可选**：`--density-max N`（每页图内文字量上限，汉字数）/
-    # `--density-points M`（每页信息点数上限）——两个都不传时输出字段与历史版本逐字节一致。
-    # 只在运营指明密度档位时传（2026-07-26 老板定案：运营给的数是硬上限；默认档 200–400 的 400 是建议值不判 FAIL）。
+    # 密度**裁决**为可选：`--density-max N`（每页图内文字量上限，汉字数）/
+    # `--density-points M`（每页信息点数上限），只在运营指明密度档位时传
+    # （2026-07-26 老板定案：运营给的数是硬上限；默认档的区间是建议值不判 FAIL）。
+    # ⚠️ 密度**量具**（逐页实测字数 + 口径 B 150–250 越界标记）**默认恒开、与传不传参无关**
+    # （2026-08-14 裁决 3）：此前默认档连实测值都不输出，"每页太薄"这一失败模式全链零覆盖，
+    # 想量就只能传一个语义相反的上限参数去造一次假 FAIL。量具与裁决从此分开。
     args, files = sys.argv[1:], []
     page_min, page_max = PAGE_MIN, PAGE_MAX
     body_min, body_max = None, None
@@ -206,7 +261,10 @@ def main():
     i = 0
     while i < len(args):
         if args[i] in ("--help", "-h"):
-            print(USAGE + "\n\n密度档位口径（--density-max / --density-points）：\n" + DENSITY_RULE)
+            print(USAGE
+                  + "\n\n密度口径（量具默认恒开：逐页实测 + 口径 B "
+                  + f"{DENSITY_REPORT_MIN}–{DENSITY_REPORT_MAX} 越界标记；"
+                    "裁决只在传 --density-max / --density-points 时启用）：\n" + DENSITY_RULE)
             sys.exit(0)
         elif args[i] == "--page-min" and i + 1 < len(args):
             page_min = int(args[i + 1]); i += 2
@@ -284,19 +342,23 @@ def main():
                 ok_title = False
                 reasons.append(kw_reason)
 
-    # 密度档位校验（仅在传了 --density-max / --density-points 时生效；不传则下面的字段一个都不输出）
+    # 密度：**逐页实测恒输出**（报告模式，2026-08-14 裁决 3），裁决仍只在传参时启用。
+    # 分工写死在这里，别再合并：`density_pages`/`density_report` 是量具（永远给），
+    # `ok_density`/`density_reason` 是裁决（只有运营指定密度档时才有）。
+    # 2026-07-26 决策 2：密度档位只约束内容页 —— 封面 P1 与末页 PN 豁免。
+    # 首尾页按文档里 `### P(\d+)` 的首末标签认定（不按 density_pages 下标，
+    # 免得某页缺「页面文字」块时把 P2 当成首页误豁免）。
     density_on = density_max is not None or density_points is not None
-    density_pages, density_reasons, ok_density = [], [], True
+    density_reasons, ok_density = [], True
+    all_labels = ["P" + n for n in re.findall(r"^### P(\d+)", text, re.MULTILINE)]
+    exempt = {all_labels[0], all_labels[-1]} if all_labels else set()
+    density_pages = []
+    for label, lines in extract_page_texts(text):
+        chars, points = count_page_density(lines)
+        counted = label not in exempt
+        density_pages.append({"page": label, "chars": chars, "points": points,
+                              "counted": counted, "warn": density_warn(chars, counted)})
     if density_on:
-        # 2026-07-26 决策 2：密度档位只约束内容页 —— 封面 P1 与末页 PN 豁免。
-        # 首尾页按文档里 `### P(\d+)` 的首末标签认定（不按 density_pages 下标，
-        # 免得某页缺「页面文字」块时把 P2 当成首页误豁免）。
-        all_labels = ["P" + n for n in re.findall(r"^### P(\d+)", text, re.MULTILINE)]
-        exempt = {all_labels[0], all_labels[-1]} if all_labels else set()
-        for label, lines in extract_page_texts(text):
-            chars, points = count_page_density(lines)
-            density_pages.append({"page": label, "chars": chars, "points": points,
-                                  "counted": label not in exempt})
         if not density_pages:
             # 显式要求校验密度，却一个「页面文字」块都没有 —— 不能静默放行
             ok_density = False
@@ -335,11 +397,16 @@ def main():
         "ok_pages": ok_pages,
         "ok_title": ok_title,
     }
+    # 量具恒给：不传参也输出逐页实测与越界标记（裁决 3）
+    result.update({
+        "density_pages": density_pages,
+        "density_report": density_report(density_pages),
+        "density_report_range": [DENSITY_REPORT_MIN, DENSITY_REPORT_MAX],
+    })
     if density_on:
         result.update({
             "density_max": density_max,
             "density_points": density_points,
-            "density_pages": density_pages,
             "density_reason": "；".join(density_reasons),
             "density_rule": DENSITY_RULE,
             "ok_density": ok_density,

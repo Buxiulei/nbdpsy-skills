@@ -16,6 +16,14 @@
 GET {base}/api/op/drafts/{session_id}/jobs/{job_id} 到终态 → done 后逐页下载
 （result.urls 顺序与提交的 prompts 对齐，相对 /uploads/… 公开免鉴权）。
 
+两道闸门写在本脚本里（2026-08-14 起，此前都只是文档里的一句话）：
+  **R4 结构闸门（跑前）**：frontmatter 必须有 `故事线`、每个 `### PN` 块第一行必须有
+  `**论点行**：…`（围栏之外）——缺一即**拒跑**，⛔ 不出图、不烧额度。判据见
+  `references/illustration-spec.md` §1-b（先挑版式再填点＝版式退化成填页容器，这是病根）。
+  **闸门 A 生产端（跑后）**：封面页 P1 出成后**自动**落盘同名 `P01.meta.json` 产出凭证
+  （job/session 直接来自服务端回执，⛔ 不再手抄），发布脚本逐张校验，无凭证拒发。
+  凭证里的 `style_profile` 取 `00-overview.md` 的风格档案留痕行，也可用 `--style-profile` 显式给。
+
 用法：
     python3 gen_images.py --note post-01.md --cover-only            # 只出 P1 封面（风格闸门第一步）
     python3 gen_images.py --note post-01.md --anchor-url <URL>      # 出该篇全部页（各页锚定同一 anchor）
@@ -31,6 +39,7 @@ base 用 NBDPSY_VIDEO_API_BASE（可选，默认 https://mcp.nbdpsy.com，与小
 {"outcome": "done|partial|failed|pending|unknown", "session_id", "job_id",
  "pages": [{"page": "P1", "url": 绝对URL|null, "path": 本地路径|null, "error": null|文案}],
  "anchor_url": <cover-only 时=P1 的绝对URL，方便直接取用；否则=本次所用锚点>,
+ "cover_receipt": <本次落盘的封面凭证路径；没出封面页时为 null>,
  "error", "hint", "warnings"}。
 exit：done=0；partial/failed=1（hint 教「--pages 只重出失败页 + 带同一 --anchor-url」）；
 pending/unknown=0（任务已入队仍在跑，hint 教 --job 复查，**绝不重发**以免重复生成/烧额度）。
@@ -40,10 +49,14 @@ import json
 import re
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # 同目录 vendored 副本
 import nbdpsy_common
+# 闸门 A 的判据（具名版式白名单、凭证路径）只有一份真源，在 publish_note 里——
+# 出图端写凭证、发布端校验凭证，必须用同一份，⛔ 别在这里另抄一份常量。
+import publish_note as pn
 
 TERMINAL_STATUSES = {"done", "failed"}
 STATE_FILE = ".gen_images_state.json"
@@ -51,6 +64,13 @@ STATE_FILE = ".gen_images_state.json"
 # 页标题：行首 ### + 空白 + P<数字>（与后端 extract_slide_prompts / 配图轮播计数契约一致；
 # 「## 视频参考图提示词」节用 **P1** 加粗标记，不是 ### PN，天然不会被这里匹配到）。
 _PAGE_HEADING = re.compile(r"^###\s+(P\d+)\b")
+# R4 结构闸门（illustration-spec §1-b）：每个 `### PN` 块的第一行 `**论点行**：…`（围栏之外），
+# frontmatter 里一行 `故事线: …`。两种冒号都认（模板写半角、旧自检文案写全角，读的时候别在这上面卡人）。
+_CLAIM_LINE = re.compile(r"^\s*\*\*论点行\*\*\s*[:：]\s*(.*)$")
+_STORYLINE_LINE = re.compile(r"^\s*故事线\s*[:：]\s*(.+)$", re.M)
+# 风格档案留痕行（00-overview.md 开头，格式见 SKILL.md「开跑前 · 读风格档案」）：
+#   风格档案：图文 v3（本人档案，读取于 2026-07-28）
+_TRACE_LINE = re.compile(r"^风格档案\s*[:：]\s*(.+)$", re.M)
 
 
 def _first_fenced_block(block_lines):
@@ -70,10 +90,23 @@ def _first_fenced_block(block_lines):
     return None
 
 
+def _claim_before_fence(block_lines):
+    """取页块内、**绘图提示词围栏之前**的论点行内容（围栏内是喂模型的提示词，论点行在围栏外）。
+    找不到 / 冒号后为空 → None。"""
+    for line in block_lines:
+        if line.strip().startswith(("```", "~~~")):
+            break
+        m = _CLAIM_LINE.match(line)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    return None
+
+
 def extract_pages(md_text):
-    """逐页提取绘图提示词，判据同后端 extract_slide_prompts。
+    """逐页提取绘图提示词与论点行，判据同后端 extract_slide_prompts。
     与后端唯一差异：无围栏的页 prompt=None（不静默丢弃）——后端会静默跳过缺围栏页导致页序错位，
-    这里保留下来交给 validate_complete 拦截并列出缺页。返回 [{"page": "P1", "prompt": str|None}, ...]。"""
+    这里保留下来交给 validate_complete 拦截并列出缺页。
+    返回 [{"page": "P1", "prompt": str|None, "claim": str|None}, ...]。"""
     if not md_text or not md_text.strip():
         return []
     lines = md_text.splitlines()
@@ -85,8 +118,19 @@ def extract_pages(md_text):
     pages = []
     for k, (label, start) in enumerate(heads):
         end = heads[k + 1][1] if k + 1 < len(heads) else len(lines)
-        pages.append({"page": label, "prompt": _first_fenced_block(lines[start + 1:end])})
+        block = lines[start + 1:end]
+        pages.append({"page": label, "prompt": _first_fenced_block(block),
+                      "claim": _claim_before_fence(block)})
     return pages
+
+
+def extract_storyline(md_text):
+    """取 frontmatter 里的「故事线」字段（整组论证链，与「版式序列」并排）。没有 → None。"""
+    m = re.match(r"^---\n(.*?)\n---", md_text or "", re.S)
+    if not m:
+        return None
+    mm = _STORYLINE_LINE.search(m.group(1))
+    return mm.group(1).strip().strip('"').strip("'") if mm else None
 
 
 def validate_complete(all_pages):
@@ -100,8 +144,43 @@ def validate_complete(all_pages):
             "（后端会静默跳过缺围栏页导致页序错位，故在此拦截；请补全围栏后重试）")
 
 
-def parse_page_spec(spec):
-    """解析 --pages：'2-9' / '3,5' / '2-4,7' 混合 → 升序去重的页号列表。非法格式抛 ValueError。"""
+def validate_structure(md_text, all_pages):
+    """R4 结构闸门（illustration-spec §1-b，2026-08-14 起写成代码）：
+    **frontmatter 有「故事线」+ 每页有论点行**，缺一即拒跑——这是闸门，不是提醒。
+
+    为什么拦在出图之前：先挑版式再填点，版式就从"表达论点的手段"退化成"填页容器"，
+    图越满越云里雾里。论点行写不出＝这页不该存在，出了图也是废图（还烧额度）。
+    """
+    problems = []
+    if not extract_storyline(md_text):
+        problems.append(
+            "frontmatter 缺 `故事线` 字段——一句话写清这一篇 6–9 页在论证什么"
+            "（现象→机制→纠错→怎么办 这类推进），与 `版式序列` 并排写："
+            "\n      故事线: 现象（…）→ 机制（…）→ 纠错（…）→ 怎么办（…）")
+    no_claim = [p["page"] for p in all_pages if not p["claim"]]
+    if no_claim:
+        problems.append(
+            f"以下页缺论点行：{', '.join(no_claim)}——每个 `### PN` 块的**第一行**（绘图提示词围栏之外）"
+            "写 `**论点行**：这张图要让读者带走的那句话`。"
+            "\n      判据：一句能独立成立的话（有主语有谓语有主张）；"
+            "页标题、版式名、名词短语都不算（illustration-spec §1-b① 有三条反例）；"
+            "\n      ⛔ 写不出来的页直接毙掉，不许先占位后面再想。")
+    if problems:
+        raise ValueError(
+            "R4 结构闸门未过（缺失即拒跑，⛔ 不是提醒）：\n  - " + "\n  - ".join(problems)
+            + "\n  填写顺序是硬顺序：①故事线 → ②逐页论点行 → ③版式序列 → ④按版式填点。")
+
+
+def parse_page_spec(spec, max_page=None):
+    """解析 --pages：'2-9' / '3,5' / '2-4,7' 混合 / **开区间 '2-'（第 2 页到末页）**
+    → 升序去重的页号列表。非法格式抛 ValueError。
+
+    开区间是给「批量出 P2…末页、把已确认的封面 P1 排除在外」这条标准循环用的（SKILL.md 工序③）：
+    批次里每篇页数不同，写死 `2-9` 会对 6 页的稿子越界报错，人一急就把 `--pages` 整个删掉
+    → 封面被批量重出覆盖，恰好绕开风格闸门。所以这里必须认 `2-`。
+    ⚠️ 开区间要知道本篇总页数，故 max_page 由 select_pages 传入；单独调用不给就报错，
+    ⛔ 不许默认成某个页数——猜错了是静默出错页。
+    """
     nums = set()
     for tok in spec.split(","):
         tok = tok.strip()
@@ -110,9 +189,21 @@ def parse_page_spec(spec):
         if "-" in tok:
             a, _, b = tok.partition("-")
             a, b = a.strip(), b.strip()
-            if not (a.isdigit() and b.isdigit()):
-                raise ValueError(f"页区间格式非法：{tok!r}（应形如 2-9）")
-            lo, hi = int(a), int(b)
+            if not a.isdigit():
+                raise ValueError(f"页区间格式非法：{tok!r}（应形如 2-9，或开区间 2- ＝第 2 页到末页）")
+            lo = int(a)
+            if b == "":                       # 开区间 N- ＝ 第 N 页到末页
+                if max_page is None:
+                    raise ValueError(
+                        f"页区间 {tok!r} 是开区间（第 {lo} 页到末页），但此处不知道本篇总页数"
+                        "——请改写成 2-9 这类闭区间")
+                hi = int(max_page)
+                if lo > hi:
+                    raise ValueError(f"页区间 {tok!r} 的起始页超出本篇总页数（本篇共 {hi} 页）")
+            elif not b.isdigit():
+                raise ValueError(f"页区间格式非法：{tok!r}（应形如 2-9，或开区间 2- ＝第 2 页到末页）")
+            else:
+                hi = int(b)
             if lo < 1 or hi < lo:
                 raise ValueError(f"页区间非法：{tok!r}（须 1 ≤ 起 ≤ 止）")
             nums.update(range(lo, hi + 1))
@@ -133,7 +224,7 @@ def select_pages(all_pages, cover_only, spec):
     if cover_only:
         wanted = [1]
     elif spec:
-        wanted = parse_page_spec(spec)
+        wanted = parse_page_spec(spec, max_page=max(available) if available else None)
     else:
         wanted = sorted(available)
     missing = [n for n in wanted if n not in available]
@@ -353,13 +444,14 @@ def pending_envelope(sid, jid, anchor, warnings):
     }
 
 
-def emit_result(pages_out, sid, jid, cover_only, anchor, warnings):
+def emit_result(pages_out, sid, jid, cover_only, anchor, warnings, cover_receipt=None):
     """打印终态结果信封并按 outcome 退出（done=0 / partial|failed=1）。"""
     outcome = summarize_outcome(pages_out)
     # cover-only 时把 P1 的绝对 URL 直接回给 agent，方便下一步批量出图直接当锚点
     out_anchor = pages_out[0]["url"] if (cover_only and pages_out and pages_out[0]["url"]) else anchor
     out = {"outcome": outcome, "session_id": sid, "job_id": jid,
            "pages": pages_out, "anchor_url": out_anchor,
+           "cover_receipt": str(cover_receipt) if cover_receipt else None,
            "error": None, "hint": None, "warnings": warnings}
     if outcome != "done":
         failed_labels = [p["page"] for p in pages_out if not p["path"]]
@@ -368,6 +460,151 @@ def emit_result(pages_out, sid, jid, cover_only, anchor, warnings):
             out["error"] = "全部页未出成（服务端未返回图 URL；可能触发额度/限流，见各页 error）"
     print(json.dumps(out, ensure_ascii=False))
     sys.exit(1 if outcome in ("partial", "failed") else 0)
+
+
+# ---------------------------------------------------------------- 闸门 A · 封面产出凭证（自动落盘）
+
+def parse_style_trace(text):
+    """从 00-overview.md 的风格档案留痕行解析 (套名, 版本)。格式见 SKILL.md：
+        风格档案：图文 v3（本人档案，读取于 2026-07-28）
+    2026-07-28 前的存量格式整行没有套名（`风格档案：v3（…）`）→ **按「图文」判**（那时只有轮播这条线有档案）。
+    解析不出 → None。"""
+    m = _TRACE_LINE.search(text or "")
+    if not m:
+        return None
+    rest = re.split(r"[（(]", m.group(1).strip())[0].strip()
+    toks = rest.split()
+    if len(toks) >= 2 and toks[1].lower().startswith("v"):
+        return (toks[0], toks[1][1:])
+    if toks and toks[0].lower().startswith("v"):
+        return ("图文", toks[0][1:])       # 存量格式：无套名按「图文」判
+    return None
+
+
+def resolve_style_profile(note, override):
+    """本批风格档案（套名 + 版本）：命令行 `--style-profile "图文 v3"` 优先，
+    否则读 `00-overview.md` 的留痕行（笔记同目录 → 上一级）。都拿不到 → None（凭证里就缺这一项，
+    发布时闸门 A 会拒——那是对的：审查端要按这一版档案判封面，缺了没法判）。"""
+    if override:
+        toks = str(override).split()
+        if len(toks) >= 2:
+            return {"套名": toks[0], "version": toks[1].lstrip("vV")}
+        return {"套名": str(override).strip(), "version": ""}
+    if not note:
+        return None
+    for d in (Path(note).parent, Path(note).parent.parent):
+        f = d / "00-overview.md"
+        if f.is_file():
+            hit = parse_style_trace(f.read_text(encoding="utf-8"))
+            if hit:
+                return {"套名": hit[0], "version": hit[1]}
+    return None
+
+
+def cover_prompt_excerpt(prompt, limit=600):
+    """封面提示词摘要：压空白后截断，但**保证色值与具名版式不被截掉**——
+    这两样正是闸门 A 校验的实质（没有色值＝没按本批调色板出；没有具名版式＝版式工程没走）。"""
+    s = " ".join((prompt or "").split())
+    if len(s) <= limit:
+        return s
+    head = s[:limit]
+    keep = []
+    m = re.search(r"#[0-9A-Fa-f]{6}\b", s)
+    if m and m.group(0) not in head:
+        keep.append(s[max(0, m.start() - 20):m.end() + 20].strip())
+    for layout in pn.COVER_LAYOUTS:
+        i = s.find(layout)
+        if i >= 0 and layout not in head:
+            keep.append(s[max(0, i - 20):i + len(layout) + 20].strip())
+            break
+    return head + ("…… " + " …… ".join(keep) if keep else "……")
+
+
+def write_cover_receipt(cover_path, prompt, sid, jid, anchor, style_profile,
+                        cover_only=False, run_pages="all"):
+    """封面页出图成功后**自动**落盘同名 `.meta.json`（闸门 A 的生产端）。
+
+    为什么必须是脚本写、不是人抄：手抄的凭证只证明"有人抄了一遍"，抄错抄漏都发现不了；
+    脚本写的 job/session 直接来自服务端回执，与这次出图强绑定。
+    返回 (凭证路径, [告警…])。告警不阻断出图——但会在发布时被闸门 A 拦下，所以当场就说清楚。
+    """
+    warns = []
+    excerpt = cover_prompt_excerpt(prompt)
+    if not re.search(r"#[0-9A-Fa-f]{6}\b", excerpt or ""):
+        warns.append("封面提示词里没有色值（#RRGGBB）：这张没按本批风格档案的调色板出，"
+                     "发布时闸门 A 会拒——回 illustration-spec §2-b 重写封面提示词再出")
+    if not any(v in (excerpt or "") for v in pn.COVER_LAYOUTS):
+        warns.append(f"封面提示词里没有具名版式（{'/'.join(pn.COVER_LAYOUTS)}）：封面版式工程没走，"
+                     "发布时闸门 A 会拒")
+    if not style_profile:
+        warns.append("拿不到风格档案套名与版本（00-overview.md 缺「风格档案：{套名} v{N}（…）」留痕行）："
+                     "凭证里这一项会缺，发布时闸门 A 会拒——补留痕行后重出封面，"
+                     "或出图时显式传 --style-profile \"图文 v3\"")
+    if not cover_only:
+        warns.append(
+            f"这张封面是**批量顺带**产出的（本次 --pages {run_pages or 'all'}），"
+            "没走「单出封面 → 看缩略图 → 确认」这一步：凭证记 cover_only=false，"
+            "发布时闸门 A 会拒——要么 `gen_images.py --note <稿件> --cover-only` 重新单出，"
+            "要么看过图后 `publish_note.py --confirm-cover <封面图路径> --confirmed-by \"<姓名>\"` "
+            "补确认戳")
+    meta = {
+        "cover_file": cover_path.name,
+        "source": "gen_images",
+        "job_id": jid,
+        "session_id": sid,
+        "anchor_url": anchor,
+        # 「单出确认」（2026-08-14 复验 S4 证据 3）：凭证只能证明"这张图是工序③出的"，
+        # 证明不了"有人看过它"。批量出 P2…P8 时顺带重出的 P1 同样拿得到合法凭证，
+        # 于是被覆盖掉的已确认封面照样能发。故把这次出图的实况一起记进凭证，交闸门 A 判。
+        "cover_only": bool(cover_only),
+        "run_pages": str(run_pages or "all"),   # 这一跑实际请求的页："1" / "2-8" / "1,3" / "all"
+        "style_profile": style_profile or {},
+        "prompt_excerpt": excerpt,
+        "generated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
+    }
+    mp = pn.cover_meta_path(cover_path)
+    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return mp, warns
+
+
+def run_pages_spec(cover_only_flag, pages_arg, page_labels=None):
+    """本次出图的「请求页」证据串，原样落进凭证 run_pages：
+      传了 --pages → 原样记（"1" / "2-8" / "1,3"）；--cover-only → "1"；两者都没传（整篇全出）→ "all"；
+      --job 复查没有 --pages 实参 → 按状态文件里的页 label 还原成 "2,3,4"。
+    ⛔ --cover-only 不许记 "all"：那是凭证自己说谎（这一跑只请求了 P1）。"""
+    if cover_only_flag:
+        return "1"        # --cover-only 与 --pages 同给时以前者为准（select_pages 也是这个次序）
+    if pages_arg:
+        return str(pages_arg)
+    if page_labels:
+        return ",".join(str(int(l[1:])) for l in page_labels)
+    return "all"
+
+
+def is_cover_single(cover_only_flag, run_pages):
+    """本次出图算不算「单出封面」：显式 --cover-only，或这一跑只请求了 P1 一页（--pages 1）。
+    ⚠️ 判据是**这一跑请求了哪些页**，不是"产出里有没有 P1"——批量跑里 P1 出成了也不算单出。"""
+    return bool(cover_only_flag) or str(run_pages).strip() in ("1", "P1")
+
+
+def maybe_write_cover_receipt(pages_out, note, sid, jid, anchor, style_override,
+                              cover_only=False, run_pages="all"):
+    """本次出图里若包含 **P1（封面页）** 且落盘成功 → 写凭证。返回 (凭证路径|None, [告警…])。
+    复查路径（--job）没给 --note 时拿不到提示词 → 不写，如实告警，别写一份没有 prompt_excerpt 的空凭证。
+    cover_only/run_pages 记「这张封面是单出的还是批量顺带的」，交发布时的闸门 A 判（裁决 B）。"""
+    p1 = next((p for p in pages_out if p["page"] == "P1" and p.get("path")), None)
+    if not p1:
+        return None, []
+    if not note:
+        return None, ["本次含封面页 P1，但没给 --note，拿不到封面提示词 → **未写产出凭证**："
+                      "补跑 `gen_images.py --note <post-NN.md> --job <id> --session <id>` 生成凭证，"
+                      "否则发布时闸门 A 会拒发"]
+    prompt = next((p["prompt"] for p in extract_pages(Path(note).read_text(encoding="utf-8"))
+                   if p["page"] == "P1"), None)
+    return write_cover_receipt(Path(p1["path"]), prompt, sid, jid, anchor,
+                               resolve_style_profile(note, style_override),
+                               cover_only=is_cover_single(cover_only, run_pages),
+                               run_pages=run_pages)
 
 
 def resolve_images_dir(note, images_dir):
@@ -405,9 +642,11 @@ def run_dry(args, note, images_dir, api_base):
     """离线打印将发送的 payload（提示词截断）与目标 URL，不打网络、不需要凭据。"""
     if not note:
         sys.exit("--dry-run 需要 --note")
-    all_pages = extract_pages(note.read_text(encoding="utf-8"))
+    md_text = note.read_text(encoding="utf-8")
+    all_pages = extract_pages(md_text)
     try:
         validate_complete(all_pages)
+        validate_structure(md_text, all_pages)     # R4 结构闸门：干跑也走，先在这里现形
         selected = select_pages(all_pages, args.cover_only, args.pages)
         warnings = build_warnings(selected, args.cover_only, args.anchor_url)
     except ValueError as e:
@@ -425,6 +664,9 @@ def run_dry(args, note, images_dir, api_base):
         "pages_detected": [p["page"] for p in all_pages],
         "selected_pages": [p["page"] for p in selected],
         "images_dir": str(images_dir) if images_dir else None,
+        "storyline": extract_storyline(md_text),
+        "claims": {p["page"]: p["claim"] for p in all_pages},
+        "style_profile": resolve_style_profile(note, args.style_profile),
         "payload_preview": payload,
         "warnings": warnings,
     }, ensure_ascii=False, indent=2))
@@ -435,7 +677,8 @@ def main():
     ap.add_argument("--note", type=Path, help="笔记文件（post-NN.md，须含「## 配图轮播」）")
     ap.add_argument("--cover-only", action="store_true", help="只出 P1 封面（风格闸门第一步）")
     ap.add_argument("--anchor-url", help="锚点参考图 URL（P1 确认后的封面），各页据此锚定生成保持一致")
-    ap.add_argument("--pages", help="只出指定页：'2-9' / '3,5' / '2-4,7' 混合（默认全部页）")
+    ap.add_argument("--pages", help="只出指定页：'2-9' / '3,5' / '2-4,7' 混合 / "
+                                    "'2-' 开区间＝第 2 页到末页（默认全部页）")
     ap.add_argument("--images-dir", type=Path, help="落盘目录（默认 <笔记同目录>/images/<笔记名>/）")
     ap.add_argument("--api-base", help="API base（默认 NBDPSY_VIDEO_API_BASE 或 https://mcp.nbdpsy.com）")
     ap.add_argument("--no-wait", action="store_true", help="提交后不等结果（稍后 --job 复查）")
@@ -444,6 +687,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="只打 payload 摘要与目标 URL，不发请求")
     ap.add_argument("--job", type=int, help="复查该已入队任务并补下载（配 --note 或 --images-dir 定位目录）")
     ap.add_argument("--session", help="--job 复查用的 session_id（缺省则从状态文件恢复）")
+    ap.add_argument("--style-profile", metavar='"套名 vN"',
+                    help="本批风格档案（写进封面产出凭证）；不传则读 00-overview.md 的风格档案留痕行")
     args = ap.parse_args()
 
     note = args.note
@@ -486,13 +731,24 @@ def main():
                 print(json.dumps(pending_envelope(sid, jid, anchor, []), ensure_ascii=False))
                 sys.exit(0)
             pages_out = finalize(view, selected, images_dir, api_base)
-            emit_result(pages_out, sid, jid, cover_only, anchor, [])
+            # 复查路径的「单出」判据只认状态文件里那一跑请求的页集（page_labels）：
+            # ⛔ 不认这次命令行上的 --cover-only——批量出完再拿 `--job … --cover-only` 复查一遍
+            # 就能把凭证刷成"单出"，那是伪造。原始那跑出的是哪几页，文件里写着。
+            receipt, rwarns = maybe_write_cover_receipt(
+                pages_out, note, sid, jid, anchor, args.style_profile,
+                cover_only=False,                                    # ⛔ 不认命令行 --cover-only
+                run_pages=run_pages_spec(False, None, page_labels))  # 只认状态文件里那一跑的页集
+            for w in rwarns:
+                print(f"⚠ {w}", file=sys.stderr)
+            emit_result(pages_out, sid, jid, cover_only, anchor, rwarns, receipt)
 
         # ---- 正常出图 ----
         if not note:
             ap.error("出图需要 --note（或用 --job 复查已入队任务）")
-        all_pages = extract_pages(note.read_text(encoding="utf-8"))
+        md_text = note.read_text(encoding="utf-8")
+        all_pages = extract_pages(md_text)
         validate_complete(all_pages)
+        validate_structure(md_text, all_pages)   # R4 结构闸门：缺故事线/论点行 → 拒跑，⛔ 不出图不烧额度
         selected = select_pages(all_pages, args.cover_only, args.pages)
         cover_only = args.cover_only
         anchor = args.anchor_url
@@ -526,7 +782,14 @@ def main():
             print(json.dumps(pending_envelope(sid, jid, anchor, warnings), ensure_ascii=False))
             return
         pages_out = finalize(view, selected, images_dir, api_base)
-        emit_result(pages_out, sid, jid, cover_only, anchor, warnings)
+        # 闸门 A 生产端：封面页出成就**自动**落凭证，消灭手抄（手抄的凭证抄错抄漏无人发现）
+        receipt, rwarns = maybe_write_cover_receipt(
+            pages_out, note, sid, jid, anchor, args.style_profile,
+            cover_only=cover_only,
+            run_pages=run_pages_spec(cover_only, args.pages))
+        for w in rwarns:
+            print(f"⚠ {w}", file=sys.stderr)
+        emit_result(pages_out, sid, jid, cover_only, anchor, warnings + rwarns, receipt)
 
     except Exception as e:
         msg = sandbox_hint(e)

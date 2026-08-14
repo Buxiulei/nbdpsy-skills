@@ -146,10 +146,33 @@ def test_parse_page_spec_mixed():
     assert gi.parse_page_spec("7,2-4,3") == [2, 3, 4, 7]  # 去重保序
 
 
+def test_parse_page_spec_open_range():
+    """开区间 `2-` ＝第 2 页到末页——批量出图排除已确认封面 P1 的标准写法（SKILL.md 工序③）。
+    以前这写法只在文档里有、代码不认，实跑必报错，人一急就把 --pages 整个删掉 → 封面被重出覆盖。"""
+    assert gi.parse_page_spec("2-", max_page=6) == [2, 3, 4, 5, 6]
+    assert gi.parse_page_spec("2-", max_page=9) == [2, 3, 4, 5, 6, 7, 8, 9]
+    assert gi.parse_page_spec("2-", max_page=2) == [2]           # 只两页的稿子＝只出 P2
+    assert gi.parse_page_spec("3-,1", max_page=4) == [1, 3, 4]   # 与其它写法混用
+
+
+def test_parse_page_spec_open_range_needs_max_page():
+    """不知道总页数时开区间必须报错，⛔ 不许默认成某个页数（猜错＝静默出错页）。"""
+    with pytest.raises(ValueError) as exc:
+        gi.parse_page_spec("2-")
+    assert "总页数" in str(exc.value)
+
+
+def test_parse_page_spec_open_range_start_beyond_total():
+    with pytest.raises(ValueError) as exc:
+        gi.parse_page_spec("7-", max_page=6)
+    assert "超出本篇总页数" in str(exc.value)
+
+
 def test_parse_page_spec_invalid():
-    for bad in ("a-3", "2-", "0", "3-1", "", "1,x"):
+    # `-2`（缺起始页）与 `a-`（起始页不是数字）仍是非法：开区间只放开"缺结束页"这一种
+    for bad in ("a-3", "-2", "a-", "0", "3-1", "", "1,x"):
         with pytest.raises(ValueError):
-            gi.parse_page_spec(bad)
+            gi.parse_page_spec(bad, max_page=9)
 
 
 def _pages(n):
@@ -177,6 +200,13 @@ def test_select_pages_out_of_range_raises():
     msg = str(exc.value)
     assert "P7" in msg and "P8" in msg and "P9" in msg  # 越界页被点名
     assert "6 页" in msg
+
+
+def test_select_pages_open_range_excludes_cover_whatever_the_length():
+    """同一条命令 `--pages 2-` 对 6 页 / 9 页稿子都成立，且都不含 P1（这正是它存在的理由）。"""
+    for n in (6, 8, 9):
+        sel = gi.select_pages(_pages(n), cover_only=False, spec="2-")
+        assert [p["page"] for p in sel] == [f"P{i}" for i in range(2, n + 1)]
 
 
 # ---- 落盘命名两位数 + 相对 URL 拼绝对 ----
@@ -303,3 +333,68 @@ def test_create_job_prompts_hard_limit():
     with pytest.raises(ValueError) as ei:
         gen_images.create_job("https://x", "k", ["p"] * 100, None)
     assert "99" in str(ei.value)
+
+
+# ---- 闸门 A 生产端：凭证记「单出 or 批量顺带」（2026-08-14 复验 S4 证据 3 · 裁决 B）----
+
+COVER_PROMPT = "封面版式：通栏大字压顶，主色 #2F4F4F，图中中文文字「复杂性创伤」"
+
+
+def _receipt(tmp_path, cover_only, run_pages, prompt=COVER_PROMPT):
+    cover = tmp_path / "P01.png"
+    cover.write_bytes(b"\x89PNG fake")
+    mp, warns = gi.write_cover_receipt(
+        cover, prompt, "sess-1", 42, "https://x/anchor.png",
+        {"套名": "图文", "version": 3}, cover_only=cover_only, run_pages=run_pages)
+    return cover, mp, json.loads(mp.read_text(encoding="utf-8")), warns
+
+
+def test_receipt_records_cover_only_and_run_pages_single(tmp_path):
+    _c, _mp, meta, warns = _receipt(tmp_path, True, "1")
+    assert meta["cover_only"] is True and meta["run_pages"] == "1"
+    assert not [w for w in warns if "批量顺带" in w]
+
+
+def test_receipt_records_batch_run_and_warns_on_the_spot(tmp_path):
+    """批量顺带出的 P1：凭证如实记 cover_only=false，并当场告知发布会被拒（别等到发布才发现）。"""
+    _c, _mp, meta, warns = _receipt(tmp_path, False, "all")
+    assert meta["cover_only"] is False and meta["run_pages"] == "all"
+    assert any("批量顺带" in w and "--confirm-cover" in w and "--cover-only" in w for w in warns)
+
+
+def test_run_pages_spec_four_branches():
+    """run_pages 是**字符串**证据串，四分支（2026-08-14 契约终稿）：
+    传了 --pages 原样记 / --cover-only 记 "1" / 都没传记 "all" / --job 按状态文件页号还原。
+    ⛔ --cover-only 不许记 "all"——那是凭证自己说谎（这一跑只请求了 P1）。"""
+    assert gi.run_pages_spec(False, "2-8") == "2-8"
+    assert gi.run_pages_spec(False, "1,3") == "1,3"
+    assert gi.run_pages_spec(True, None) == "1"
+    assert gi.run_pages_spec(False, None) == "all"
+    assert gi.run_pages_spec(False, None, ["P2", "P3", "P4"]) == "2,3,4"
+    assert gi.run_pages_spec(False, None, ["P1"]) == "1"   # 复查一跑只出过 P1 → 仍算单出
+    assert gi.run_pages_spec(True, "2-8") == "1"           # 两个都给：以 --cover-only 为准（实际只出 P1）
+
+
+def test_is_cover_single_derives_from_requested_pages():
+    """判据是这一跑请求了哪些页：只请求 P1 ＝单出；批量跑里 P1 出成了不算单出。"""
+    assert gi.is_cover_single(False, "1") is True
+    assert gi.is_cover_single(True, "all") is True           # 显式 --cover-only
+    assert gi.is_cover_single(False, "1,2") is False
+    assert gi.is_cover_single(False, "2-8") is False
+    assert gi.is_cover_single(False, "all") is False
+
+
+def test_maybe_write_cover_receipt_passes_run_pages(tmp_path):
+    note = tmp_path / "post-01.md"
+    note.write_text(
+        "---\n故事线: 现象 → 机制\n---\n\n## 配图轮播\n\n"
+        f"### P1 · 封面\n**论点行**：一句主张\n\n```\n{COVER_PROMPT}\n```\n",
+        encoding="utf-8")
+    cover = tmp_path / "P01.png"
+    cover.write_bytes(b"\x89PNG fake")
+    pages_out = [{"page": "P1", "path": str(cover), "url": "https://x/P01.png", "error": None},
+                 {"page": "P2", "path": str(tmp_path / "P02.png"), "url": "u", "error": None}]
+    mp, _warns = gi.maybe_write_cover_receipt(
+        pages_out, note, "s1", 7, None, None, cover_only=False, run_pages="1,2")
+    meta = json.loads(Path(mp).read_text(encoding="utf-8"))
+    assert meta["cover_only"] is False and meta["run_pages"] == "1,2"

@@ -7,14 +7,33 @@ import pytest
 NOTE = Path(__file__).parent / "fixtures" / "note.md"
 
 
-def _make_note_tree(tmp_path, pages=3, name="post-01"):
-    """临时笔记 + 配图目录（P01…P0N）。"""
+COVER_PROMPT = "封面版式：通栏大字压顶，主色 #2F4F4F，图中中文文字「复杂性创伤」"
+
+
+def _write_receipt(img_dir, cover_only=True, run_pages="1", **extra):
+    """给首图落一份闸门 A 认的封面产出凭证（字段口径同 gen_images.write_cover_receipt）。
+    cover_only/run_pages 是 2026-08-14 裁决 B 加的「单出确认」两字段。"""
+    meta = {"cover_file": "P01.png", "source": "gen_images", "job_id": 42,
+            "session_id": "sess-1", "anchor_url": None,
+            "cover_only": cover_only, "run_pages": run_pages,
+            "style_profile": {"套名": "图文", "version": 3},
+            "prompt_excerpt": COVER_PROMPT, "generated_at": "2026-08-14T15:00:00+08:00"}
+    meta.update(extra)
+    mp = img_dir / "P01.meta.json"
+    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return mp
+
+
+def _make_note_tree(tmp_path, pages=3, name="post-01", receipt=True, **receipt_kw):
+    """临时笔记 + 配图目录（P01…P0N）+ 首图的封面产出凭证（闸门 A 的对象）。"""
     note = tmp_path / f"{name}.md"
     note.write_text(NOTE.read_text(encoding="utf-8"), encoding="utf-8")
     img_dir = tmp_path / "images" / name
     img_dir.mkdir(parents=True)
     for i in range(1, pages + 1):
         (img_dir / f"P{i:02d}.png").write_bytes(b"\x89PNG fakebytes")
+    if receipt:
+        _write_receipt(img_dir, **receipt_kw)
     return note, img_dir
 
 
@@ -957,3 +976,104 @@ def test_manifest_is_passed_through(monkeypatch):
     monkeypatch.setattr(publish_note, "send_request",
                         lambda *a, **k: _Resp(200, {"service": "nbdpsy-api", "version": "0.17.0"}))
     assert publish_note.manifest("https://x", "k")["version"] == "0.17.0"
+
+
+# ---- 闸门 A · 单出确认（2026-08-14 复验 S4 证据 3 · 裁决 B）----
+# 只证明"这张图是工序③出的"挡不住批量顺带重出的封面：批量出 P2…P8 时 P1 一起被重画，
+# 凭证自动重写，已确认过的封面被无声顶掉照发不误。故再要一项：**单出，或有人工确认戳**。
+
+def test_cover_receipt_single_out_passes(tmp_path):
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=2, cover_only=True, run_pages="1")
+    out = publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert out["ok"] is True and out["cover_only"] is True and out["run_pages"] == "1"
+
+
+def test_cover_receipt_batch_byproduct_rejected(tmp_path):
+    """批量顺带出的封面：拒发，且措辞与 SKILL.md 逐字一致（改字前先改文档）。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=8, cover_only=False, run_pages="1-8")
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert ("封面凭证是批量顺带产出的（cover_only=false 且无人工确认戳）："
+            "先跑 --confirm-cover <路径> --confirmed-by 你的名字 补确认，"
+            "或用 --cover-only 重新单出该篇封面") in str(exc.value)
+    assert "--pages 1-8" in str(exc.value)          # 顺带报出是哪一跑捎带的
+
+
+def test_cover_receipt_legacy_without_cover_only_is_fail_closed(tmp_path):
+    """老凭证没有 cover_only 字段 → 判"不是单出"（fail-closed）：
+    ⛔ 字段缺失绝不等于放行——那是"没查到"当"没有"的老病。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    meta = json.loads((_write_receipt(img_dir)).read_text(encoding="utf-8"))
+    meta.pop("cover_only"), meta.pop("run_pages")
+    (img_dir / "P01.meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "cover_only=false 且无人工确认戳" in str(exc.value)
+
+
+def test_confirm_cover_stamps_then_passes(tmp_path):
+    """补戳 → 放行：凭证多出 confirmed_by/confirmed_at，闸门 A 立刻转绿。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=8, cover_only=False, run_pages="1-8")
+    out = publish_note.confirm_cover_receipt(img_dir / "P01.png", "胡佰亿")
+    assert out["ok"] is True and out["confirmed_by"] == "胡佰亿" and out["confirmed_at"]
+    meta = json.loads((img_dir / "P01.meta.json").read_text(encoding="utf-8"))
+    assert meta["confirmed_by"] == "胡佰亿" and meta["cover_only"] is False  # 事实不改写，只补戳
+    assert publish_note.check_cover_receipt(img_dir / "P01.png")["ok"] is True
+
+
+def test_confirm_cover_requires_a_name(tmp_path):
+    """匿名戳等于没戳：不给 --confirmed-by 就拒，⛔ 不许默认填一个值。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=8, cover_only=False, run_pages="1-8")
+    for empty in (None, "", "   "):
+        with pytest.raises(ValueError) as exc:
+            publish_note.confirm_cover_receipt(img_dir / "P01.png", empty)
+        assert "--confirmed-by" in str(exc.value)
+    assert "confirmed_by" not in (img_dir / "P01.meta.json").read_text(encoding="utf-8")
+
+
+def test_confirm_cover_refuses_to_forge_a_receipt(tmp_path):
+    """只盖戳、不造证：没有凭证就拒——凭空写一份不叫确认，叫伪造。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    with pytest.raises(ValueError) as exc:
+        publish_note.confirm_cover_receipt(img_dir / "P01.png", "胡佰亿")
+    assert "缺封面产出凭证" in str(exc.value)
+    assert not (img_dir / "P01.meta.json").exists()          # 拒了就是拒了，不留半份凭证
+
+
+def test_manual_confirmed_source_unaffected(tmp_path):
+    """source=manual_confirmed 天生带确认戳，不因新增这项而多受一道罪。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_receipt(img_dir, cover_only=False, run_pages="all", source="manual_confirmed",
+                   job_id=None, session_id=None,
+                   confirmed_by="胡佰亿", confirmed_at="2026-08-14T15:00:00+08:00")
+    assert publish_note.check_cover_receipt(img_dir / "P01.png")["ok"] is True
+
+
+def test_cli_batch_cover_blocked_then_confirmed_then_publishes(tmp_path):
+    """CLI 三步实测：批量顺带的封面拒发 → --confirm-cover 补戳 → 同一条命令放行。"""
+    import subprocess
+    note, img_dir = _make_note_tree(tmp_path, pages=3, cover_only=False, run_pages="1-3")
+    script = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts" / "publish_note.py"
+    env = {"PATH": "/usr/bin:/bin", "NBDPSY_XHS_API_KEY": "test_key_not_real",
+           "NBDPSY_SECRETS": str(tmp_path / "none.env"), "NBDPSY_WORKSPACE": str(tmp_path)}
+    pub = [sys.executable, str(script), "--note", str(note), "--account", "主号", "--dry-run"]
+
+    blocked = subprocess.run(pub, capture_output=True, text=True, env=env)
+    assert blocked.returncode == 1
+    assert "封面凭证是批量顺带产出的（cover_only=false 且无人工确认戳）" in blocked.stderr
+
+    stamped = subprocess.run(
+        [sys.executable, str(script), "--confirm-cover", str(img_dir / "P01.png"),
+         "--confirmed-by", "胡佰亿"], capture_output=True, text=True, env=env)
+    assert stamped.returncode == 0 and json.loads(stamped.stdout)["confirmed_by"] == "胡佰亿"
+
+    passed = subprocess.run(pub, capture_output=True, text=True, env=env)
+    assert passed.returncode == 0, passed.stderr
+    assert json.loads(passed.stdout)["outcome"] == "dry_run"

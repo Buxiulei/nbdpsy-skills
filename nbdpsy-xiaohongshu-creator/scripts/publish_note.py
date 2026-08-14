@@ -30,6 +30,19 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
     python3 publish_note.py --check-cookie 账号名或ID   # 触发 cookie 验活并轮询到结果
     python3 publish_note.py --artifacts <job_id> [--out 目录] [--artifact-name 文件名]
                                                 # 取该次发布的现场截图（排障；空清单不是异常）
+    python3 publish_note.py --check-cover <首图>   # 只验封面产出凭证（出图后、发布前自查）
+    python3 publish_note.py --confirm-cover <首图> --confirmed-by <姓名>  # 批量顺带出的封面：补单出确认戳
+    python3 publish_note.py --ledger-check [路径]  # 读欠账（fresh agent 接手第一件事）
+
+三道结构闸门（2026-08-14 起写成代码，此前图文线上只是文档里的一句话——「文字挡不住手快的执行者」）：
+  闸门 A · 封面产出凭证：**图文的封面＝第一张图（P01）**，发布前逐篇校验同名 `P01.meta.json`
+      （实现见 `check_cover_receipt`，图文/视频/播客三形态共用这一个函数，⛔ 别再抄第二份）。
+      无凭证拒发；凭证比封面图旧也拒发（图比凭证新＝重出图后没更新凭证，凭证与文件脱钩）；
+      凭证记的是**批量顺带出的封面**（`cover_only != true`）且无人工确认戳也拒发——
+      那张 P1 没人看过缩略图就把已确认的封面覆盖了，补救＝重新 `--cover-only` 单出，或 `--confirm-cover`。
+  闸门 B · 无 job 不发：本脚本每个动作都建一条 server 侧 job，⛔ 手搓 payload 直调 API 是违规路径。
+  闸门 C · 台账先行 + 回读差集：提交前先往 `publish-ledger.md` 落一行「意图」，拿到终态回执后
+      回填「实际」并算差集。**差集非空 ＝ 本批不许报完成**（exit 3）。
 
 凭据：NBDPSY_XHS_API_KEY（必需）、NBDPSY_XHS_API_BASE（可选，默认 https://mcp.nbdpsy.com），
 由 nbdpsy_common 三层解析（环境变量 > workspace/.env > 用户级 secrets.env），
@@ -39,7 +52,12 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
 正文≤900 字；话题≤10 个；定时发布 schedule_time 务必带时区偏移（如 +08:00）。
 
 输出契约：stdout 纯 JSON。发布 = {"outcome": "published|publishing|pending|failed|canceled|unknown",
-"job_id", "note_url", "error", "warnings"}；failed/canceled exit 1，其余 exit 0。
+"job_id", "note_url", "error", "warnings", "ledger", "intent", "actual", "gap", "gap_count"}。
+发布 exit 码：0 = published 且差集为空（真闭环，才可以报完成）；1 = failed/canceled，或提交前
+就被闸门拦下（封面无凭证等）；**3 = published 但有欠账**（差集非空：话题没挂上/合集没进/引用没挂）
+——台账里那行仍是 `- [ ]`，补救完跑对应动作闭环，**这不是成功**；
+pending/unknown 仍 **exit 0**（历史语义不动：任务已入队，非零会诱导重发，判据看 outcome 与 hint）。
+`--ledger-check` 另有 exit 4 = 台账文件不存在（＝这批还没发过、或台账压根没落，**不是闭环**）。
 unknown = 任务已入队但状态未确认（网络抖动等）——带真实 job_id 与复查提示，**绝不据此重发**；
 --no-wait 或轮询超时后仍在跑同理，稍后用 --job 复查。正文发布前会剥离 Markdown 强调符（**/*/`）。
 接入辅助命令 exit 码：--wait-login done=0/未等到=1；--check-cookie valid=0/其余=1
@@ -76,7 +94,7 @@ import shutil
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -221,6 +239,306 @@ def collect_images(note_path: Path, images_dir):
     if dropped:
         print(f"⚠️ 配图目录存在同页多格式，已按 jpg>png>webp 去重：取 {len(paths)} 张、忽略 {dropped} 张重复格式", file=sys.stderr)
     return paths
+
+
+# ---------------------------------------------------------------- 闸门 A · 封面产出凭证
+# 图文 / 视频 / 播客三形态共用这一段（`publish_video.py` 直接绑定这里的函数，⛔ 别再抄第二份）。
+# 图文的封面就是**第一张图 P01**（没有独立 cover 通道，传 --cover 服务端 422），
+# 所以图文校验的对象是 `images/<post名>/P01.png` 的同名 `P01.meta.json`。
+
+# 封面凭证认的五个具名版式（illustration-spec §2-b「封面版式工程」版式表，2026-08-14 补第五式）
+COVER_LAYOUTS = ("通栏大字压顶", "左字右图分栏", "留白场", "色块压条", "上图下字·真人照")
+# 凭证的合法来源只有两个。⛔ 自渲染 HTML / 视频截帧 / 随手找的图都不是合法来源；
+# 把它们写成 manual_confirmed 不是"绕过闸门"，是**伪造凭证**。
+COVER_SOURCES = ("gen_images", "manual_confirmed")
+# 凭证比封面图旧多少秒算脱钩。留 2s 余量：同一次出图里「先落图、后写凭证」两步之间
+# 有正常的秒级时差，文件系统时间戳精度也不一致；真正要挡的是"图重出了、凭证还是旧那份"。
+COVER_RECEIPT_MTIME_SLACK = 2.0
+# 「单出确认」不过时的拒发措辞真源：与 SKILL.md 逐字一致（2026-08-14 契约）。
+# 单独拎成常量是为了**一行可 grep**——散在多行字符串里，文档与代码对不对得上就没人验得了。
+# ⛔ 改这句必须同步改文档。
+COVER_BATCH_REJECT_MSG = "封面凭证是批量顺带产出的（cover_only=false 且无人工确认戳）：先跑 --confirm-cover <路径> --confirmed-by 你的名字 补确认，或用 --cover-only 重新单出该篇封面"
+
+
+def cover_meta_path(cover: Path) -> Path:
+    return cover.with_suffix(".meta.json")
+
+
+def check_cover_receipt(cover: Path) -> dict:
+    """校验封面的产出凭证。不过就抛 ValueError——**拒发，不是告警**。
+
+    为什么校验的是凭证而不是文件名：命名约定只能挡住"忘了做封面"，挡不住"自己做了一张
+    命名合规的"。凭证要求的 job/session id 与提示词摘要，只有真的走过③步出图才拿得到。
+    """
+    cover = Path(cover)
+    if not cover.is_file():
+        raise ValueError(f"封面文件不存在：{cover}")
+    if cover.suffix.lower() not in COVER_EXTS:
+        raise ValueError(f"封面扩展名不支持：{cover.suffix}（允许 {'/'.join(sorted(COVER_EXTS))}）")
+    mp = cover_meta_path(cover)
+    if not mp.is_file():
+        raise ValueError(
+            f"缺封面产出凭证 {mp.name}——⛔ 无凭证一律拒发。\n"
+            "  封面必须走工序③（三形态共用同一道封面闸门，视频没有旁路）：\n"
+            "  gen_images.py 出封面时会自动落盘同名 .meta.json（字段见 SKILL.md 工序③「封面产出凭证」）；\n"
+            "  人工/宿主出图的批次写 source=manual_confirmed 并记下是谁在什么时候认可的。")
+    try:
+        meta = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise ValueError(f"封面凭证 {mp.name} 不是合法 JSON：{e}")
+
+    def need(key):
+        v = meta.get(key)
+        if isinstance(v, str):
+            v = v.strip()
+        if v in (None, "", [], {}):
+            raise ValueError(f"封面凭证 {mp.name} 缺字段 `{key}`")
+        return v
+
+    source = need("source")
+    if source not in COVER_SOURCES:
+        raise ValueError(f"封面凭证 source={source!r} 非法（只认 {'/'.join(COVER_SOURCES)}）——"
+                         "自渲染 HTML / 视频截帧不是合法来源，改走工序③ 出图")
+    if meta.get("cover_file") and meta["cover_file"] != cover.name:
+        raise ValueError(f"封面凭证张冠李戴：cover_file={meta['cover_file']} ≠ 实际文件 {cover.name}")
+    # 凭证与文件脱钩（2026-08-14 干跑报告 G3）：只比同名挡不住"封面重出后凭证没更新"——
+    # 那份旧凭证指着上一个 job，等于拿旧证据给新图背书。图比凭证新即拒。
+    if mp.stat().st_mtime + COVER_RECEIPT_MTIME_SLACK < cover.stat().st_mtime:
+        raise ValueError(
+            f"封面凭证 {mp.name} 比封面图 {cover.name} 旧（凭证 "
+            f"{datetime.fromtimestamp(mp.stat().st_mtime).isoformat(timespec='seconds')}"
+            f" < 图 {datetime.fromtimestamp(cover.stat().st_mtime).isoformat(timespec='seconds')}）"
+            "——封面重出过、凭证却是旧那份，凭证与文件已脱钩：重跑 gen_images.py 出封面"
+            "（会自动重写凭证），或人工出图的批次按新图重写 meta.json")
+    if source == "gen_images":
+        need("job_id")
+        need("session_id")
+    else:
+        need("confirmed_by")     # 谁认可的——空串/纯空白不算数
+        need("confirmed_at")
+    # 单出确认（2026-08-14 复验 S4 证据 3）：凭证只能证明"这张图是工序③出的"，证明不了
+    # "有人看过它"。批量出 P2…P8 时顺带重出的 P1 同样自动拿到一份合法凭证，于是把已确认的
+    # 封面覆盖掉也照发不误——闸门 A 全程无感。故再要一项：**本次是单出封面，或事后有人工确认戳**。
+    # ⚠️ 老凭证没有 cover_only 字段 → 判为"不是单出"（fail-closed）：宁可让人补一次确认戳，
+    # 也不给"字段缺失＝默认放行"留口子。source=manual_confirmed 天然带确认戳，不受这条影响。
+    confirmed_by = str(meta.get("confirmed_by") or "").strip()
+    if not meta.get("cover_only") and not confirmed_by:
+        ran = str(meta.get("run_pages") or "").strip()
+        raise ValueError(
+            f"封面凭证 {mp.name}：" + COVER_BATCH_REJECT_MSG + "\n"
+            + (f"  本次出图 --pages {ran}\n" if ran else "")
+            # 图文走 publish_note.py、视频/播客走 publish_video.py，两边同一个函数同一道判据，
+            # 所以这里不点名脚本——点名了另一条线的人会以为要跨脚本操作。
+            + f"  补戳：<本脚本> --confirm-cover {cover} --confirmed-by \"<姓名>\""
+            "（看过这张图的人签名，⛔ 别代签）\n"
+            "  单出：gen_images.py --note <稿件> --cover-only（出完看缩略图再批量出后续页）")
+    excerpt = str(need("prompt_excerpt"))
+    if not re.search(r"#[0-9A-Fa-f]{6}\b", excerpt):
+        raise ValueError(f"封面凭证 {mp.name} 的 prompt_excerpt 里没有色值（#RRGGBB）——"
+                         "说明这张封面没按本批风格档案的调色板出")
+    if not any(v in excerpt for v in COVER_LAYOUTS):
+        raise ValueError(f"封面凭证的 prompt_excerpt 里没有具名版式"
+                         f"（{'/'.join(COVER_LAYOUTS)}）——封面版式工程没走，见 illustration-spec §2-b")
+    sp = meta.get("style_profile") or {}
+    if not sp.get("套名") or sp.get("version") in (None, ""):
+        raise ValueError(f"封面凭证缺 style_profile（套名 + version）——"
+                         "审查端要按这一版档案判封面，缺了没法判")
+    return {"cover": str(cover), "meta": str(mp), "source": source,
+            "style_profile": sp, "job_id": meta.get("job_id"),
+            "session_id": meta.get("session_id"),
+            "cover_only": bool(meta.get("cover_only")),
+            "run_pages": str(meta.get("run_pages") or "") or None,   # "1"/"2-8"/"1,3"/"all"
+            "confirmed_by": confirmed_by or None, "ok": True}
+
+
+def confirm_cover_receipt(cover: Path, who: str) -> dict:
+    """给**已有**封面凭证补人工确认戳（闸门 A「单出确认」这一项的唯一正路）。
+
+    ⛔ 只盖戳，不造证：凭证不存在就拒——凭空写一份不叫确认，叫伪造（同 COVER_SOURCES 的红线）。
+    盖戳顺带刷新凭证 mtime（晚于封面图），G3 的「凭证比图旧」判据随之满足；盖完当场复校一遍，
+    不让"戳盖上了、别的项仍不过"混过去。
+    """
+    cover = Path(cover)
+    who = (who or "").strip()
+    if not who:
+        raise ValueError("--confirm-cover 需要 --confirmed-by <姓名>：确认戳要记下是谁看过这张图，"
+                         "匿名戳等于没戳")
+    if not cover.is_file():
+        raise ValueError(f"封面文件不存在：{cover}")
+    mp = cover_meta_path(cover)
+    if not mp.is_file():
+        raise ValueError(
+            f"缺封面产出凭证 {mp.name}——⛔ 确认戳只能盖在已有凭证上：\n"
+            "  先用 `gen_images.py --note <稿件> --cover-only` 出封面（会自动落凭证），再来盖戳。")
+    try:
+        meta = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise ValueError(f"封面凭证 {mp.name} 不是合法 JSON：{e}")
+    meta["confirmed_by"] = who
+    meta["confirmed_at"] = now_iso()
+    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    out = check_cover_receipt(cover)          # 复校：盖完仍不过就当场抛，别报假绿
+    out["confirmed_by"] = who
+    out["confirmed_at"] = meta["confirmed_at"]
+    return out
+
+
+def check_images_cover_receipt(note_path: Path, image_paths) -> dict:
+    """图文线的闸门 A：**首图即封面**，校验它的产出凭证，报错带上是哪一篇。"""
+    cover = image_paths[0]
+    try:
+        return check_cover_receipt(cover)
+    except ValueError as e:
+        raise ValueError(f"【{note_path.name}】封面（首图 {cover.name}）没过闸门 A：{e}")
+
+
+# ---------------------------------------------------------------- 闸门 C · 台账
+LEDGER_NAME = "publish-ledger.md"
+LEDGER_HEADER = (
+    "# 发布台账（意图 vs 实际 · 差集）\n\n"
+    "> 由 `publish_note.py` / `publish_video.py` 自动维护。**这张表记的不是「做过什么」，是「还欠什么」。**\n"
+    "> `- [ ]` = 未闭环（有欠账，⛔ 本批不许报完成）；`- [x]` = 意图与实际一致。\n"
+    "> 接手第一件事：`python3 scripts/publish_note.py --ledger-check <本文件>`。\n\n"
+)
+
+
+def now_iso() -> str:
+    return datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
+
+
+def ledger_path(args, note: Path = None) -> Path:
+    if getattr(args, "ledger", None):
+        return Path(args.ledger)
+    base = note.parent if note else Path.cwd()
+    return base / LEDGER_NAME
+
+
+def ledger_append(path: Path, line: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(LEDGER_HEADER, encoding="utf-8")
+    with path.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def ledger_replace(path: Path, old: str, new: str) -> bool:
+    """把台账里那一行原地换掉（意图行 → 回填实际与差集）。找不到就追加，绝不静默丢。"""
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        if old in text:
+            path.write_text(text.replace(old, new, 1), encoding="utf-8")
+            return True
+    ledger_append(path, new)
+    return False
+
+
+def ledger_find_by_job(path: Path, job_id) -> str:
+    if not path.exists():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("- [") and f"job={job_id} " in line + " ":
+            return line
+    return ""
+
+
+def ledger_row(closed: bool, ts: str, what: str, account: str, job_id, intent: str,
+               actual: str, gap: str) -> str:
+    box = "x" if closed else " "
+    tail = "已闭环" if closed else "未闭环"
+    return (f"- [{box}] {ts} | {what} | {account} | job={job_id} | 意图: {intent} | "
+            f"实际: {actual} | 差集: {gap} | {tail}")
+
+
+def ledger_check(path: Path) -> int:
+    """读欠账。exit 语义三态（2026-08-14 干跑报告 G5 修正）：
+      0 = 台账在、且全部闭环；3 = 台账在、有未闭环行；**4 = 台账不存在**。
+    ⚠️ 以前"没有台账"与"全部闭环"回同一个 exit 0——「没写台账」被当成「这批没事」，
+    正是闸门 C 要挡的那种假绿。没台账 ≠ 闭环：要么这批还没发，要么发了没落台账（更糟）。"""
+    if not path.exists():
+        print(json.dumps({"ledger": str(path), "exists": False, "open_rows": [],
+                          "hint": "台账文件不存在——**这不是闭环，是没有证据**："
+                                  "要么这批还没发过（发布走 publish_note.py / publish_video.py，"
+                                  "⛔ 别手搓 payload 直调，那条路不落台账）；"
+                                  "要么发过但没落台账（那就先 --list-jobs 把已发的 job 捞回来核对，"
+                                  "⛔ 别据此报完成）"},
+                         ensure_ascii=False))
+        return 4
+    rows = [l for l in path.read_text(encoding="utf-8").splitlines() if l.startswith("- [ ]")]
+    print(json.dumps({"ledger": str(path), "exists": True, "open_count": len(rows),
+                      "open_rows": rows,
+                      "hint": ("有未闭环行＝本批还有欠账，⛔ 不许报完成：逐行按差集补救"
+                               "（cover=FAIL → publish_video.py --fix-cover；topics 缺 → 换词重挂；"
+                               "collection 缺 → note_ops.py --set-components），"
+                               "补完跑 --recheck <job_id>（视频）或 --job <job_id> 复核闭环")
+                              if rows else "全部闭环"},
+                     ensure_ascii=False))
+    return 3 if rows else 0
+
+
+# ---------------------------------------------------------------- 回读校验（意图 vs 实际）
+
+def diff_intent_actual(view: dict, intent: dict) -> tuple:
+    """拿服务端回执逐项比对意图，返回 (实际摘要, 差集摘要, 差集项数)。
+
+    ⚠️ `published` ≠ 组件全成：封面/话题/合集失败**不阻断发布**，任务照样 published
+    （2026-08-13 job337 实证：published + cover error + topics 全空）。所以判据在 applied 层。
+    """
+    applied = view.get("applied") or {}
+    comps = applied.get("components") or {}
+    actual, gaps = [], []
+
+    want_topics = list(intent.get("topics") or [])
+    if want_topics:
+        got = list(applied.get("topics_applied") or [])
+        actual.append(f"topics={len(got)}/{len(want_topics)}")
+        missing = [t for t in want_topics if t not in got]
+        if missing:
+            gaps.append(f"topics=缺{len(missing)}({','.join(missing)})")
+
+    for key, label, fix in (
+            ("cover", "cover", "publish_video.py --fix-cover --job {job} --cover <封面>"
+                               "（note-components 链已真号验过；⚠️ 只对视频笔记有效，"
+                               "图文没有独立封面通道、传 cover 直接 422）"),
+            ("collection", "collection", "note_ops.py --set-components --collection-id/--collection-name 补挂"),
+            ("quote", "quote", "note_ops.py --set-components --related-counselor 显式补挂"),
+            ("activity", "activity", "⛔ 活动只能发布时挂，事后挂不上：记为不可补救，下次发布带上")):
+        if not intent.get(key):
+            continue
+        st = (comps.get(key) or {}).get("status")
+        actual.append(f"{label}={st or 'null'}")
+        if st not in ("done", "skipped"):
+            gaps.append(f"{label}=FAIL(补救: {fix.format(job=view.get('job_id'))})")
+
+    if view.get("status") != "published":
+        gaps.append(f"status={view.get('status')}")
+    return ("; ".join(actual) or "—"), ("; ".join(gaps) or "—"), len(gaps)
+
+
+def intent_summary(intent: dict) -> str:
+    bits = [f"topics={len(intent.get('topics') or [])}"]
+    for k in ("cover", "collection", "quote", "activity"):
+        if intent.get(k):
+            bits.append(f"{k}={intent[k]}")
+    return " ".join(bits)
+
+
+def intent_from_view(view: dict) -> dict:
+    """从服务端回执反推意图：topics_requested 与 components 的键集就是"这次请求过什么"。
+    （台账行是给人读的，机器判据取服务端回执——避免两份意图对不上。）"""
+    applied = view.get("applied") or {}
+    comps = applied.get("components") or {}
+    return {"topics": list(applied.get("topics_requested") or []),
+            "cover": "cover" in comps, "collection": "collection" in comps,
+            "quote": "quote" in comps, "activity": "activity" in comps}
+
+
+def build_publish_intent(topics, extras: dict, cover_name=None) -> dict:
+    """本次发布的「意图」——台账先行落的就是它，回执到了逐项比对算差集。"""
+    return {"topics": list(topics or []),
+            "cover": cover_name,
+            "collection": extras.get("collection_name") or extras.get("collection_id"),
+            "quote": extras.get("quoted_note_id") or extras.get("related_counselor"),
+            "activity": extras.get("activity_id")}
 
 
 def b64_items(paths):
@@ -841,7 +1159,37 @@ def main():
     ap.add_argument("--note-purpose",
                     help="本篇核心目的（推介咨询师/概念解读/案例剖析/热点分析/互动引导/个人记录/其他，"
                          "词表会扩不强制）；也可写进笔记 frontmatter，命令行优先")
+    ap.add_argument("--check-cover", type=Path, metavar="封面",
+                    help="只校验封面产出凭证（图文传首图 images/<post名>/P01.png），不发布")
+    ap.add_argument("--confirm-cover", type=Path, metavar="封面",
+                    help="给已有封面凭证补人工确认戳（配 --confirmed-by 姓名），不发布——"
+                         "封面是批量顺带出的时候，闸门 A 认这个戳或重新 --cover-only 单出")
+    ap.add_argument("--confirmed-by", metavar="姓名",
+                    help="--confirm-cover 的确认人：看过这张封面的人签名（⛔ 别代签）")
+    ap.add_argument("--ledger", help=f"台账路径（默认 <稿件同目录>/{LEDGER_NAME}）")
+    ap.add_argument("--ledger-check", nargs="?", const="", metavar="路径",
+                    help="读欠账：列出所有未闭环行（有欠账 exit 3；台账不存在 exit 4，那不是闭环）")
     args = ap.parse_args()
+
+    # 这两条不打网络、不需要凭据：出图后自查凭证、接手时先读欠账
+    if args.ledger_check is not None:
+        p = Path(args.ledger_check) if args.ledger_check else ledger_path(args, args.note)
+        sys.exit(ledger_check(p))
+    if args.check_cover:
+        try:
+            print(json.dumps(check_cover_receipt(args.check_cover), ensure_ascii=False, indent=2))
+            sys.exit(0)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+            sys.exit(1)
+    if args.confirm_cover:
+        try:
+            print(json.dumps(confirm_cover_receipt(args.confirm_cover, args.confirmed_by),
+                             ensure_ascii=False, indent=2))
+            sys.exit(0)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+            sys.exit(1)
 
     key = nbdpsy_common.get_secret(nbdpsy_common.XHS_API_KEY)
     if not key:
@@ -852,6 +1200,7 @@ def main():
 
     submitted_job_id = None  # 已入队的任务号——之后的任何异常都不能丢它，否则会诱发重复发布
     submitted_deletion_id = None  # 已入队的删除任务号——删除不可逆，异常时绝不能落 failed 诱导重发
+    ledger_state = None  # (台账路径, 时间戳, 账号, 意图行, 意图摘要, 稿件名)：异常时把那行改写成「状态未知」
     try:
         if args.list_accounts:
             print(json.dumps({"accounts": list_accounts(api_base, key)}, ensure_ascii=False))
@@ -987,8 +1336,28 @@ def main():
         if args.job is not None:
             submitted_job_id = args.job
             view = poll_job(api_base, key, args.job, timeout=0)
-            print(json.dumps(job_brief(view), ensure_ascii=False))
-            sys.exit(1 if view.get("status") in ("failed", "canceled") else 0)
+            out = job_brief(view)
+            # 闸门 C：复查也算差集并回填台账（--no-wait / 轮询超时之后就靠这条闭环）。
+            # 台账定位不到（既没 --ledger 也没 --note）时只算不写——绝不往 cwd 乱落台账文件。
+            intent = intent_from_view(view)
+            actual, gap, ngap = diff_intent_actual(view, intent)
+            out.update({"intent": intent_summary(intent), "actual": actual,
+                        "gap": gap, "gap_count": ngap})
+            if args.ledger or args.note:
+                lp = ledger_path(args, args.note)
+                closed = view.get("status") == "published" and ngap == 0
+                row = ledger_row(closed, now_iso(), args.note.name if args.note else "—",
+                                 f"号{view.get('account_id')}", args.job,
+                                 intent_summary(intent), actual, gap)
+                old = ledger_find_by_job(lp, args.job)
+                ledger_replace(lp, old, row) if old else ledger_append(lp, row)
+                out["ledger"] = str(lp)
+            owed = view.get("status") == "published" and ngap > 0
+            if owed:
+                out["hint"] = ("**published 但有欠账，这不是成功**：按差集逐项补救，"
+                               f"补完再跑 --job {args.job} 复核闭环")
+            print(json.dumps(out, ensure_ascii=False))
+            sys.exit(1 if view.get("status") in ("failed", "canceled") else (3 if owed else 0))
 
         if args.video and args.audio:
             ap.error("--video 与 --audio 互斥（图文/视频/播客三选一）")
@@ -1007,6 +1376,21 @@ def main():
         for w in warnings:
             print(f"⚠ {w}", file=sys.stderr)
 
+        # 闸门 A：封面产出凭证——图文的封面就是第一张图（P01），逐篇校验它的同名 .meta.json；
+        # 视频/播客走 publish_video.py，这里若仍传了 --cover 也过同一道闸（三形态一个判据）。
+        # ⛔ 不过就抛，绝不带着往下走：无凭证拒发，凭证比图旧也拒发。
+        if media_kind == "images":
+            cover_receipt = check_images_cover_receipt(args.note, image_paths)
+        elif args.cover:
+            cover_receipt = check_cover_receipt(args.cover)
+        else:
+            cover_receipt = None
+
+        # 闸门 C 的「意图」：图文没有独立 cover 组件（首图即封面），所以 cover 只在视频/播客路径记
+        intent = build_publish_intent(
+            topics, extras, args.cover.name if (args.cover and media_kind != "images") else None)
+        intent_txt = intent_summary(intent)
+
         if args.dry_run:
             print(json.dumps({
                 "outcome": "dry_run", "title": title, "content_chars": len(content),
@@ -1015,8 +1399,9 @@ def main():
                 "audio": str(args.audio) if args.audio else None,
                 "cover": str(args.cover) if args.cover else None,
                 "images": [str(p) for p in image_paths],
+                "cover_receipt": cover_receipt,
                 "account": args.account, "schedule_time": args.schedule,
-                "extras": extras, "warnings": warnings,
+                "extras": extras, "intent": intent_txt, "warnings": warnings,
             }, ensure_ascii=False, indent=2))
             return
 
@@ -1024,6 +1409,14 @@ def main():
         if acc_warn:
             warnings.append(acc_warn)
             print(f"⚠ {acc_warn}", file=sys.stderr)
+
+        # 闸门 C：**提交之前**先落意图行（台账先行）。会话断了、回执没读到，欠账仍在纸上。
+        lp = ledger_path(args, args.note)
+        ts = now_iso()
+        who = f"号{account_id}({account_label})"
+        pending_row = ledger_row(False, ts, args.note.name, who, "待回执", intent_txt, "—", "待回执")
+        ledger_append(lp, pending_row)
+        ledger_state = (lp, ts, who, pending_row, intent_txt, args.note.name)
 
         payload = {"account_id": account_id, "title": title, "content": content,
                    "topics": topics, **extras}
@@ -1050,22 +1443,44 @@ def main():
         job_id = resp.json()["job_id"]
         submitted_job_id = job_id
         print(f"  已入队 job_id={job_id}", file=sys.stderr)
+        ledger_replace(lp, pending_row,
+                       ledger_row(False, ts, args.note.name, who, job_id, intent_txt, "—", "待回执"))
 
         if args.no_wait:
             print(json.dumps({"outcome": "pending", "job_id": job_id, "note_url": None,
-                              "error": None, "warnings": warnings}, ensure_ascii=False))
+                              "error": None, "warnings": warnings, "ledger": str(lp),
+                              "intent": intent_txt,
+                              "hint": f"台账那一行仍是 `- [ ]`（未闭环）：稍后 --job {job_id} "
+                                      "复查会自动回填实际与差集，差集空了才算闭环"},
+                             ensure_ascii=False))
             return
 
         view = poll_job(api_base, key, job_id,
                         timeout=900 if args.wait_timeout is None else args.wait_timeout)
         out = job_brief(view)
         out["warnings"] = warnings
+        # 闸门 C：回读服务端 applied 逐项比对意图 → 差集非空就是欠账（published 也不算成功）
+        actual, gap, ngap = diff_intent_actual(view, intent)
+        closed = view.get("status") == "published" and ngap == 0
+        row = ledger_row(closed, ts, args.note.name, who, job_id, intent_txt, actual, gap)
+        old = ledger_find_by_job(lp, job_id)
+        ledger_replace(lp, old or pending_row, row)
+        out.update({"ledger": str(lp), "intent": intent_txt, "actual": actual,
+                    "gap": gap, "gap_count": ngap})
         if out["outcome"] not in TERMINAL_STATUSES:
             # 定时任务的 pending 是正常等待，job_brief 已给出准确说法，别用"仍在发布中"盖掉它
             out.setdefault("hint",
-                           f"仍在发布中，稍后 python3 publish_note.py --job {job_id} 复查")
+                           f"仍在发布中，稍后 python3 publish_note.py --job {job_id} 复查"
+                           "（复查会回填台账并重算差集）")
+        elif closed:
+            pass
+        elif out["outcome"] == "published":
+            out["hint"] = ("**published 但有欠账，这不是成功**：按差集逐项补救"
+                           "（合集/引用走 note_ops.py --set-components；话题没挂上换词重挂），"
+                           f"补完跑 --job {job_id} 复核闭环")
         print(json.dumps(out, ensure_ascii=False))
-        sys.exit(1 if out["outcome"] in ("failed", "canceled") else 0)
+        sys.exit(1 if out["outcome"] in ("failed", "canceled")
+                 else (3 if (out["outcome"] == "published" and ngap) else 0))
 
     except Exception as e:
         msg = sandbox_hint(e)
@@ -1084,16 +1499,28 @@ def main():
         if submitted_job_id is not None:
             # 任务已在服务端入队（还会自动重试），绝不判 failed——那会让 agent 重发同一篇
             print(f"  → 状态未知: {msg}", file=sys.stderr)
-            print(json.dumps({
-                "outcome": "unknown", "job_id": submitted_job_id, "note_url": None, "error": msg,
-                "hint": f"任务可能仍在服务端跑（自动重试最长约 40 分钟），"
-                        f"先用 --job {submitted_job_id} 复查，勿直接重发以免重复发布",
-            }, ensure_ascii=False))
+            out = {"outcome": "unknown", "job_id": submitted_job_id, "note_url": None,
+                   "error": msg,
+                   "hint": f"任务可能仍在服务端跑（自动重试最长约 40 分钟），"
+                           f"先用 --job {submitted_job_id} 复查，勿直接重发以免重复发布"}
+            if ledger_state:  # 台账那一行必须落到「状态未知」，⛔ 不许留在「待回执」假装还没发
+                lp, ts, who, pending_row, intent_txt, what = ledger_state
+                ledger_replace(lp, pending_row,
+                               ledger_row(False, ts, what, who, submitted_job_id, intent_txt,
+                                          "状态未知", f"状态未知({msg[:60]})"))
+                out["ledger"] = str(lp)
+            print(json.dumps(out, ensure_ascii=False))
             sys.exit(0)
-        # 未入队的异常（解析/账号/建任务失败）才是真 failed
+        # 未入队的异常（解析/账号/建任务失败/被闸门拦下）才是真 failed
         print(f"  → 失败: {msg}", file=sys.stderr)
-        print(json.dumps({"outcome": "failed", "job_id": None, "note_url": None,
-                          "error": msg}, ensure_ascii=False))
+        out = {"outcome": "failed", "job_id": None, "note_url": None, "error": msg}
+        if ledger_state:  # 意图行已落但没入队：改写成「提交失败」，别把它留成待回执的幽灵行
+            lp, ts, who, pending_row, intent_txt, what = ledger_state
+            ledger_replace(lp, pending_row,
+                           ledger_row(False, ts, what, who, "未入队", intent_txt,
+                                      "提交失败", f"提交失败({msg[:60]})"))
+            out["ledger"] = str(lp)
+        print(json.dumps(out, ensure_ascii=False))
         sys.exit(1)
 
 

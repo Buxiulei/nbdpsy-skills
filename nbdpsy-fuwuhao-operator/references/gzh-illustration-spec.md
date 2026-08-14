@@ -135,7 +135,7 @@ python3 ../nbdpsy-xiaohongshu-creator/scripts/style_profile.py --get --kind caro
 | `visual.texture` | ✅ 照抄。画风、肌理、光影那一段 |
 | `visual.cover_layout` | ⚠️ **不适用**。它写的是竖版"标题压上 1/3、主体居中偏下"，公众号封面既不放标题、又要**居中避让上下裁切**——版式照本文第 2.1 节 |
 | `visual.content_layout` | ⚠️ **只借"每条信息配一个具体场景小图"这半句**；"满版分 2–3 区块"是竖版信息海报的排法，横版插图不照搬（见第 3 节） |
-| `density`（信息密度档位） | ⚠️ **不适用**。那是小红书"每页 200–400 字"的口径，公众号正文字数由长文本身决定，图上本来就不放大段字 |
+| `density`（信息密度档位） | ⚠️ **不适用**。那是小红书按页控密度的口径（数值真源见 xiaohongshu-creator/references/illustration-spec.md，别在这里抄死数字），公众号正文字数由长文本身决定，图上本来就不放大段字 |
 | `tone` / `structure` | ⚠️ 与配图无关（管的是文案），排版发文时由长文 skill 负责 |
 | **比例行（16:9 / 2.35:1）** | ⛔ **不归档案管**——出图后端的技术规格，任何档案都改不了 |
 

@@ -372,8 +372,16 @@ python3 {SKILL_DIR}/scripts/fetch_counselor.py --emp <emp_no> \
 # ① 头像上图床拿直链（--upload-images 收本地文件，返回 urls[0] 即绝对直链，7 天有效）
 python3 {SKILL_DIR}/scripts/publish_note.py --upload-images {note_dir}/photo/avatar-<emp_no>.jpg
 
-# ② 科普内容页照旧：先 --cover-only 过风格闸门，拿 anchor_url 批量出 P1…P(N-1)
-python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 1-8 --anchor-url <P1直链>
+# ②-a 封面单出过风格闸门（P1 只此一次；返回的 anchor_url 就是下一步的 <P1直链>）
+python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --cover-only
+# ②-b 运营看过缩略图、点头之后，给凭证补人工确认戳（不补这一步，③ 发布时闸门 A 拒发）
+python3 {SKILL_DIR}/scripts/publish_note.py --confirm-cover {note_dir}/images/post-01/P01.png \
+  --confirmed-by "<运营姓名>"
+
+# ②-c 科普内页：⛔ 起始页号必须是 2，不许回到 `1-8`
+#     本例 9 页故写 2-8，通式 `2-<N−1>`——既不含 P1（已确认的封面绝不许被批量重出覆盖），
+#     也不含末页 PN（它换 anchor 单出，见 ③）
+python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 2-8 --anchor-url <P1直链>
 
 # ③ 末页推介单出，anchor 换成头像直链
 python3 {SKILL_DIR}/scripts/gen_images.py --note {note_dir}/post-01.md --pages 9 --anchor-url <头像直链>

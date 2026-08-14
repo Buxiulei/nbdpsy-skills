@@ -3,6 +3,12 @@
 > **定位**：口播驱动的 GSAP 动效字卡竖版短片。质感档位在「图拼视频」与「AI 动画短片」之间，
 > **边际成本 ≈ ¥0.2/条（MiniMax 口播）+ 本地渲染 ¥0**，改一个字约 1 分钟重出全片。
 > 首片《一个嗯字让你想了一晚上》36.5s，四版式一天内出齐并经老板逐版验收（含两轮返工：字符遮挡、音画不同步）。
+>
+> **首片入库位置（2026-08-14 补记）**：`/home/roots/NBDpsy/seo-geo/content/videos/gsap-card-proto/card-proto.mp4`
+> （同目录 `card-proto-v2.mp4` 是同一条片子的二版）。**这条片子同时是 tpl-basic 的确证样片**——
+> 同目录 `card.html` 文件名无版式后缀，即 basic 原型。此前把它记成"样片存疑/丢失"是**当时没做入库这一步**，
+> 不是文件不见了。要版式样图、关键帧、给运营看的示例，**一律从这个路径取帧**，
+> ⛔ 别重渲一条新的充样片——重渲的片子与老板 2026-08-11 验收过的那批不是同一套像素（见下「三条纪律」②）。
 
 ## 产线五步
 
@@ -159,5 +165,26 @@ md5 各不相同，差在 1 帧、383 个像素、最大通道差 1——这个�
 
 - 上传直链：`POST /api/admin/blog/posts/upload-video`（multipart `file` 字段**必须显式 `;type=video/mp4`**，
   服务端按 MIME 判格式，curl 默认 octet-stream 会被拒）→ `https://database.nbdpsy.com/static/blog/videos/…`；
-- 发小红书走 publish-jobs `video` 字段（服务器侧路径，同机 cp 落盘，见 xiaohongshu-creator SKILL 视频发布节）；
-- 封面按 3:4 单独做（沿用小红书封面规范），版式知识见 xiaohongshu-creator `illustration-spec.md` §2-b。
+- 发小红书**必经脚本层**：`nbdpsy-xiaohongshu-creator/scripts/publish_video.py`
+  （它落 job 行 = 台账先行，自动拆 `topics`，带 cover/collection/activity 与终态白名单轮询）。
+  ⛔ **手搓 payload 直调 `POST /api/publish-jobs` 是禁令**——job 337 就是这么发的：`#标签` 只写进正文成了纯文本，
+  回执 `topics_requested: []` / `topics_applied: []`，静默丢话题无人发现（实证见
+  `docs/2026-08-14-视频笔记发布事故实证-供skill重塑反例.md`）。图文有 `split_content_topics` 兜底，
+  视频直调裸奔没有任何保护。详见 xiaohongshu-creator SKILL 的发布步。
+
+### 封面：本文档不做，一律回主流程③（⛔ 字卡短片没有自己的封面旁路）
+
+封面是三形态（图文轮播 / 文字版 / **视频**）**共用的同一道必经步**：`nbdpsy-xiaohongshu-creator`
+主流程第 **③ 步「封面」**，版式细则见其 `references/illustration-spec.md` §2-b。
+本节此前只写了一句"沿用小红书封面规范，见 §2-b"——**一句跨文档引用不构成流程**：
+执行者两次绕开它（① 拿平台截的第 0 帧当封面，实际是文字还没显出来的空白卡；② 自写深色 HTML
+渲染出命名合规的 `cover-*.jpg`），两次都被老板打回（原话「你居然都没有做封面！！！」，
+留痕见 `seo-geo/content/video/koubo-ziwoguanhuai/cover/cover-notes.md` 两轮修订）。所以改成硬指回：
+
+- **必须经③步出图**，并落**产出凭证** `cover-*.meta.json`（gen_images 回执的 job/session id + 提示词摘要）；
+  发布步逐张校验「有回执 **且** 回执提示词含本批风格档案的调色板/版式声明」，**无凭证一律拒发**；
+- ⛔ **命名合规 ≠ 过闸**：自造的文件也能叫 `cover-01.jpg`，但它拿不出回执——**判据是凭证，不是文件名**；
+- ⛔ **抽帧/截帧不得当投放封面**（`video_pack.py --cover-at` 的抽帧只用于内部预览）；
+- 封面比例 **3:4 竖版**（1080×1440，信息流按 3:4 展示），与成片 9:16 不同是正常的；
+- ⚠️ 发布后补封面**只有视频笔记可用**（图文传 cover 直接 422）。它是**补救**不是流程——
+  ⛔ 不许拿它当"先发了回头再补"的借口：会话一断，那个"回头"就没了（事故第 2、3 条正是这么丢的）。
