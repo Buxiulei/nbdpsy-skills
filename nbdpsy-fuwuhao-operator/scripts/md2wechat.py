@@ -40,6 +40,10 @@
 标题的去处: frontmatter 的 `title`（没有就取正文首个 H1）抽成 JSON 里的 `title`，
 **并从正文里删掉**——微信标题在建草稿时单独设置，正文再放一遍读者会看到两遍。
 
+配图区块: 稿子文末的 `## 配图` 装的是喂给出图模型的提示词（色号、构图、负面提示），
+不是给读者看的，**编译时整段截掉**并给一条 warning 说明剥了多少——2026-08-14 实测漏剥
+会把 `#A8B5C4`、`1536×1024`、「负面提示」这些串原样印进公众号正文。
+
 中文加粗: `叫**复杂性创伤（CPTSD）**的东西` 这种写法 CommonMark 判不成加粗（flanking 规则遇
 中文标点失效），星号会原样发出去。本脚本渲染后补一刀修正并计数告知；修不了的（没闭合）单列警告。
 
@@ -184,6 +188,34 @@ def split_frontmatter(text: str):
             key, _, value = line.partition(":")
             meta[key.strip()] = value.strip().strip("'\"")
     return meta, text[m.end():]
+
+
+# 行首锚定：正文里写到「## 配图」四个字的句子（讲排版流程的稿子就会）不能被误切成断篇。
+_ILLUSTRATION_HEADING = re.compile(r"(?m)^##\s*配图\s*$")
+_SECTION_HEADING = re.compile(r"(?m)^##(?!#)\s*\S")
+
+
+def strip_illustration_block(body: str, line_offset: int = 0):
+    """截掉「## 配图」提示词区块，返回 (剩余正文, warning|None)。
+
+    line_offset: 正文之前已被剥掉的行数（frontmatter），用来把行号还原成源文件里的行号。
+    剥了必须出声——静默截断和漏剥同样贵：运营看不见少发了什么。
+    """
+    m = _ILLUSTRATION_HEADING.search(body)
+    if not m:
+        return body, None
+    block = body[m.start():]
+    line_no = line_offset + body.count("\n", 0, m.start()) + 1
+    fences = len(re.findall(r"(?m)^\s*```", block)) // 2
+    warning = (f"已剥掉文末『## 配图』提示词区块（第 {line_no} 行起，{len(block)} 字符 / "
+               f"{fences} 个围栏），它不进公众号正文。")
+    nxt = _SECTION_HEADING.search(body, m.end())
+    if nxt:
+        nxt_line = line_offset + body.count("\n", 0, nxt.start()) + 1
+        heading = body[nxt.start():].splitlines()[0].strip()
+        warning += (f"⚠️ **但这个区块不在文件末段**：它后面第 {nxt_line} 行还有正文小节"
+                    f"「{heading}」，那一段也被一并截掉了——请核对稿子结构是不是写错了。")
+    return body[:m.start()], warning
 
 
 def strip_leading_h1(body: str):
@@ -371,9 +403,11 @@ def compile_markdown(md_text: str, upload=None):
     返回 {"html", "title", "images", "warnings"}；产物若含白名单外构件直接抛 CompileError。
     """
     meta, body = split_frontmatter(md_text)
+    body, illus_warning = strip_illustration_block(
+        body, line_offset=md_text.count("\n", 0, len(md_text) - len(body)))
     body, h1 = strip_leading_h1(body)
     title = (meta.get("title") or h1 or "").strip()
-    warnings = []
+    warnings = [illus_warning] if illus_warning else []
     if h1 and title == h1:
         warnings.append(f"首个 H1「{h1}」已抽成标题、未写进正文——微信标题在建草稿时单独设置"
                         f"（--title），正文再放一遍读者会看到两遍。")

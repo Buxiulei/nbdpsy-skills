@@ -277,6 +277,49 @@ class TestFrontmatterTitle:
         assert any("--title" in w for w in r["warnings"])
 
 
+class Test配图区块:
+    """2026-08-14 实证：漏剥会把 #A8B5C4、1536×1024、「负面提示」这些出图提示词
+    原样印进公众号正文，而公众号发出去改不了（改＝删+重发、换链接、阅读清零）。"""
+
+    ILLUS = ("正文段落。\n\n## 配图\n\n> 风格档案：暖米大字 v3\n\n### 封面\n\n"
+             "```\npalette：雾霾蓝灰 #A8B5C4。负面提示：不要竖版构图。\n```\n\n"
+             "### 插图1\n\n```\n横版 16:9 构图（1536×1024）。\n```\n")
+
+    def test_配图提示词不进正文(self):
+        r = M.compile_markdown(self.ILLUS)
+        for leaked in ("#A8B5C4", "1536×1024", "负面提示", "风格档案"):
+            assert leaked not in r["html"], leaked
+        assert "正文段落" in r["html"]
+
+    def test_剥了必须出声且报得出行号与体量(self):
+        """静默剥和漏剥一样贵——运营得看得见少发了什么、少了多少。"""
+        r = M.compile_markdown(self.ILLUS)
+        w = next(w for w in r["warnings"] if "配图" in w)
+        assert "第 3 行起" in w and "2 个围栏" in w
+
+    def test_行号按源文件算含frontmatter(self):
+        """行号是给人回稿子里找的，必须是源文件行号，不是剥完 frontmatter 的相对行号。"""
+        r = M.compile_markdown("---\ntitle: 测\n---\n\n" + self.ILLUS)
+        assert "第 7 行起" in next(w for w in r["warnings"] if "配图" in w)
+
+    def test_正文里写到配图字样不被误切(self):
+        """行首锚定的意义：讲排版流程的稿子正文里就会出现「## 配图」四个字。"""
+        r = M.compile_markdown("排版时要写 ## 配图 这一节。\n\n后面还有一整段正文。\n")
+        assert "后面还有一整段正文" in r["html"]
+        assert not any("剥掉" in w for w in r["warnings"])
+
+    def test_配图区块后面还有正文小节要报异常(self):
+        """截断照做（提示词绝不能进正文），但得点名后面那一节也被截掉了。"""
+        r = M.compile_markdown(self.ILLUS + "\n## 收个尾\n\n最后一段。\n")
+        assert "最后一段" not in r["html"]
+        w = next(w for w in r["warnings"] if "配图" in w)
+        assert "不在文件末段" in w and "## 收个尾" in w
+
+    def test_没有配图区块时不给多余警告(self):
+        r = M.compile_markdown("就是一段正文。\n")
+        assert not any("配图" in w for w in r["warnings"])
+
+
 class TestLimits:
     def test_超两万字符给出警告不静默(self):
         r = M.compile_markdown("正文段落。\n\n" * 3000)

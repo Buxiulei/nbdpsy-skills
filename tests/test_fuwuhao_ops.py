@@ -719,6 +719,78 @@ class Test贴图:
         assert net.calls == []
 
 
+class Test中文终审分段与截断:
+    """2026-08-14 实证：4000 tokens 上限让 4000 汉字的稿子只审到一半，旧版照样 exit 0。
+    「只审了半篇」是这条链路上最贵的静默失败——运营拿半篇建议当全篇用，后半篇的翻译腔直接发出去。"""
+
+    @staticmethod
+    def _fake_requests(monkeypatch, Z, finish_reason, content="建议若干"):
+        sent = []
+
+        class R:
+            @staticmethod
+            def post(url, headers=None, json=None, timeout=None):
+                sent.append(json["messages"][-1]["content"])
+                return FakeResp(200, {"choices": [{"message": {"content": content},
+                                                   "finish_reason": finish_reason}]})
+
+        monkeypatch.setitem(sys.modules, "requests", R)
+        monkeypatch.setattr(Z.nbdpsy_common, "get_secret", lambda k: "sk-test")
+        return sent
+
+    def test_截断时点名审到哪一节并降级partial(self, tmp_path, capsys, monkeypatch):
+        """finish_reason=length 必须换来非零退出码 + 点名覆盖边界，绝不静默 exit 0。"""
+        import zh_review as Z
+        p = tmp_path / "a.md"
+        p.write_text("# 标题\n\n## 一、开头\n\n甲乙丙丁戊己庚辛。\n\n## 二、中间\n\n壬癸子丑寅卯辰巳。\n",
+                     encoding="utf-8")
+        self._fake_requests(monkeypatch, Z, "length", content="1.「甲乙丙丁戊己庚辛」→ 改法 → 理由")
+        code = Z.main([str(p)])
+        out = capsys.readouterr().out
+        assert code == 2                                   # ⛔ 不是 0
+        assert "因输出长度上限被截断" in out and "其后未审" in out
+        assert "## 一、开头" in out                         # 点名审到哪一节为止
+        assert "partial" in out
+
+    def test_未截断时照旧exit0(self, tmp_path, capsys, monkeypatch):
+        """正向对照：finish_reason=stop 不许被误报成截断，否则告警很快就没人看了。"""
+        import zh_review as Z
+        p = tmp_path / "a.md"
+        p.write_text("# 标题\n\n正文一段。\n", encoding="utf-8")
+        self._fake_requests(monkeypatch, Z, "stop")
+        assert Z.main([str(p)]) == 0
+        out = capsys.readouterr().out
+        assert "截断" not in out and "partial" not in out
+
+    def test_长稿按小节分段逐段送审(self, tmp_path, capsys, monkeypatch):
+        """超 2500 汉字必须分段——每段都得真发出去，且末节必须落在某一段里（否则又是半篇）。"""
+        import zh_review as Z
+        body = "".join(f"## 第{i}节\n\n{'字' * 900}\n\n" for i in range(1, 6))
+        p = tmp_path / "a.md"
+        p.write_text(f"# 标题\n\n{body}", encoding="utf-8")
+        sent = self._fake_requests(monkeypatch, Z, "stop")
+        assert Z.main([str(p)]) == 0
+        assert len(sent) >= 2                              # 真的分了段
+        assert all(Z.count_hanzi(s) <= Z.MAX_HANZI_PER_CHUNK + 200 for s in sent)
+        assert "## 第5节" in "".join(sent)                  # 末节没被丢掉
+        assert "结论：done" in capsys.readouterr().out
+
+    def test_正文含配图字样的句子不被误切(self, tmp_path):
+        """行首锚定的反面：讲排版的稿子正文里就会写到「## 配图」四个字，裸 split 会切成半篇。"""
+        import zh_review as Z
+        body = Z.extract_body("正文里提到 ## 配图 这个写法。\n\n后面还有一整段正文。\n")
+        assert "后面还有一整段正文" in body
+
+    def test_定位不到覆盖边界时如实说(self, tmp_path, capsys, monkeypatch):
+        """回推靠的是输出里引的原句；引不到就说定位不到，不许猜一个节名糊过去。"""
+        import zh_review as Z
+        p = tmp_path / "a.md"
+        p.write_text("# 标题\n\n## 一、开头\n\n甲乙丙丁。\n", encoding="utf-8")
+        self._fake_requests(monkeypatch, Z, "length", content="无需修改")
+        assert Z.main([str(p)]) == 2
+        assert "无法从输出定位到具体小节" in capsys.readouterr().out
+
+
 class Test发布与台账:
     def test_发布成功给出异步与查终态的下一步(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "ledger_id": 7, "publish_id": "100000001"}))
