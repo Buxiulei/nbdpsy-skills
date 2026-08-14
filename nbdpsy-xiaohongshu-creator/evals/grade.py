@@ -53,7 +53,7 @@ def main():
     texts = {p.name: p.read_text(encoding='utf-8') for p in posts}
     src = pathlib.Path(src_path).read_text(encoding='utf-8')
     src_nums = numbers(src)
-    WHITELIST = {'12356', '4001619995', '24'}  # 危机热线，非来自正文统计
+    WHITELIST = {'12356', '010', '82951332', '24', '110', '120'}  # 危机热线，非来自正文统计
 
     exp = []
 

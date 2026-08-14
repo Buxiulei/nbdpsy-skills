@@ -211,6 +211,48 @@ def has_crisis_declaration(text: str) -> bool:
     return "12356" in text
 
 
+# 危机热线号码红线（2026-08-14 定案）。小红书一行声明维持 12356 单号（300 字笔记的一行
+# 页脚塞不下第二个机构全名，是版式现实不是安全让步），故这里不要求 010-82951332 在位，
+# 只拦两种会把读者引向拨不通号码的写法：
+#   ① 希望24（4001619995）已证据停用——官网信息冻结于 2021、2023 年自述近半来电无法接通；
+#   ② 12356 官方口径为每日≥18 小时，标「24 小时」会让深夜求助者照着打不通、手里又没有
+#      备选号码；全仓唯一可标 24 小时的号码是 010-82951332。
+DEAD_HOTLINE = re.compile(r"4001619995|400-?161-?9995|希望\s*24")
+H24_MARK = re.compile(r"24\s*(?:小时|[hH](?![A-Za-z]))")
+# 分段边界：强句读 + 010-82951332 本身。用于判断「24 小时」到底挂在谁身上——
+# 标准声明「…12356，或…010-82951332（24 小时）」里两者同行但 24 小时归 010，不能误伤。
+# ⛔ 不能拿逗号当边界：违规写法「12356（全国心理援助热线，24 小时）」正是靠逗号连接的。
+H24_SCOPE_SPLIT = re.compile(r"[。；;！!？?\n]|010-?82951332")
+
+
+def scan_crisis_hotline_violations(numbered_lines):
+    """扫危机热线号码红线，返回与 scan_violations 同构的违规项（多带一个 detail 字段）。
+
+    扫描域与「危机声明在位」检查一致（整文去围栏，不收窄到发布文案/配图轮播区块）：
+    末页图上的错号码与正文里的一样会被读者照着拨。命中即 fail，且不受 --no-crisis 豁免——
+    推介笔记可以不带危机声明，但不能带错的。
+    """
+    out = []
+    for line_no, line in numbered_lines:
+        if DEAD_HOTLINE.search(line):
+            out.append({
+                "rule": "停用热线",
+                "detail": "停用热线回流：希望24已于2026-08-14证据停用，用 010-82951332 替换",
+                "line": line_no,
+                "text": line.strip(),
+            })
+        if any("12356" in seg and H24_MARK.search(seg)
+               for seg in H24_SCOPE_SPLIT.split(line)):
+            out.append({
+                "rule": "热线时段误标",
+                "detail": "12356 官方口径为每日≥18小时，不得标注 24 小时；"
+                          "24 小时只能挂 010-82951332（北京心理危机研究与干预中心）",
+                "line": line_no,
+                "text": line.strip(),
+            })
+    return out
+
+
 def main():
     # 场景开关：--no-crisis 跳过「危机声明在位」检查（咨询师推介笔记场景专用——
     # 推介是人物介绍非心理科普内容，强行要 12356 声明反而像在科普栏目里）；
@@ -269,6 +311,8 @@ def main():
         scan_target = numbered_lines
 
     violations = scan_violations(scan_target)
+    # 热线号码红线不走区块提取，扫全部去围栏行——与「危机声明在位」同域（末页文字也算）。
+    violations += scan_crisis_hotline_violations(numbered_lines)
     warnings = scan_warnings(scan_target, text)
 
     # crisis_required=False（--no-crisis）时，危机声明缺失不再拉低 ok；违禁词照旧一票否决。

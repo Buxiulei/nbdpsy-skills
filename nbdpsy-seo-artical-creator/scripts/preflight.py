@@ -395,23 +395,32 @@ def run(md_text: str, online: bool = False, api_base: str = DEFAULT_API_BASE):
     else:
         add("R7-med", "sensitive-medical", "pass", "无医疗口径敏感词")
 
-    # ===== R8 危机声明：正文须同时含 12356 + 热线号(4001619995|希望24) + 不构成医疗建议 =====
+    # ===== R8 危机声明：须含 12356 + 不构成医疗建议；停用热线回流即 fail；缺 010-82951332 仅 warn =====
+    CRISIS_FIX = ("文末固定加：本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356 "
+                  "或北京心理危机研究与干预中心热线 010-82951332（24小时）；紧急情况拨打 110/120")
     has_12356 = "12356" in body
-    has_hotline = ("4001619995" in body) or ("希望24" in body)
     has_disclaimer = "不构成医疗建议" in body
-    if has_12356 and has_hotline and has_disclaimer:
-        add("R8", "crisis-statement", "pass", "危机声明三要素在位（12356 + 希望24/4001619995 + 不构成医疗建议）")
-    else:
+    has_bjcrisis = "010-82951332" in body
+    # 容错到带空格的「希望 24」与带连字符的号码：排版换行最容易把机构名拆开，
+    # 与 check_compliance.py 的 DEAD_HOTLINE 同口径（两侧闸门必须对称，否则一边拦一边放）。
+    dead_hotline = re.search(r"4001619995|400-?161-?9995|希望\s*24", body) is not None
+    if dead_hotline:
+        add("R8", "crisis-statement", "fail",
+            "停用热线回流：希望24已于2026-08-14证据停用，用 010-82951332 替换", CRISIS_FIX)
+    elif not (has_12356 and has_disclaimer):
         miss = []
         if not has_disclaimer:
             miss.append("『不构成医疗建议』免责句")
-        if not has_hotline:
-            miss.append("希望24热线 4001619995")
         if not has_12356:
-            miss.append("全国心理援助热线 12356")
-        add("R8", "crisis-statement", "fail",
-            "危机声明缺要素：" + "、".join(miss),
-            "文末固定加：本文不构成医疗建议；如处于心理危机请拨打希望24热线 4001619995 或全国统一心理援助热线 12356")
+            miss.append("全国统一心理援助热线 12356")
+        add("R8", "crisis-statement", "fail", "危机声明缺要素：" + "、".join(miss), CRISIS_FIX)
+    elif not has_bjcrisis:
+        add("R8", "crisis-statement", "warn",
+            "危机声明缺北京心理危机研究与干预中心热线 010-82951332（24小时）——12356 官方口径为每日≥18小时，不可标注 24 小时",
+            CRISIS_FIX)
+    else:
+        add("R8", "crisis-statement", "pass",
+            "危机声明要素在位（12356 + 010-82951332 + 不构成医疗建议）")
 
     # ===== R9 内链：/blog/、/services、/counselors 计 2–4 + 锚文本黑名单 =====
     internal = RE_INTERNAL.findall(body)

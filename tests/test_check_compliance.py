@@ -164,3 +164,76 @@ def test_missing_file_errors_to_stdout(tmp_path):
     r = subprocess.run([sys.executable, str(SCRIPT), str(missing)], capture_output=True, text=True)
     d = json.loads(r.stdout)          # 错误 JSON 打 stdout，而非 stderr
     assert r.returncode == 2 and "error" in d and r.stderr.strip() != ""
+
+
+# ---- 危机热线号码红线（2026-08-14 定案）----
+
+CLEAN_DECL = "（本文为心理科普，不构成诊断或治疗；如持续困扰请寻求专业帮助 · 全国统一心理援助热线 12356）"
+
+
+def _with_decl(tmp_path, decl, name="hotline.md", extra_args=()):
+    """把夹具里那行干净的危机声明整行换掉，其余保持不变，跑检查。"""
+    text = FIXTURE.read_text(encoding="utf-8")
+    assert CLEAN_DECL in text, "夹具声明行已变，用例需同步"
+    f = tmp_path / name
+    f.write_text(text.replace(CLEAN_DECL, decl), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f), *extra_args],
+                       capture_output=True, text=True)
+    return r, json.loads(r.stdout)
+
+
+def test_dead_hotline_number_fails(tmp_path):
+    """停用热线号码 4001619995 回流即拦。"""
+    r, d = _with_decl(tmp_path, "（心理科普 · 希望24热线 4001619995 · 全国统一心理援助热线 12356）")
+    assert r.returncode == 1 and d["ok"] is False
+    assert any(v["rule"] == "停用热线" for v in d["violations"])
+
+
+def test_dead_hotline_name_with_space_fails(tmp_path):
+    """只写机构名不写号码、中间还带空格（「希望 24」）也要拦——排版换行最容易长这样。"""
+    r, d = _with_decl(tmp_path, "（心理科普 · 危机可拨希望 24 热线 · 全国统一心理援助热线 12356）")
+    assert r.returncode == 1
+    assert any(v["rule"] == "停用热线" for v in d["violations"])
+
+
+def test_12356_marked_24h_fails(tmp_path):
+    """12356 标「24 小时」= 深夜照着打不通、手里又没备选号，必须拦。"""
+    r, d = _with_decl(tmp_path, "（心理科普 · 全国统一心理援助热线 12356，24 小时）")
+    assert r.returncode == 1 and d["ok"] is False
+    v = [x for x in d["violations"] if x["rule"] == "热线时段误标"]
+    assert v and "≥18小时" in v[0]["detail"]
+
+
+def test_24h_on_bj_hotline_not_flagged(tmp_path):
+    """标准声明里 12356 与「24 小时」同行、但 24 小时挂在 010-82951332 上——绝不能误伤。"""
+    r, d = _with_decl(
+        tmp_path,
+        "（心理科普 · 全国统一心理援助热线 12356，或北京心理危机研究与干预中心热线 010-82951332（24 小时））",
+    )
+    assert r.returncode == 0 and d["ok"] is True
+    assert not any(v["rule"] == "热线时段误标" for v in d["violations"])
+
+
+def test_24h_separated_by_punctuation_not_flagged(tmp_path):
+    """强句读隔开时「24 小时」归后一句的 010，不算误标（分段边界含句读）。"""
+    r, d = _with_decl(tmp_path, "（心理科普 · 援助热线 12356。夜间可拨 24 小时热线 010-82951332）")
+    assert r.returncode == 0 and d["ok"] is True
+
+
+def test_dead_hotline_not_exempted_by_no_crisis(tmp_path):
+    """--no-crisis 只豁免「声明在位」，不豁免错号码：推介笔记可以不带声明，不能带错的。"""
+    bad = "## 发布文案\n\n黄安麟老师，北大临床心理硕士。危机可拨希望24热线 4001619995。\n"
+    f = tmp_path / "intro_bad.md"; f.write_text(bad, encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f), "--no-crisis"],
+                       capture_output=True, text=True)
+    d = json.loads(r.stdout)
+    assert r.returncode == 1 and d["ok"] is False and d["crisis_required"] is False
+    assert any(v["rule"] == "停用热线" for v in d["violations"])
+
+
+def test_hotline_rules_skip_fenced_prompts(tmp_path):
+    """围栏内绘图提示词不误伤（与既有违禁词扫描同口径）。"""
+    text = FIXTURE.read_text(encoding="utf-8") + "\n```\n画面中不要出现 4001619995 这类旧热线号码\n```\n"
+    f = tmp_path / "fenced.md"; f.write_text(text, encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert r.returncode == 0

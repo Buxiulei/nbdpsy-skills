@@ -54,7 +54,8 @@ TABLE = "| 依恋类型 | 关系中表现 | 调节方向 |\n|---|---|---|\n| 焦
 
 LINKS = "延伸了解可看 [咨询服务](/services/qinmi) 与 [咨询师团队](/counselors)，也可读 [相关长文](/blog/yilian-xiufu)。\n"
 
-CRISIS = "本文不构成医疗建议；如处于心理危机请拨打希望24热线 4001619995 或全国统一心理援助热线 12356。\n"
+CRISIS = ("本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356 "
+          "或北京心理危机研究与干预中心热线 010-82951332（24小时）；紧急情况拨打 110/120。\n")
 
 # 一句约 40 汉字的填充句（≤150，避免 R10-para warn）
 FILLER = "在亲密关系里学会辨识自己的情绪并练习用更温和的方式照顾内在的需要是一个需要耐心和反复练习的漫长过程\n"
@@ -291,13 +292,29 @@ def test_citation_markers_consistent_passes(tmp_path):
 
 # ---- R8 危机声明三要素 ----
 
-CRISIS_NO_NUMBER = "本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356。\n"      # 无 4001619995/希望24
-CRISIS_NO_DISCLAIMER = "如处于心理危机请拨打希望24热线 4001619995 或全国统一心理援助热线 12356。\n"  # 无免责句
-CRISIS_NO_12356 = "本文不构成医疗建议；如处于心理危机请拨打希望24热线 4001619995。\n"                # 无 12356
+CRISIS_NO_BJ = "本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356。\n"          # 无 010-82951332
+CRISIS_NO_DISCLAIMER = ("如处于心理危机请拨打全国统一心理援助热线 12356 "
+                        "或北京心理危机研究与干预中心热线 010-82951332（24小时）。\n")          # 无免责句
+CRISIS_NO_12356 = "本文不构成医疗建议；如处于心理危机请拨打北京心理危机研究与干预中心热线 010-82951332（24小时）。\n"  # 无 12356
+CRISIS_DEAD_HOTLINE = "本文不构成医疗建议；如处于心理危机请拨打希望24热线 4001619995 或全国统一心理援助热线 12356。\n"  # 停用热线回流
+CRISIS_DEAD_HOTLINE_SPACED = "本文不构成医疗建议；如处于心理危机请拨打希望 24 热线 或全国统一心理援助热线 12356。\n"  # 机构名带空格、不写号码
 
 
-def test_r8_missing_hotline_number_fails(tmp_path):
-    _, d = run(build_doc(crisis_text=CRISIS_NO_NUMBER), tmp_path)
+def test_r8_missing_bj_hotline_warns(tmp_path):
+    # 缺 010-82951332 只 warn 不 fail：12356 + 免责句在位即达发布底线
+    _, d = run(build_doc(crisis_text=CRISIS_NO_BJ), tmp_path)
+    assert status_of(d, "R8") == "warn"
+
+
+def test_r8_dead_hotline_fails(tmp_path):
+    # 希望24（4001619995）已于 2026-08-14 证据停用，回流即拦——别的要素齐全也不放行
+    _, d = run(build_doc(crisis_text=CRISIS_DEAD_HOTLINE), tmp_path)
+    assert status_of(d, "R8") == "fail"
+
+
+def test_r8_dead_hotline_spaced_name_fails(tmp_path):
+    # 只写机构名不写号码、中间还带空格（「希望 24」）也要拦，与 check_compliance 侧同口径
+    _, d = run(build_doc(crisis_text=CRISIS_DEAD_HOTLINE_SPACED), tmp_path)
     assert status_of(d, "R8") == "fail"
 
 
