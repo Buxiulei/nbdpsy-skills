@@ -192,7 +192,16 @@ BGM 按「口播 − 18」算相对值就落到 **−49.6 LUFS**（约等于没�
 - 发小红书**必经脚本层**：`nbdpsy-xiaohongshu-creator/scripts/publish_video.py`
   （落 job 行 = 台账先行，自动拆 `topics`）。⛔ 手搓 payload 直调 `POST /api/publish-jobs` 是禁令
   （job 337 就是这么发的，`#标签` 静默丢成正文纯文本无人发现）；
+- **发布是两段式四步，不是一条命令**（全文见 text-to-video SKILL「小红书视频笔记发布 · 两段式四步主路径」）：
+  ① `publish_video.py --note … --video … --cover <③的封面>`（**`--cover` 照传**；预期回执就是
+  `exit 3` + `cover=error`，因为该发布入口 31/31 全败，xhs-server 2026-08-16 定性）→
+  ② `--fix-cover --job <发布job> --cover <同一张>`（**常规工序不是异常处置**，判据 `applied_cover=true`）→
+  ③ `--recheck <发布job>`（判据 exit 0、台账翻 `- [x]`）→ ④ `--ledger-check`（判据 exit 0 才准报完成，
+  **exit 4 ＝ 台账不存在 ＝ 没有证据不是绿**）。⛔ 只跑①就报「发完了」＝ 线上这条片子没有封面；
 - **封面无旁路**：与另外三种形态共用 `nbdpsy-xiaohongshu-creator` 主流程第 ③ 步，
   凭证（`cover-*.meta.json`）在才准发。⛔ 抽帧不得当投放封面——
   本形态尤其容易犯这个错，因为「第一页本来就是封面图」看起来天经地义；
   但**放映片的第 0 帧是 97% 缩放状态的封面图**，不是封面成图本身。
+  ⚠️ **形态边界**：封面事后能补**只对视频/播客成立**；同一组图走**图文**发出去时封面就是首图 P01、
+  传 `--cover` 当场 `ValueError`/服务端 422，**发出去即定、唯一补救是删稿重发**——
+  ⛔ 别把放映片这套"回头补"的经验套到图文那条线上。

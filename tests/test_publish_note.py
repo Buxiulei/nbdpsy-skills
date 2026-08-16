@@ -1089,3 +1089,61 @@ def test_cli_batch_cover_blocked_then_confirmed_then_publishes(tmp_path):
     passed = subprocess.run(pub, capture_output=True, text=True, env=env)
     assert passed.returncode == 0, passed.stderr
     assert json.loads(passed.stdout)["outcome"] == "dry_run"
+
+
+# ---- 闸门 B 代码化：视频/播客不走本脚本（2026-08-16） ----
+
+def _run_publish(tmp_path, note, extra):
+    """跑 CLI 发布路径，返回 CompletedProcess（不真外呼：dry-run + 假 key）。"""
+    import subprocess
+    script = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts" / "publish_note.py"
+    env = {"PATH": "/usr/bin:/bin", "NBDPSY_XHS_API_KEY": "test_key_not_real",
+           "NBDPSY_SECRETS": str(tmp_path / "none.env"), "NBDPSY_WORKSPACE": str(tmp_path)}
+    return subprocess.run([sys.executable, str(script), "--note", str(note),
+                           "--account", "主号", "--dry-run", *extra],
+                          capture_output=True, text=True, env=env)
+
+
+def test_视频发布必须改用publish_video而不是本脚本(tmp_path):
+    """闸门 B 的代码化：publish_note.py 能跑通视频≠该跑它。
+
+    根因（2026-08-16 xhs-server 定性）：视频设封面入口自上线 31/31 全败，发布必然是
+    「发布→--fix-cover→--recheck→--ledger-check」四步；本脚本只有第①步，
+    用它发视频＝后三步没有工具、台账永远闭不掉（08-13 丢补封面步的复现路径）。
+    """
+    note, _ = _make_note_tree(tmp_path, pages=1)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake")
+    p = _run_publish(tmp_path, note, ["--video", str(video)])
+    assert p.returncode != 0, "视频走 publish_note 必须被拒，实际放行了"
+    blob = p.stdout + p.stderr
+    assert "publish_video.py" in blob, f"拒绝时必须指路 publish_video.py：{blob[-400:]}"
+    assert "闸门 B" in blob or "四步" in blob
+
+
+def test_播客音频发布同样被拒(tmp_path):
+    note, _ = _make_note_tree(tmp_path, pages=1)
+    audio = tmp_path / "a.m4a"
+    audio.write_bytes(b"fake")
+    p = _run_publish(tmp_path, note, ["--audio", str(audio)])
+    assert p.returncode != 0 and "publish_video.py" in p.stdout + p.stderr
+
+
+def test_图文发布不受该闸门影响(tmp_path):
+    """反向守卫：别把图文一起拦了（拦错了整条主力产线停摆）。"""
+    note, _ = _make_note_tree(tmp_path, pages=2)
+    p = _run_publish(tmp_path, note, [])
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["outcome"] == "dry_run"
+
+
+def test_图文误传cover在dryrun阶段就被拦(tmp_path):
+    """预检必须与真发布同判据：否则 --dry-run 绿灯、真发才红，
+    且失败会在台账留一条没有 job 号、任何补救命令都不适用的「未入队」死行。"""
+    note, _ = _make_note_tree(tmp_path, pages=2)
+    cover = tmp_path / "fake-cover.png"
+    cover.write_bytes(b"\x89PNG fake")
+    p = _run_publish(tmp_path, note, ["--cover", str(cover)])
+    assert p.returncode != 0, "图文传 --cover 在 dry-run 阶段就该被拦"
+    blob = p.stdout + p.stderr
+    assert "没有独立封面通道" in blob and "P01" in blob

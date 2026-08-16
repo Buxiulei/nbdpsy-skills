@@ -458,8 +458,9 @@ NBDpsy 官网博客已有 `blog_posts` 表与站内图片上传基建。把成�
 刷发布（账号是核心资产）。本 skill 对这两家能做到的上限是**出成品包 + 把该拦的在上传前拦住**：
 
 > ⚠️ **小红书是例外**：我们自建的 nbdpsy-server 有一条 job 队列（在服务端跑，与运营本机、与 Chrome 插件无关），
-> 视频笔记发布**必经** `nbdpsy-xiaohongshu-creator/scripts/publish_video.py`——见下面「小红书视频笔记发布」一节，
-> 那一节是硬闸门，不是可选路径。
+> 视频笔记发布**必经** `nbdpsy-xiaohongshu-creator/scripts/publish_video.py`，且是**两段式四步**
+> （发布 → 补封面 → 回读 → 闭台账）——见下面「小红书视频笔记发布 · 两段式四步主路径」一节，
+> 那一节是硬闸门，不是可选路径，**四步也不是四选一**。
 
 ```bash
 python3 {SKILL_DIR}/scripts/video_pack.py \
@@ -474,45 +475,67 @@ python3 {SKILL_DIR}/scripts/video_pack.py \
 > 抽的一帧，只够内部预览/自查用。投放封面一律走下面「封面」一节的主流程③，
 > 并把③的产物用 `--cover <③产出的封面.jpg>` 显式传进来。
 
-### 小红书视频笔记发布（必经脚本层，⛔ 无 job 直调）
+### 小红书视频笔记发布 · **两段式四步主路径**（必经脚本层，⛔ 无 job 直调）
+
+脚本由 `nbdpsy-xiaohongshu-creator` 维护（`--help` 为准），下面这四步是**常规工序的全部**，
+**不是"出错了才走的补救"**——⛔ 只跑第①步就报「发完了」＝ 这条片子线上没有封面。
+
+> **为什么是两段式**（xhs-server 2026-08-16 定性，实证 `docs/2026-08-14-视频笔记发布事故实证-供skill重塑反例.md` §⑧）：
+> **发布链路那条设封面入口自上线起 31 次调用 0 成功（31/31 全败）**，不是偶发。
+> 「先发布、再走 `note-components` 补封面」是 server 修复前的**官方绕行路径**。
+> 此前本节把「发布时带上封面」写成主路径，于是每批都要临场决定"要不要补"——
+> **一旦会话中断，那个"回头再补"就整个消失**（2026-08-13 那批就是这么丢的，第二天老板人肉发现）。
 
 ```bash
-# 视频版的 publish_note.py 对等物；具体参数以 --help 为准（脚本由 nbdpsy-xiaohongshu-creator 维护）
-python3 ~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/publish_video.py --help
+XHS=~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts
+
+# ① 发布（--cover 照传：闸门 A 靠它校验封面产出凭证，不传当场 ValueError；server 根治后自动生效）
+python3 $XHS/publish_video.py --note <post-NN.md> --account <账号名或id> \
+    --video <成片.mp4> --cover <③产出的封面.jpg> [--collection-id … --collection-name …]
+#   判据：exit 0=已发且差集空 / 1=没发出去或被闸门拦 / 2=未到终态（⛔ 绝不重发，稍后 --recheck） / 3=已发但有欠账
+#   ⚠️ 预期就是 exit 3 + applied.cover.status=error（cover_exception）——这是当前预期值，不是意外，⛔ 别重发
+
+# ② 补封面（必然要走的一步；这条链走弹窗结构、已真号验证可用）
+python3 $XHS/publish_video.py --fix-cover --job <发布job_id> --cover <同一张封面.jpg>
+#   判据：stdout "applied_cover": true 且 exit 0 才算补上；exit 3=没换上（看 reason 取证，⛔ 别盲目重跑，每次重跑都是真提交）
+#   ⚠️ --job 必给：补救任务号靠它登记进台账，第③步才找得到这条补救
+#   ⚠️ 报「没有 note_id」＝台账没回填平台 id：先 note_ops.py --sync-ledger <账号>（2026-08-14 卡 2 小时就卡这）
+
+# ③ 回读验证（发布 job 的快照里 cover 永远停在 error，靠②登记的补救任务号回服务端验 applied）
+python3 $XHS/publish_video.py --recheck <发布job_id>
+#   判据：exit 0=差集空、台账那行翻成 - [x]（到这里这一条才算闭环）；3=还有欠账；2=未到终态
+
+# ④ 台账差集闭环（报完成前的最后一道）
+python3 $XHS/publish_video.py --ledger-check [台账路径]
+#   判据：exit 0=全闭环（才可以报完成）；3=还有 - [ ]；4=台账压根不存在＝没有证据，⛔ 不是绿
 ```
 
-它替你做四件手搓 payload 一定会漏的事：**落 job 行（台账先行）/ 拆 `topics` / 带 cover·合集·活动 /
-按终态白名单（`published|failed|canceled`，⚠️ **一个 l**——与脚本里的 `TERMINAL_STATUSES` 逐字一致，写成两个 l 永远等不到终态）轮询**。
-
+- **一批多条：每条各走完整四步，⛔ 不许"先把几条都发了、回头一起补封面"**——2026-08-13 那批正是
+  这么丢的。**整批报完成的前提是 `--ledger-check` exit 0**，中途任一条停在 `- [ ]` 都不算发完。
+- ⚠️ `--fix-cover` 换封面**同样过闸门 A**（复用 `check_cover_receipt`），补的那张也得有产出凭证——
+  ⛔ 别为了补而随手截一帧顶上。
 - ⛔ **手搓 payload 直调 `POST /api/publish-jobs` 是禁令。** job **337** 就是这么发的：`#标签` 只写在
   正文里是纯文本、不成话题实体，回执里 `"topics_requested": []`、`"topics_applied": []`——五个话题
-  一个没挂上，而 job 状态是 `published`，**没有任何报错**（时间线与回执原文见
-  `docs/2026-08-14-视频笔记发布事故实证-供skill重塑反例.md`）。图文走 `publish_note.py` 有
+  一个没挂上，而 job 状态是 `published`，**没有任何报错**。图文走 `publish_note.py` 有
   `split_content_topics` 兜底，视频直调裸奔，没有这层保护。
+- 脚本替你做四件手搓一定会漏的事：**落 job 行（台账先行）/ 拆 `topics` / 带 cover·合集·活动 /
+  按终态白名单（`published|failed|canceled`，⚠️ **一个 l**——与脚本里的 `TERMINAL_STATUSES` 逐字一致，
+  写成两个 l 永远等不到终态）轮询**。
 - **台账先行**：job 行就是「我要发什么」的意图记录，先落库再执行。会话断了也能用
-  `python3 ~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/publish_note.py --list-jobs`（或 `--job <id>`）
-  续核——**回执核对以台账行为准，不靠记性**
-  （事故第 3 条：补封面步骤随会话中断丢失，最后由老板人肉发现）。
-- **提交后回读比对**：终态回执里读回 `topics_applied` / `applied.cover` / `note_url`，与意图清单逐项比。
-  **差集非空 = 本批未完成**，把差集写成待办（如 `cam-2: cover=FAIL(需补) topics=OK`）落台账，
-  ⛔ **差集非空不许报"发完了"**。
-- **补封面与查欠账，就这两个命令**（都在 `publish_video.py` 上，⛔ 别再跳到 xhs SKILL 里翻）：
-
-  ```bash
-  # ① cover=FAIL 的唯一补救：发布后补封面（走弹窗结构，已真号验证可用），补到 applied.cover=true
-  python3 ~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/publish_video.py --fix-cover --job <id> --cover <③产出的封面.jpg>
-  # ② 接手/收尾第一件事：读台账欠账（exit 0=全闭环；3=还有未闭合项；4=台账压根不存在＝没有证据，不是绿）
-  python3 ~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/publish_video.py --ledger-check [台账路径]
-  ```
-
-  ⚠️ `--fix-cover` 换封面**同样过闸门 A**（复用 `check_cover_receipt`），所以补的那张也得有产出凭证——
-  ⛔ 别为了补而随手截一帧顶上。
-- ⚠️ **视频正文与话题发布后改不了**（`content`/`title` 编辑被 server 以 422 拒："文本/图片编辑只对图文笔记验证过"）——
-  **漏挂无补救通道：要么接受缺话题、要么删稿重发**（删稿重发的代价是换链接、数据清零）。
+  `python3 $XHS/publish_note.py --list-jobs`（或 `--job <id>`）续核——**回执核对以台账行为准，不靠记性**。
+- ⚠️ **能事后补的只有封面这一项，别推广到别的字段**：**视频正文与话题发布后改不了**
+  （`content`/`title` 编辑被 server 以 422 拒："文本/图片编辑只对图文笔记验证过"）——
+  **漏挂无补救通道：要么接受缺话题、要么删稿重发**（代价是换链接、数据清零）。
   ⛔ **别拿 `note_ops.py --set-components` 试**——试不出来，只会烧掉该号的会话额度（12 会话/号/时）。
-  所以第一条发完必须先回读校验，再发第二条。
+  所以第一条走完四步再发第二条。
 - `outcome=unknown` / 轮询超时 **绝不重发**（会重复发出去），用 `--job <id>` 复查到终态。
 - 视频文件**不走图床**（图床白名单只收图片扩展名）：走服务器同机落盘路径，⛔ 别把大文件经隧道来回传。
+
+**🧾 报进度必带实证句柄**（2026-08-16 实证）：对外说某步「已完成／已补／已发」，同一句话里必须给出
+**回执句柄**（`job=341 applied_cover=true`）／**台账句柄**（已翻 `- [x]` 的那一行）／**线上句柄**
+（刚跑的 `--recheck`／`--ledger` 输出）三者之一；给不出 **只能报「进行中」**。
+⛔「准备好要做」与「已经做了」之间没有中间态——13:00 报「341/342 已补 ✓」而补救脚本 14:43 才创建，
+老板随后看到五条全没封面。
 
 ### 封面（本 skill 不做，一律回主流程③）
 
@@ -526,9 +549,14 @@ python3 ~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/publish_video.py --h
 - ⛔ **抽帧/截帧不得作投放封面**——平台自动截的第 0 帧是「文字还没显出来的空白卡」，
   这正是 2026-08-14 老板发现「你居然都没有做封面！！！」的现场。
 - 两次绕规范都留了痕，当反例读：`docs/2026-08-14-视频笔记发布事故实证-供skill重塑反例.md`（三条根因）
-  + `seo-geo/content/video/koubo-ziwoguanhuai/cover/cover-notes.md`（hero 三问、副题要答"然后呢"、
+  + `../nbdpsy-xiaohongshu-creator/references/cover-notes-shilu.md（包内副本；NBDpsy 仓原件 seo-geo/content/video/koubo-ziwoguanhuai/cover/cover-notes.md 仅供溯源）`（hero 四判据（见 illustration-spec §2-b）、副题要答"然后呢"、
   特殊人群的特殊安排不得放大成通用承诺——三轮打回逐条留痕）。
 - 封面比例 **3:4 竖版**（1080×1440），与成片 9:16 不同是正常的（信息流按 3:4 展示）。
+- ⚠️ **形态边界（别把视频这套推广出去）**：**只有视频/播客的封面事后能补**（`--fix-cover`，见上一节第②步）；
+  **图文/文字版没有独立封面通道**——首图即封面，`publish_note.py` 传 `--cover` 当场
+  `ValueError：图文笔记没有独立封面（封面就是第一张图）`、绕过脚本直调服务端 **422**，
+  **发出去即定、事后无补救通道，唯一出路是删稿重发**（换链接、数据清零）。
+  换句话说：**图文的封面闸门卡在出图阶段，视频的封面闸门卡在发布后的第②步**——两者都不许跳，跳法不同。
 
 ### 三平台限制（最紧的那条决定"一份文件通传"的天花板）
 
@@ -604,5 +632,9 @@ H.264 是唯一三家都稳的——h265 在视频号 Chrome 上传直接失败�
 - Seedance CLI 仅 720p；要更高分辨率需另寻（非本产线）。
 - **封面无旁路**：三形态共用 `nbdpsy-xiaohongshu-creator` 主流程第③步，凭证（`cover-*.meta.json`）在才准发；
   ⛔ 抽帧/截帧/自造 HTML 封面一律不算（2026-08-14 两次打回实证）。
-- **发小红书必经 `publish_video.py`**（有 job 行 = 台账先行），⛔ 手搓 payload 直调 `POST /api/publish-jobs`；
-  发完回读 `topics_applied`/`applied.cover` 比对意图，**差集非空不许报完成**。
+- **发小红书必经 `publish_video.py` 的两段式四步**（有 job 行 = 台账先行）：① 发布（`--cover` 照传）→
+  ② `--fix-cover --job <id>` 补封面（**该发布入口 31/31 全败，这一步是常规工序**）→ ③ `--recheck <id>` 回读 →
+  ④ `--ledger-check` exit 0；⛔ 手搓 payload 直调 `POST /api/publish-jobs`，⛔ 只跑①就报「发完了」，
+  ⛔ 多条攒到最后一起补封面。**差集非空不许报完成**。
+- **报「已完成」必带实证句柄**：回执（`applied_cover=true`）／台账已翻 `- [x]` 的那一行／刚拉的线上回读，
+  三选一同句给出；给不出只能报「进行中」。

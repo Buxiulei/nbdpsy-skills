@@ -329,7 +329,55 @@ python3 {SKILL_DIR}/scripts/preflight.py "$WS/drafts/{slug}.md" --online
 - **发布后立即提醒管理员上网页核查**：给出文章 URL `https://www.nbdpsy.com/blog/{slug}`，请管理员核对内容与署名是否妥当。（搜索引擎推送已由后端在发布时自动完成，无需手动推。）
 - **有问题怎么办（管理员后台兜底）**：发现内容或署名有误，管理员在管理后台直接**下架**（状态改回 `draft` 或删除）或**修改**（改 `author_name` 署名、改正文）。不必回到本流程。
 - **ISR 缓存**：新发布文章即刻可见；**修改已有文章**若网页未即时生效，是官网（marketing-web）的 ISR 缓存，约 5 分钟自动刷新（revalidate=300）；仍不生效再提醒管理员排查。
+  - ⛔ **超过 5 分钟还不一致，就不再是缓存问题**：此时**第一嫌疑人是自己的查询/修改范围**（改漏了列、改漏了篇、正则太窄），不是缓存。必须先跑下节「存量文章批量修订」的全字段扫（S1-b）拿到 0 行，才允许把不一致归因给缓存/延迟——⛔ 起后台轮询「等它刷新」不算排查（2026-08-16 实证：库里没删干净时轮询会永远返回同一个数，看起来正像缓存没过期）。
 - **可选：分发改写**。若要把 pillar 二次分发到公众号/头条/知乎，读 **`references/distribution-spec.md`**，每篇各出三版（gzh/toutiao/zhihu），写到**内容工作区 distribution 目录**的 `{slug}--{platform}.md`。核心纪律：**改写不改事实**、敏感词红线相同、每版嵌一次品牌锚句、保留危机声明。
+
+---
+
+## 存量文章批量修订（改已上线的文章，走这条，不走七步流程）
+
+适用：不是写新文章，而是**把某段文案从已上线的存量文章里清掉或换掉**——换危机热线号码、改合规口径、换品牌说法（老板口径常是一句「全改吧」）。
+七步流程管的是「新写一篇」，这条管的是「改一批」，**两者的失败模式完全不同**：写新文章的风险是编造，改存量的风险是**漏改后报绿**。
+
+> ⛔ **本节的由来（2026-08-16 危机热线清理，一次假绿）**：工单说「文章正文里的热线」，于是只扫 `content_markdown`，77 篇报全绿；线上仍搜得到旧号码，又只查 `content_markdown` 得 0，遂判成「ISR 缓存残留」起轮询等刷新——旧号码根本没被删过，**它在 `faq` 字段里**。`faq` 会进 JSON-LD 的 **FAQPage**，是喂给搜索引擎与 AI 引擎的答案源，比正文更该先清。
+
+**三条闸门（缺任一即视为未清理，⛔ 不许报「已清理」）**
+
+1. **扫描按「这张表里所有能装它的列」，不按工单点名的那一列**。`blog_posts` 2026-08-16 实测有 15 列能装文案（`slug/title/excerpt/cover_image_url/content_markdown/status/author_name/meta_title/meta_description/source_type/source_url/reviewer_emp_no/citations/faq/video_url`）。一条 SQL 全扫并自报命中列，新增列自动纳入：
+
+   ```bash
+   # ⛔ 一律扫生产库：本地是旧快照，会给出方向相反的假象
+   #   （2026-08-16 实测：本地 18 篇仍命中旧号码，生产库同一条 SQL 返回 0）
+   ssh nbdpsy "PGPASSWORD='<生产库密码>' psql -h localhost -U root -d psychology_counseling -c \"
+     SELECT id, slug,
+            (SELECT string_agg(k, ',') FROM jsonb_each_text(to_jsonb(p)) AS e(k,v)
+             WHERE v ~ '<正则>') AS hit_columns
+     FROM blog_posts p
+     WHERE to_jsonb(p)::text ~ '<正则>'
+     ORDER BY id;\""
+   ```
+
+   **通过条件＝返回 0 行**；非 0 行时 `hit_columns` 直接指出漏在哪一列。`<正则>` 必须覆盖四类变体（纯数字 `4001619995`、连字符 `400-161-9995`、空格 `400 161 9995`、名称 `希望24|希望热线`），变体清单写进交付说明。
+   代码侧同扫一遍**前端硬编码**（页脚这类全站每页可见处不在工单范围内，但一样露出）：
+   `grep -rnE '<正则>' --include='*.tsx' --include='*.ts' --include='*.rs' --include='*.md' <仓库根> | grep -v node_modules`
+
+2. **改的时候确认 payload 真的带上了那一列**。`publish_post.py --update` 走 `PUT`，**未发送的字段保持后端原值不变**——所以若本地 `drafts/{slug}.md` 的 frontmatter 里**没有 `faq` / `citations` 键**，`--update` 会跑得很绿而那两列一个字都没改到（这正是上面那次假绿最后一环）。改前先 dry-run 看 payload：
+
+   ```bash
+   # payload 打在 stderr（stdout 只有汇总 JSON），所以要 2>&1 >/dev/null 才看得到
+   python3 {SKILL_DIR}/scripts/publish_post.py --file "$WS/drafts/{slug}.md" --update --dry-run \
+     2>&1 >/dev/null | grep -oE '^  "[a-z_]+"' | tr -d ' "' | paste -sd' '
+   ```
+
+   2026-08-16 实测一篇完整草稿的输出：`title slug excerpt content_markdown category_slug tag_names author_name status meta_description citations faq`。
+   目标字段不在这串键里 = 这次更新**改不到它**，⛔ 不许跑完就报完成——先把线上现值取回补进 frontmatter 再发（线上 `faq`/`citations` 怎么取见下条）。
+
+3. **改完重跑闸门 1 到 0 行，并把命令原文与输出贴进交付说明**。只写「已清理/已全改」而给不出扫描输出的，按未清理处理（与判据「进度自报必须带实证句柄」同源）。
+   验收若走线上渲染页，**扫原始 HTML 全文**（⛔ 不剔 `<script>`、⛔ 不剔标签：`meta_description` 只存在于 `<meta content="...">` 属性里，剔标签后命中恒为 0），且**先核对身份**——页面里的 `ld-post-{slug}` 与请求 slug 一致再采信 0 命中。
+
+> ⚠️ **API 回读不能当全字段扫用**：`GET /api/external/blog/posts/{slug}` 的返回里**没有 `faq` 与 `citations`**（2026-08-16 核实读 handler 的 SELECT 列表就没这两列）——恰恰是最容易藏脏数据的两列。没有生产库访问权时，改用线上渲染页全文扫（FAQ 会渲染成可见 Q&A + FAQPage JSON-LD 两份）。
+
+完整判据与「线上有、库里没有」的排查纪律见 `../nbdpsy-content-reviewer/references/checklist-article.md` 判据 10 的配套闸门 **S1 / S2**（唯一真源，本节是其在生产端的操作版）。
 
 ---
 
@@ -361,6 +409,7 @@ python3 {SKILL_DIR}/scripts/preflight.py "$WS/drafts/{slug}.md" --online
 3. 危机声明（12356 + 010-82951332）必须在文末：「本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356 或北京心理危机研究与干预中心热线 010-82951332（24小时）；紧急情况拨打 110/120」。「24小时」只能标在 010-82951332 上。（号码真源=content-reviewer/references/checklist-article.md 判据10，下次并线先改那里再同步各处）
 4. 发布脚本绝不覆盖已存在 slug（冲突返回 skipped；线上可能已被管理员改）；确要更新须显式 `--update`。
 5. 发布直连生产 API；生产是唯一真实来源。发布后必须提醒管理员上网页核查。
+6. **存量文案清理必须全字段扫**（见「存量文章批量修订」节 S1-b 的 `to_jsonb` 整行 SQL），并**贴出 0 行输出**才算完成——⛔ 不许只清工单点名的那一列（2026-08-16 实证：只扫 content_markdown 报 77 篇全绿，旧危机热线其实躲在 `faq` 列里，而 FAQ 会进 JSON-LD FAQPage 被搜索引擎与 AI 引擎当官方答案抓走）；⛔ 也不许用「缓存/ISR/还没刷新」解释线上与库里不一致——第一嫌疑人永远是自己的查询范围。
 
 ## 衔接下一级
 

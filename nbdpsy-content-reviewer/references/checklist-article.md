@@ -47,6 +47,71 @@ curl -s https://www.nbdpsy.com/blog/<slug> | python3 -c "import sys,re;h=sys.std
 9. **站内内链 2–4 处，且 slug 真实存在**。逐个内链核对目标 `/blog/{slug}` 真的是已上线/已入库文章（对照站点或 drafts 目录），编造的 slug = FAIL。
 10. **危机声明在文末**：必须含全国统一心理援助热线 **12356** 与北京心理危机研究与干预中心热线 **010-82951332** 两个号码（参考口径：`本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356 或北京心理危机研究与干预中心热线 010-82951332（24小时）；紧急情况拨打 110/120`）。缺任一号码或不在文末 = FAIL。
     - **危机声明号码核对：以本条为唯一真源**，发现 4001619995/希望24 或 12356 配「24小时」字样一律 FAIL（12356 官方口径为每日≥18小时，只有 010-82951332 官网明写 24 小时）。
+
+    ---
+    **⚙️ 判据 10 的配套闸门：存量清理模式（S1 / S2）**
+
+    判据 10 判的是「**这一篇**文末对不对」。当任务变成**把某段文案从全库清干净**（老板原话「全改吧」）——换热线、改口径、换品牌说法——单篇过绿并不等于清干净，必须另加下面两道闸门。
+    **闸门以「输出」为准，不以「自报」为准：报告里给不出闸门命令原文与输出的，一律按未扫处理判 FAIL**，不接受「已扫描 / 已清理 / 全绿」这类无实证句柄的进度自报。
+
+    > ⛔ **实证（2026-08-16 危机热线清理，一次假绿）**：工单写的是「文章正文里的热线」，于是只扫 `blog_posts.content_markdown`，77 篇报**全绿**。之后线上仍能搜到旧号码，**又**只查 content_markdown 得 0，遂判成「ISR 缓存残留」、起后台轮询等它自然刷新——轮询恒为 1，因为旧号码根本没被删过：**它在 `faq` 字段里**（另一篇在同类字段）。全字段重扫才揪出 2 篇。
+    > 危害高于正文：`faq` 会进 JSON-LD 的 **FAQPage 结构化数据**，是直接喂给搜索引擎与 AI 引擎的答案源——一条已停服的自杀干预热线以「官方答案」身份被抓走。
+
+    **S1 · 按「这张表里所有能装它的列」扫，⛔ 不按工单点名的那一列扫**
+
+    a/b/c 三段都要跑，输出原样贴进报告。**扫描一律 ssh 生产库**——本地是旧快照，会给出方向相反的假象（2026-08-16 实测：本地库 18 篇仍命中旧号码，生产库同一条 SQL 返回 0）。
+
+    a) **先列出全表可装文案的列**（⛔ 不许凭记忆列，列会长）：
+
+    ```bash
+    ssh nbdpsy "PGPASSWORD='<生产库密码>' psql -h localhost -U root -d psychology_counseling -Atc \"
+      SELECT column_name||' :: '||data_type FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='blog_posts'
+        AND data_type IN ('text','character varying','jsonb','json')
+      ORDER BY ordinal_position;\""
+    ```
+
+    2026-08-16 实测 `blog_posts` 有 **15 列**能装文案：`slug / title / excerpt / cover_image_url / content_markdown / status / author_name / meta_title / meta_description / source_type / source_url / reviewer_emp_no / citations / faq / video_url`——`content_markdown` 只是其中一列。
+
+    b) **全字段扫，并让 SQL 自己报「命中在哪一列」**（整行转 jsonb 后逐键扫，新增列自动纳入，不需要人维护列清单）：
+
+    ```bash
+    ssh nbdpsy "PGPASSWORD='<生产库密码>' psql -h localhost -U root -d psychology_counseling -c \"
+      SELECT id, slug,
+             (SELECT string_agg(k, ',') FROM jsonb_each_text(to_jsonb(p)) AS e(k,v)
+              WHERE v ~ '<正则>') AS hit_columns
+      FROM blog_posts p
+      WHERE to_jsonb(p)::text ~ '<正则>'
+      ORDER BY id;\""
+    ```
+
+    **通过条件：返回 0 行。** 返回非 0 行时 `hit_columns` 直接指出漏在哪一列——⛔ 不许只清 `content_markdown` 再重报绿，要按 `hit_columns` 逐列清完重跑到 0 行。
+
+    c) **代码侧连前端硬编码一起扫**（同一批清理里，页脚那条号码是全站每页可见的，也不在工单范围内）：
+
+    ```bash
+    grep -rnE '<正则>' --include='*.tsx' --include='*.ts' --include='*.jsx' --include='*.js' \
+      --include='*.rs' --include='*.py' --include='*.html' --include='*.md' <仓库根> | grep -v node_modules
+    ```
+
+    **`<正则>` 必须覆盖四类变体，变体清单写进报告**（只写纯数字必漏）：纯数字 `4001619995`、连字符 `400-161-9995`、空格分隔 `400 161 9995`、名称写法 `希望24|希望热线`。
+
+    **没有库访问权时（运营机独立安装）的等价做法**：
+
+    - ⛔ **`GET /api/external/blog/posts/{slug}` 不返回 `faq` 与 `citations`**（2026-08-16 核实读 handler 的 SELECT 列表里就没有这两列）——**恰恰是出事的那两列**，所以 API 回读**不能**当全字段扫用；
+    - 改抓线上渲染页，且**扫原始 HTML 全文**（⛔ 不剔 `<script>`、⛔ 不剔标签）。本清单上面那条「渲染可见层抽查」命令是给加粗渲染用的，剔标签后连 `meta_description` 一起看不见（2026-08-16 实测：某篇 meta description 原始 HTML 里在、剔标签后命中 0），拿它当全字段扫会重演同一个假绿；
+    - **回读先核对身份再采信 0 命中**：确认页面里的 `ld-post-{slug}` 或 canonical 与请求的 slug 一致（2026-08-16 实测遇到过一次请求 A 篇返回 B 篇 HTML 的串页，重试即正常）——身份不核，「0 命中」可能只是扫错了页。
+
+    **S2 · 「线上有、库里没有」的第一嫌疑人是自己的查询范围，不是缓存**
+
+    判据（可核对）：排查这类不一致时，凡结论里出现「缓存 / ISR / CDN / 延迟 / 同步中 / 还没刷新」任一措辞，**同一份报告里必须附一次时间上晚于该结论的 S1-b 全字段扫输出**；缺这段输出即 FAIL，该结论不成立。
+
+    - ⛔ **起后台轮询「等它自然刷新」不算排查**——库里没删干净时轮询会永远返回同一个数，看起来正像「缓存还没过期」（2026-08-16 实证：轮询恒为 1）。
+    - 「查询范围不够」的三种形状，逐条排除后才允许怀疑缓存：① 只扫了一列（→ S1-a/b）；② 只扫了一张表、漏了前端硬编码（→ S1-c）；③ 正则太窄漏了变体（→ 四类变体清单）。
+    - 反向同理：**扫到了不该有的命中**先怀疑扫错了库（本地旧快照 / 扫错了页），再怀疑清理没生效。
+
+    ---
+
 11. **全篇无「治疗/诊断/治愈/医院/医生」自我描述**。禁止用这五个词描述 NBDpsy 自身服务（合规口径=「咨询/干预/评估/陪伴」）；学术名词与对研究文献的转述（如"心理治疗研究显示…"、PTSD、CBT）可保留——逐处出现位置判定属哪种，拿不准 = FAIL。
 12. **署名与 E-E-A-T 一致**：作者为胡佰亿（或用户明确指定的其他真人），frontmatter 与文内署名一致，不得虚构作者头衔/资历。
     - **约定**：若 frontmatter 无 `author` 字段但 `review_status` 注明「发布脚本兜底署名（默认胡佰亿）」等待发布流程时，该项按约定标注 PASS（备注约定依据），不按"不确定=FAIL"硬判。

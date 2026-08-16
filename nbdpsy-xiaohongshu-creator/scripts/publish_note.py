@@ -304,8 +304,14 @@ def check_cover_receipt(cover: Path) -> dict:
     if source not in COVER_SOURCES:
         raise ValueError(f"封面凭证 source={source!r} 非法（只认 {'/'.join(COVER_SOURCES)}）——"
                          "自渲染 HTML / 视频截帧不是合法来源，改走工序③ 出图")
-    if meta.get("cover_file") and meta["cover_file"] != cover.name:
-        raise ValueError(f"封面凭证张冠李戴：cover_file={meta['cover_file']} ≠ 实际文件 {cover.name}")
+    # 只比主名不比扩展名：发布前把 PNG 转 JPG 是文档要求的常规动作（PNG 八张 11MB 会撑爆
+    # CF 100s 网关），而凭证是出图时写的、记的是 P01.png。转档换的是容器不是内容，
+    # 凭证仍然为这张图背书；比全名会让「照文档转档」的人必撞（2026-08-16 干跑实测）。
+    # ⛔ 主名不同仍然拒（P01 的凭证配 P02 的图＝张冠李戴，那才是要防的）。
+    if meta.get("cover_file") and Path(meta["cover_file"]).stem != cover.stem:
+        raise ValueError(
+            f"封面凭证张冠李戴：cover_file={meta['cover_file']} ≠ 实际文件 {cover.name}"
+            "（主名不同；若只是 png→jpg 转档不会报这条）")
     # 凭证与文件脱钩（2026-08-14 干跑报告 G3）：只比同名挡不住"封面重出后凭证没更新"——
     # 那份旧凭证指着上一个 job，等于拿旧证据给新图背书。图比凭证新即拒。
     if mp.stat().st_mtime + COVER_RECEIPT_MTIME_SLACK < cover.stat().st_mtime:
@@ -1491,6 +1497,24 @@ def main():
             raise ValueError("frontmatter 缺 title")
         content, topics = split_content_topics(extract_publish_text(body), meta)
         media_kind = "video" if args.video else ("audio" if args.audio else "images")
+        # 图文误传 --cover 早拦（2026-08-16 干跑实测）：真发布路径本来就会抛，但那处在
+        # dry-run 之后——于是「--dry-run 自查绿灯、真发才红」，且失败会在台账留一条
+        # 永远闭不掉的「未入队」行。预检的意义就是在花代价之前拦住，所以提到这里。
+        if args.cover and not (args.video or args.audio):
+            raise ValueError(
+                "⛔ 图文/文字版笔记没有独立封面通道：封面就是第一张图（P01），--cover 仅用于视频/播客。\n"
+                "   封面闸门卡在出图阶段（工序③），发出去即定、事后无补救通道（唯一出路=删稿重发）。")
+        # 闸门 B（2026-08-16 补代码化）：视频/播客发布必须走 publish_video.py。
+        # 它能跑通不代表该跑——本脚本没有 --fix-cover/--recheck，而视频发布的设封面入口
+        # 自上线起 31/31 全败，必然要走「发布→补封面→回读→闭台账」四步。用本脚本发视频
+        # ＝第②③④步没有工具，台账永远闭不掉（08-13 丢补封面步的原样复现路径）。
+        if media_kind != "images":
+            raise ValueError(
+                f"⛔ {media_kind} 发布不走 publish_note.py，改用 publish_video.py（闸门 B）：\n"
+                f"   python3 publish_video.py --note <稿件> --account <账号> "
+                f"--{media_kind} <媒体> --cover <封面> --collection ...\n"
+                "   理由：视频/播客是两段式四步主路径（发布→--fix-cover 补封面→--recheck 回读→"
+                "--ledger-check 闭台账），本脚本只有第①步。")
         image_paths = [] if media_kind != "images" else collect_images(args.note, args.images_dir)
         extras = collect_extras(meta, args)
         warnings = build_warnings(title, content, topics, image_paths, media_kind) + extras_warnings(extras)
