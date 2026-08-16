@@ -35,6 +35,10 @@ FPS = 30
 # 检测到 ended 后立刻关页面；轮询间隔越小，尾巴越短、下面的 lead_in 推算越准
 POLL_INTERVAL = 0.05
 DATA_RE = re.compile(r'(<script id="podcast-data"[^>]*>)(.*?)(</script>)', re.S)
+# 播放器主题（规格见 references/podcast-video-spec.md「播放器主题两档」）：
+# 真源是模板 <html> 上的 data-theme，页面与 canvas 声纹的颜色全从它派生的 CSS 变量取。
+THEMES = ("shenye", "zhishang")
+THEME_RE = re.compile(r'(<html\b[^>]*\bdata-theme=")([^"]*)(")')
 
 
 def _err(m: str) -> None:
@@ -121,9 +125,13 @@ def paginate_cues(cues: list[dict]) -> list[dict]:
     return out
 
 
-def build_page(podcast: dict, cues_doc: dict, out_html: Path, wave: dict | None = None) -> None:
-    """把 {title, vol, series, duration, cues, wave} 注进模板的 #podcast-data 占位。
+def build_page(podcast: dict, cues_doc: dict, out_html: Path, wave: dict | None = None,
+               theme: str = "shenye") -> None:
+    """把 {title, vol, series, duration, cues, wave} 注进模板的 #podcast-data 占位，
+    并把主题写进 <html data-theme>。
     页面按同目录相对路径加载 podcast.mp3，所以 out_html 必须与音频同目录。"""
+    if theme not in THEMES:
+        raise RuntimeError(f"未知主题 {theme!r}，可选：{' / '.join(THEMES)}")
     payload = {
         "title": podcast.get("title", ""),
         "vol": podcast.get("vol"),
@@ -137,8 +145,11 @@ def build_page(podcast: dict, cues_doc: dict, out_html: Path, wave: dict | None 
     html = TEMPLATE.read_text(encoding="utf-8")
     if not DATA_RE.search(html):
         raise RuntimeError("模板里找不到 #podcast-data 注入点，podcast_player.html 被改坏了？")
-    out_html.write_text(DATA_RE.sub(lambda m: m.group(1) + blob + m.group(3), html, count=1),
-                        encoding="utf-8")
+    if not THEME_RE.search(html):
+        raise RuntimeError("模板 <html> 上找不到 data-theme，podcast_player.html 被改坏了？")
+    html = DATA_RE.sub(lambda m: m.group(1) + blob + m.group(3), html, count=1)
+    html = THEME_RE.sub(lambda m: m.group(1) + theme + m.group(3), html, count=1)
+    out_html.write_text(html, encoding="utf-8")
 
 
 def record(page_url: str, audio_duration: float, video_dir: Path) -> tuple[Path, float]:
@@ -268,7 +279,8 @@ def mux(webm: Path, audio: Path, out: Path, *, lead_in: float,
 
 def run(podcast_path: str, *, workdir: str | None = None, audio: str | None = None,
         cues: str | None = None, out: str | None = None,
-        cover: str | None = None, fade_out: float = 0.0) -> dict:
+        cover: str | None = None, fade_out: float = 0.0,
+        theme: str = "shenye") -> dict:
     podcast = json.loads(Path(podcast_path).read_text(encoding="utf-8"))
     wd = Path(workdir) if workdir else Path(podcast_path).resolve().parent
     audio_p = Path(audio) if audio else wd / "podcast.mp3"
@@ -287,7 +299,8 @@ def run(podcast_path: str, *, workdir: str | None = None, audio: str | None = No
     page_html = wd / "_podcast_player.html"
     _err("[podcast] 预计算声纹包络 …")
     wave = compute_wave(audio_p)
-    build_page(podcast, cues_doc, page_html, wave=wave)
+    build_page(podcast, cues_doc, page_html, wave=wave, theme=theme)
+    _err(f"[podcast] 播放器主题：{theme}")
 
     video_dir = Path(tempfile.mkdtemp(prefix="podcast_rec_"))
     try:
@@ -309,7 +322,7 @@ def run(podcast_path: str, *, workdir: str | None = None, audio: str | None = No
 
     dur = tts_gen.ffprobe_duration(str(out_p))
     return {"success": True, "output": str(out_p.resolve()),
-            "duration": round(dur, 3), "resolution": f"{WIDTH}x{HEIGHT}"}
+            "duration": round(dur, 3), "resolution": f"{WIDTH}x{HEIGHT}", "theme": theme}
 
 
 def main() -> None:
@@ -321,10 +334,12 @@ def main() -> None:
     p.add_argument("--out", default=None, help="成片，默认 <workdir>/podcast-final.mp4")
     p.add_argument("--cover", default=None, help="封面图，叠在前 0.1s 作首帧")
     p.add_argument("--fade-out", type=float, default=0.0, help="片尾音画同步淡出秒数，如 1.5")
+    p.add_argument("--theme", choices=THEMES, default="shenye",
+                   help="播放器主题：shenye 深夜电台（默认）/ zhishang 纸上对谈")
     a = p.parse_args()
     try:
         res = run(a.podcast, workdir=a.workdir, audio=a.audio, cues=a.cues, out=a.out,
-                  cover=a.cover, fade_out=a.fade_out)
+                  cover=a.cover, fade_out=a.fade_out, theme=a.theme)
     except Exception as e:  # noqa: BLE001
         res = {"success": False, "error": str(e)}
     print(json.dumps(res, ensure_ascii=False, indent=2))

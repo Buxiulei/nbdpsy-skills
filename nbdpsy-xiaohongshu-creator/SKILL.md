@@ -751,7 +751,8 @@ PUT 成功、`dropped_keys` 也确认过之后两件事：① **把 `00-overview
 
 | 问到哪一项 | 亮哪几张 | 怎么说 |
 |---|---|---|
-| **视频要哪一种**（形态四选一 / 字卡再选版式） | `assets/style-gallery/video/` **六张**：`tpl-basic.jpg` / `tpl-camera.jpg` / `tpl-collage.jpg` / `tpl-kinetic.jpg`（字卡四版式，同一条口播稿的四种渲染，**文案完全相同、差异全在动效与质感**）＋ `weidianying.jpg`（微电影）/ `bokecast.jpg`（播客） | **先给图，再问「要哪个」，最后才讲代价**；微电影与播客**各只有一种风格、没有子菜单**，如实说，别硬造选项；**kinetic 必须有 ASR 词级时间轴**才能卡点，没有就别报这一档 |
+| **视频要哪一种**（形态四选一 / 字卡再选版式） | `assets/style-gallery/video/` **六张**：`tpl-basic.jpg` / `tpl-camera.jpg` / `tpl-collage.jpg` / `tpl-kinetic.jpg`（字卡四版式，同一条口播稿的四种渲染，**文案完全相同、差异全在动效与质感**）＋ `weidianying.jpg`（微电影）/ `bokecast.jpg`（播客） | **先给图，再问「要哪个」，最后才讲代价**；**kinetic 必须有 ASR 词级时间轴**才能卡点，没有就别报这一档；⚠️ 定了微电影或播客还要**再问一次子风格**（见下一行） |
+| **微电影／播客的子风格**（选定形态后**追问这一步**，2026-08-14 起） | 同目录：微电影三档 `weidianying-nuanwu.jpg`（**暖雾·默认**）/ `weidianying-chenjing.jpg`（沉静）/ `weidianying-chenguang.jpg`（晨光）；播客两档 `bokecast-shenye.jpg`（**深夜电台·默认**）/ `bokecast-zhishang.jpg`（纸上对谈），另附两张播放器真实渲染帧 `bokecast-{shenye,zhishang}-frame.jpg` | **默认档＝历史全部成片的现状**（微电影暖雾／播客深夜电台）——报默认、给菜单，他不改就按默认开跑，⛔ 别硬逼他选；三档**共用同一套导演方法论**，差异只有色板配比／转场／节奏，运营要「某档专属运镜」就如实说没有；⛔ 沉静**不做「暖包围冷」的大反转**（重议题收尾是"被看见"不是"被治好"，同时是合规红线）；子风格定了要**跟着笔记路径一起交接**给 `nbdpsy-text-to-video`（微电影落 `direction.md` 首行、播客即 `record_podcast.py --theme`） |
 | **文字版长什么样** | `assets/style-gallery/typeset/`：`typeset-clean.jpg`（默认，白底无衬线）/ `typeset-paper.jpg`（蓝灰纸底宋体） | 两张是**同一篇正文的同一页**，只切 `--theme`——说一句「字一模一样，只有版面不同」，他就只盯版面选；⚠️ paper 页数更多（同一篇 clean 14 页 / paper 15 页），页数是隐性成本 |
 | **封面要哪种版式** | 见工序③-1「封面版式选择先亮图」 | — |
 

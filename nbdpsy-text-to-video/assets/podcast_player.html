@@ -1,11 +1,20 @@
 <!doctype html>
+<html lang="zh-CN" data-theme="shenye">
+<meta charset="utf-8">
+<title>NBDpsy 长文播客</title>
 <!--
-「长文播客」播放器页模板（竖屏 720×1280，黑底）
-形态规格见 references/podcast-video-spec.md §④。
+「长文播客」播放器页模板（竖屏 720×1280）
+形态规格见 references/podcast-video-spec.md §④、主题两档见其「播放器主题两档」节。
 
 用法：record_podcast.py 把模板拷进工作目录，用 {title, vol, series, cues} 替换
 下面 #podcast-data 这个 <script> 的内容，然后 file:// 打开；音频按同目录相对
 路径 podcast.mp3 加载（所以模板必须落在 podcast.mp3 旁边）。
+
+主题：上面 <html> 的 data-theme 是**唯一真源**（record_podcast.py --theme 改写它）。
+  shenye   深夜电台（默认＝历史全部已发期数的样子）：黑底＋暖白/浅金字＋金色心电声纹
+  zhishang 纸上对谈：暖米白纸纹底＋深灰蓝字＋墨色声纹
+换主题只改下面 :root 那两组变量，⛔ 别在规则里再写死颜色——canvas 声纹的颜色也是从这
+几个变量读的（见 cssVar()），写死会造成"页面换了、波形没换"的半拉子主题。
 
 零外网依赖：无 CDN、无 webfont，字体栈只用系统 Noto。录屏机器上装了
 fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，值得先 fc-list 核一下）。
@@ -19,43 +28,82 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   window.__done     布尔，音频 ended 后置 true（出错也置 true，并写 window.__error）
   window.__t()      当前播放秒数（调试用）
 -->
-<meta charset="utf-8">
-<title>NBDpsy 长文播客</title>
 <style>
-  :root {
-    /* 说话人配色：F 暖白、M 浅金——只靠颜色区分，行首绝不加「男/女」字样 */
+  /* ── 主题①：深夜电台（默认＝现状，历史全部已发期数都是它） ───────────────
+     说话人配色：F 暖白、M 浅金——只靠颜色区分，行首绝不加「男/女」字样 */
+  :root, :root[data-theme="shenye"] {
+    --bg: #000;
+    --glow-in: #16161a;          /* 中心辉光内圈：避免纯黑底显得像加载失败 */
+    --glow-out: #000;
+    --paper: none;               /* 纸纹层，深夜档不用 */
+    --accent: #e8c27a;           /* 金：期号/分隔线/播放键/进度 */
+    --title: #fff;
     --spk-f: #f4efe6;
     --spk-m: #e8c27a;
-    --dim: #6b6b6b;
+    --dim: #6b6b6b;              /* 时间码 */
+    --series: #cfc7ba;
+    --cap-shadow: 0 2px 18px rgba(0, 0, 0, .9);
+    --track: #2a2a2e;            /* 进度条底槽 */
+    --dot: #fff;                 /* 进度圆点 */
+    --fade: #0a0a0c;             /* 声纹两侧渐隐窗口，须≈画面底色 */
+    --wave-played: #e8c27a;      /* ↓ 以下五个由 canvas 读取，见 cssVar() */
+    --wave-unplayed: #3f3f46;
+    --wave-glow: rgba(232, 194, 122, .85);
+    --wave-head: #f4dfae;
+    --wave-base: rgba(232, 194, 122, .14);
+  }
+  /* ── 主题②：纸上对谈（与品牌图文同语言的轻议题） ─────────────────────────
+     暖米白纸纹底＋深灰蓝字＋墨色声纹；说话人仍只靠颜色分（F 灰蓝／M 墨绿） */
+  :root[data-theme="zhishang"] {
+    --bg: #e8d8c4;
+    --glow-in: #f3e7d8;
+    --glow-out: #e2d0b8;
+    /* 纸纹：内联 SVG feTurbulence，零外网依赖；叠在辉光之上极淡一层 */
+    --paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.62' numOctaves='4'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.13'/%3E%3C/svg%3E");
+    --accent: #3a4a57;
+    --title: #2f3d48;
+    --spk-f: #5a6b7b;
+    --spk-m: #4a5f55;
+    --dim: #8a8377;
+    --series: #6b6355;
+    --cap-shadow: 0 1px 0 rgba(255, 255, 255, .5);
+    --track: #cbb99f;
+    --dot: #3a4a57;
+    --fade: #e8d8c4;
+    --wave-played: #3a4a57;
+    --wave-unplayed: #c3b09a;
+    --wave-glow: rgba(58, 74, 87, .55);
+    --wave-head: #2f3d48;
+    --wave-base: rgba(58, 74, 87, .16);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width: 720px; height: 1280px;
-    background: #000; overflow: hidden;
+    background: var(--bg); overflow: hidden;
     font-family: "Noto Sans CJK SC", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  /* 极轻的中心辉光，避免纯黑底显得像加载失败 */
   #stage {
     position: relative; width: 720px; height: 1280px;
     display: flex; flex-direction: column; align-items: center;
-    background: radial-gradient(ellipse 560px 620px at 50% 46%, #16161a 0%, #000 72%);
+    background-image: var(--paper),
+      radial-gradient(ellipse 560px 620px at 50% 46%, var(--glow-in) 0%, var(--glow-out) 72%);
   }
 
   /* ① 期号 + 标题 */
   #head { margin-top: 108px; text-align: center; padding: 0 64px; }
   #vol {
-    font-size: 26px; letter-spacing: 6px; color: var(--spk-m);
+    font-size: 26px; letter-spacing: 6px; color: var(--accent);
     opacity: .85; font-weight: 500;
   }
   #title {
     margin-top: 18px; font-size: 40px; line-height: 1.35; font-weight: 700;
-    color: #fff; letter-spacing: 1px;
+    color: var(--title); letter-spacing: 1px;
     /* 标题限两行，超了省略——版式稳定优先 */
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  #rule { margin-top: 30px; width: 68px; height: 2px; background: var(--spk-m); opacity: .5; }
+  #rule { margin-top: 30px; width: 68px; height: 2px; background: var(--accent); opacity: .5; }
 
   /* ② 当前句大字幕：画面视觉中心 */
   #capwrap {
@@ -66,7 +114,7 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
     font-size: 52px; line-height: 1.6; font-weight: 600; text-align: center;
     letter-spacing: 1px; color: var(--spk-f);
     opacity: 1; transition: opacity 150ms linear;
-    text-shadow: 0 2px 18px rgba(0, 0, 0, .9);
+    text-shadow: var(--cap-shadow);
     max-height: 520px; overflow: hidden;
     white-space: pre-line;  /* 页级 cue 的 \n 换行直接生效（逗号换行/每页两行由注入端分好） */
   }
@@ -80,31 +128,31 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   #wavewrap::before, #wavewrap::after {
     content: ""; position: absolute; top: 0; bottom: 0; width: 72px; z-index: 2;
   }
-  #wavewrap::before { left: 0; background: linear-gradient(90deg, #0a0a0c, transparent); }
-  #wavewrap::after { right: 0; background: linear-gradient(270deg, #0a0a0c, transparent); }
+  #wavewrap::before { left: 0; background: linear-gradient(90deg, var(--fade), transparent); }
+  #wavewrap::after { right: 0; background: linear-gradient(270deg, var(--fade), transparent); }
   #ctrl { margin-top: 34px; display: flex; align-items: center; gap: 20px; }
   #play {
     flex: none; width: 54px; height: 54px; border-radius: 50%;
-    border: 2px solid rgba(232, 194, 122, .75);
+    border: 2px solid var(--accent); opacity: .85;
     display: flex; align-items: center; justify-content: center;
   }
   /* 播放键造型：CSS 三角，纯装饰不可点 */
   #play::after {
     content: ""; margin-left: 4px;
-    border-left: 16px solid var(--spk-m);
+    border-left: 16px solid var(--accent);
     border-top: 10px solid transparent; border-bottom: 10px solid transparent;
   }
   #track {
-    flex: 1; height: 3px; border-radius: 2px; background: #2a2a2e; position: relative;
+    flex: 1; height: 3px; border-radius: 2px; background: var(--track); position: relative;
   }
   #fill {
     position: absolute; left: 0; top: 0; height: 100%; width: 0;
-    border-radius: 2px; background: var(--spk-m);
+    border-radius: 2px; background: var(--accent);
   }
   #dot {
     position: absolute; top: 50%; left: 0; width: 12px; height: 12px;
-    margin: -6px 0 0 -6px; border-radius: 50%; background: #fff;
-    box-shadow: 0 0 10px rgba(232, 194, 122, .8);
+    margin: -6px 0 0 -6px; border-radius: 50%; background: var(--dot);
+    box-shadow: 0 0 10px var(--wave-glow);
   }
   #time {
     flex: none; font-size: 20px; color: var(--dim);
@@ -114,7 +162,7 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   /* ④ 栏目名 */
   #series {
     margin-bottom: 56px; font-size: 30px; letter-spacing: 10px;
-    color: #cfc7ba; opacity: .72;
+    color: var(--series); opacity: .72;
     font-family: "Noto Serif CJK SC", "Noto Sans CJK SC", serif;
   }
 </style>
@@ -178,6 +226,17 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   var g2d = cv.getContext("2d");
   g2d.scale(DPR, DPR);
   var CW = 560, CH = 110, MIDY = CH / 2;
+  // 声纹配色从 CSS 变量读（主题的唯一真源是 <html data-theme>）——⛔ 别在这里写死颜色，
+  // 否则换主题时页面变了、波形还是老色，出的是半拉子主题。
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (v && v.trim()) || fallback;
+  }
+  var C_PLAYED = cssVar("--wave-played", "#e8c27a");
+  var C_UNPLAYED = cssVar("--wave-unplayed", "#3f3f46");
+  var C_GLOW = cssVar("--wave-glow", "rgba(232,194,122,.85)");
+  var C_HEAD = cssVar("--wave-head", "#f4dfae");
+  var C_BASE = cssVar("--wave-base", "rgba(232,194,122,.14)");
   var SPAN = 44;                       // 可视窗口容纳的数据窗数（与旧 44 根条同宽感）
   var STEP = CW / SPAN;
 
@@ -202,7 +261,7 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   function drawWave(t) {
     g2d.clearRect(0, 0, CW, CH);
     // 基线（极淡）
-    g2d.strokeStyle = "rgba(232,194,122,.14)";
+    g2d.strokeStyle = C_BASE;
     g2d.lineWidth = 1;
     g2d.beginPath(); g2d.moveTo(0, MIDY); g2d.lineTo(CW, MIDY); g2d.stroke();
     if (!PEAKS) return;
@@ -218,7 +277,7 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
       g2d.strokeStyle = style;
       g2d.lineWidth = 2.4;
       g2d.lineJoin = "round";
-      if (glow) { g2d.shadowColor = "rgba(232,194,122,.85)"; g2d.shadowBlur = 10; }
+      if (glow) { g2d.shadowColor = C_GLOW; g2d.shadowBlur = 10; }
       g2d.beginPath();
       var started = false;
       for (var j = first; j <= first + SPAN + 2; j++) {
@@ -233,14 +292,14 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
       g2d.restore();
     }
     var cx = CW / 2;
-    seg(0, cx, "#e8c27a", true);
-    seg(cx, CW, "#3f3f46", false);
+    seg(0, cx, C_PLAYED, true);
+    seg(cx, CW, C_UNPLAYED, false);
     // 播放头：中心辉光圆点落在当前轨迹值上
     var cur = Math.floor(pos);
     var y0 = MIDY - tracePoint(cur, 0) * (CH / 2 - 8) * 0.6;
     g2d.save();
-    g2d.shadowColor = "rgba(232,194,122,1)"; g2d.shadowBlur = 14;
-    g2d.fillStyle = "#f4dfae";
+    g2d.shadowColor = C_GLOW; g2d.shadowBlur = 14;
+    g2d.fillStyle = C_HEAD;
     g2d.beginPath(); g2d.arc(cx, y0, 4.5, 0, Math.PI * 2); g2d.fill();
     g2d.restore();
   }
@@ -322,3 +381,4 @@ fonts-noto-cjk 即可；缺字会退到 sans-serif（能出片但字形不对，
   }
 })();
 </script>
+</html>
