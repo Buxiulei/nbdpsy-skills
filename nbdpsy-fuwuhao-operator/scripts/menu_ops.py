@@ -281,6 +281,7 @@ def do_delete(args, api_base, key):
                 "hint": "先 `--get > menu.json` 把现状存下来当回滚基线，把上面的代价讲给运营，"
                         "确认后加 --confirm 重跑。"}, 1
 
+    wechat_api.warn("⚠ menu/delete 会把**默认菜单和全部个性化菜单**一起删掉（微信 API 语义如此）——本号挂着按标签定向的内部菜单（如老板的「今日日报」钮），删完要去后台/API 重挂。三思。")
     wechat_api.proxy_call(api_base, key, "/cgi-bin/menu/delete", {},
                           args.timeout, irreversible=True)
     return {"outcome": "done", "deleted_top_level": current,

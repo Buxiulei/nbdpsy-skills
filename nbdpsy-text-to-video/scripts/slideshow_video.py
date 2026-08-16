@@ -411,24 +411,52 @@ def xfade_segments(segs: list[Path], dst: Path, *, offsets: list[float],
 
 # ---------- BGM ----------
 
-def _loudness(path: Path) -> float:
-    """用 loudnorm 的分析口跑一遍，拿 integrated LUFS。"""
+def _loudness_stats(path: Path, *, target: float = -16.0) -> dict:
+    """loudnorm 第一遍（分析口）：拿 integrated LUFS / true peak / LRA / 门限 / 偏移。
+
+    ⚠️ 认 LUFS 不认 RMS：LUFS 带 K 计权 + 门控（跳过字间静音），RMS 两样都没有，
+    同一条片子两把尺子能差出 7 dB，拿 RMS 判「BGM 压够没有」必然误判（见 audio-checklist.md）。
+    """
     p = subprocess.run(
         ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
-         "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
+         "-af", f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
         capture_output=True, text=True, timeout=900)
     m = re.findall(r"\{[^{}]*\"input_i\"[^{}]*\}", p.stderr or "", re.S)
     if not m:
         raise RuntimeError(f"读不到 {path} 的响度（loudnorm 分析没出 JSON）："
                            f"{(p.stderr or '')[-500:]}")
-    return float(json.loads(m[-1])["input_i"])
+    raw = json.loads(m[-1])
+
+    def num(key: str, fallback: float) -> float:
+        """-inf / nan（全静音、超短素材）不能回传给第二遍 loudnorm，会让 ffmpeg 拒参数。"""
+        try:
+            v = float(raw.get(key))
+        except (TypeError, ValueError):
+            return fallback
+        return v if v == v and abs(v) != float("inf") else fallback
+
+    return {
+        "i": num("input_i", -70.0),
+        "tp": num("input_tp", -99.0),
+        "lra": num("input_lra", 0.0),
+        "thresh": num("input_thresh", -80.0),
+        "offset": num("target_offset", 0.0),
+    }
 
 
-def prepare_bgm(bgm: str, total: float, tmp: Path, *, narration: Path, duck_db: float) -> Path:
+def _loudness(path: Path) -> float:
+    return _loudness_stats(path)["i"]
+
+
+def prepare_bgm(bgm: str, total: float, tmp: Path, *, narration_lufs: float,
+                duck_db: float) -> tuple[Path, float]:
     """BGM 归一化 + 压到口播之下 duck_db。
 
     `--bgm auto` 走同目录 gen_bgm.py **纯合成**（无版权风险、无外部素材）。
     ⛔ 绝不下载来路不明的音乐：一条商用短视频背一首侵权 BGM，赔的钱比整条产线省的多。
+
+    注意这里定的是**相对差**（口播 − duck_db），绝对响度由 `mix_audio` 的母带归一统一负责。
+    duck 调不动「整片都小声」——那是母带的事，别在这里加补偿增益（会连口播一起顶到削波）。
     """
     if bgm == "auto":
         src = tmp / "bgm_auto.mp3"
@@ -438,35 +466,82 @@ def prepare_bgm(bgm: str, total: float, tmp: Path, *, narration: Path, duck_db: 
         src = Path(bgm)
         if not src.is_file():
             raise RuntimeError(f"BGM 文件不存在：{src}")
-    target = _loudness(narration) - duck_db
-    _err(f"[bgm] 口播 {target + duck_db:.1f} LUFS → BGM 目标 {target:.1f} LUFS（低 {duck_db:.0f}dB）")
+    target = narration_lufs - duck_db
     out = tmp / "bgm_ready.wav"
-    # 单声道口播 + 立体声 BGM 会让 amix 走通道上混，统一成单声道再混，最后一次性转立体声输出。
-    # aloop 兜 BGM 短于成片的情况；-t 截到成片长度；两端 1.5s 淡入淡出。
-    fade_out = max(0.0, total - 1.5)
+    # 🩸 **先下混到单声道，再分析、再归一**——分析域必须等于输出域。
+    # 2026-08-16 实测：在立体声源上分析、输出时才 `-ac 1`，成品比目标**低 3 dB**
+    # （目标 −45.9，实测 −48.9）。宽立体声下混 (L+R)/2 时不相关成分相消，能量掉 ~3 dB，
+    # 而口播本来就是单声道、没有这一刀 ⇒ duck 写 14 实际压了 17，BGM 白白又轻 3 dB。
+    # 这类偏差不会报错、成片能播，只有回读实测才抓得到（所以下面一定要回读）。
+    mono = tmp / "bgm_mono.wav"
+    # -stream_loop 兜 BGM 短于成片的情况；-t 截到成片长度。
     _run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-i", str(src),
-          "-af", f"loudnorm=I={target:.2f}:TP=-2.0:LRA=11,"
+          "-t", f"{total:.3f}", "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", str(mono)])
+    # 两遍法：单遍 loudnorm 是流式自适应的，开头还没测准就在改增益。
+    pre = _loudness_stats(mono, target=target)
+    fade_out = max(0.0, total - 1.5)   # 两端 1.5s 淡入淡出，在归一之后做
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(mono),
+          "-af", f"loudnorm=I={target:.2f}:TP=-2.0:LRA=11:"
+                 f"measured_I={pre['i']:.2f}:measured_TP={pre['tp']:.2f}:"
+                 f"measured_LRA={pre['lra']:.2f}:measured_thresh={pre['thresh']:.2f}:"
+                 f"offset={pre['offset']:.2f}:linear=true,"
                  f"afade=t=in:d=1.5,afade=t=out:st={fade_out:.2f}:d=1.5",
-          "-t", f"{total:.3f}", "-ar", str(SR), "-ac", "1", str(out)])
-    return out
+          "-ar", str(SR), "-ac", "1", str(out)])
+    # 实测回读：报「目标多少」没用，得报「实际到了多少」。两端淡化会把 integrated 拉低一点点
+    # （1.5s×2 相对全片的占比），所以这里的实测值天然略低于目标，看的是**别差到 1 LU 以上**。
+    got = _loudness_stats(out, target=target)["i"]
+    _err(f"[bgm] 口播 {narration_lufs:.1f} LUFS → BGM 目标 {target:.1f}（低 {duck_db:.0f} LU）"
+         f"，实测 {got:.1f} LUFS ⇒ 实际压差 {narration_lufs - got:.1f} LU")
+    if abs(got - target) > 1.0:
+        raise RuntimeError(
+            f"BGM 归一没打准：目标 {target:.2f} LUFS，实测 {got:.2f} LUFS（差 {got - target:+.2f} LU）\n"
+            f"⛔ 拒跑——差 1 LU 以上说明归一链路有隐性损失（历史元凶：分析域是立体声、"
+            f"输出却 -ac 1，下混白丢 3 dB）。别改这个阈值绕过去，去查链路。")
+    return out, got
 
 
-def mix_audio(narration: Path, bgm: Path | None, dst: Path) -> None:
+def mix_audio(narration: Path, bgm: Path | None, dst: Path, tmp: Path, *,
+              master_lufs: float) -> dict:
+    """混音（口播 + 可选 BGM）→ **最终母带响度归一** → AAC。返回响度凭证。
+
+    🩸 母带归一是 2026-08-16 补的（老板实听「背景音太小」的真正根因）：
+    TTS 原始电平只有 −31.6 LUFS，比平台常态（−14~−16 LUFS）低 15 dB 以上。
+    之前整条链路**没有任何一处**把绝对响度提上来——BGM 是按「口播 − duck」算的相对值，
+    口播本身安静，BGM 只会更安静（实测落到 −49.6 LUFS，等于没有）。
+    调 duck 只能改相对差，改不动「整片都小声」，必须在混音之后做一次绝对归一。
+
+    两遍法（⛔ 不能一遍过）：第一遍只分析拿 measured_*，第二遍带着测量值做线性归一。
+    单遍 loudnorm 是**流式自适应**的，前几秒还没测准就开始改增益，开头响度会飘。
+    """
+    mix = tmp / "mix_raw.wav"
     if bgm is None:
         _run(["ffmpeg", "-y", "-v", "error", "-i", str(narration),
-              "-ar", str(SR), "-ac", "2", "-c:a", "aac", "-b:a", "192k", str(dst)])
-        return
-    # normalize=0 是关键：amix 默认按输入数分摊音量，会把已经调准的口播砍掉 6dB
-    _run(["ffmpeg", "-y", "-v", "error", "-i", str(narration), "-i", str(bgm),
-          "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:normalize=0[a]",
-          "-map", "[a]", "-ar", str(SR), "-ac", "2",
-          "-c:a", "aac", "-b:a", "192k", str(dst)])
+              "-ar", str(SR), "-ac", "2", "-c:a", "pcm_s24le", str(mix)])
+    else:
+        # normalize=0 是关键：amix 默认按输入数分摊音量，会把已经调准的口播砍掉 6dB
+        _run(["ffmpeg", "-y", "-v", "error", "-i", str(narration), "-i", str(bgm),
+              "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:normalize=0[a]",
+              "-map", "[a]", "-ar", str(SR), "-ac", "2", "-c:a", "pcm_s24le", str(mix)])
+
+    pre = _loudness_stats(mix, target=master_lufs)
+    _err(f"[master] 混音后 {pre['i']:.2f} LUFS / 真峰 {pre['tp']:.2f} dBTP "
+         f"→ 归一到 {master_lufs:g} LUFS（提 {master_lufs - pre['i']:+.1f} dB）")
+    # -ar 必须显式给：loudnorm 内部按 192kHz 工作，不指定会把成片音轨变成 192k。
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(mix),
+          "-af", f"loudnorm=I={master_lufs}:TP=-1.5:LRA=11:"
+                 f"measured_I={pre['i']:.2f}:measured_TP={pre['tp']:.2f}:"
+                 f"measured_LRA={pre['lra']:.2f}:measured_thresh={pre['thresh']:.2f}:"
+                 f"offset={pre['offset']:.2f}:linear=true",
+          "-ar", str(SR), "-ac", "2", "-c:a", "aac", "-b:a", "192k", str(dst)])
+    return {"target_lufs": master_lufs, "pre_master": pre,
+            "gain_db": round(master_lufs - pre["i"], 2)}
 
 
 # ---------- 收尾自检 ----------
 
-def _verify(out: Path, pages: list[dict], *, cw: int, ch: int) -> dict:
-    """四道自检，任何一道不过就退出码 1（⛔ 不许「报绿了但没验」）。"""
+def _verify(out: Path, pages: list[dict], *, cw: int, ch: int,
+            master_lufs: float) -> dict:
+    """六道自检，任何一道不过就退出码 1（⛔ 不许「报绿了但没验」）。"""
     streams = ffprobe_streams(out)
     kinds = [s.get("codec_type") for s in streams]
     v = [s for s in streams if s.get("codec_type") == "video"]
@@ -486,11 +561,25 @@ def _verify(out: Path, pages: list[dict], *, cw: int, ch: int) -> dict:
     checks.append((f"画布 {got[0]}x{got[1]}（应为 {cw}x{ch}）", got == (cw, ch), "分辨率不符"))
     checks.append((f"页数 {len(pages)}", len(pages) > 0, "没有页"))
 
+    # 母带响度凭证：在**成片**上量（端到端，不是量中间文件报个好看的数）。
+    # 这条同时是母带归一那段代码的证伪闸门——归一没生效，这里立刻红。
+    final = _loudness_stats(out, target=master_lufs)
+    checks.append((
+        f"母带响度 {final['i']:.2f} LUFS（目标 {master_lufs:g}±1）",
+        abs(final["i"] - master_lufs) <= 1.0,
+        f"整片响度偏离目标——平台常态 −14~−16 LUFS，低太多就是「手机外放听不清」"))
+    checks.append((
+        f"真峰 {final['tp']:.2f} dBTP（应 ≤ −1.5，容差 0.3 留给 AAC 编码）",
+        final["tp"] <= -1.2,
+        "真峰过高，转码/平台二次压缩时会削波爆音"))
+
     ok = True
     for label, passed, why in checks:
         _err(f"  {'✅' if passed else '❌'} {label}" + ("" if passed else f" —— {why}"))
         ok &= passed
-    return {"passed": ok, "duration": actual, "expected": expect, "drift": drift}
+    return {"passed": ok, "duration": actual, "expected": expect, "drift": drift,
+            "measured_lufs": round(final["i"], 2), "measured_tp": round(final["tp"], 2),
+            "measured_lra": round(final["lra"], 2), "target_lufs": master_lufs}
 
 
 # ---------- 主流程 ----------
@@ -568,12 +657,13 @@ def build(a: argparse.Namespace) -> dict:
         else:
             concat_segments(segs, silent, tmp)
 
-        # 6) 音轨（口播 + 可选 BGM）
+        # 6) 音轨（口播 + 可选 BGM → 母带归一）
         video_sec = ffprobe_duration(silent)
-        bgm = prepare_bgm(a.bgm, video_sec, tmp, narration=narration,
-                          duck_db=a.bgm_duck) if a.bgm else None
+        narr_lufs = _loudness(narration)
+        bgm, bgm_lufs = prepare_bgm(a.bgm, video_sec, tmp, narration_lufs=narr_lufs,
+                                    duck_db=a.bgm_duck) if a.bgm else (None, None)
         audio = tmp / "audio_mix.m4a"
-        mix_audio(narration, bgm, audio)
+        master = mix_audio(narration, bgm, audio, tmp, master_lufs=a.master_lufs)
 
         # 7) 合流
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -582,12 +672,27 @@ def build(a: argparse.Namespace) -> dict:
               "-movflags", "+faststart", str(out)])
 
         _err("[verify] 收尾自检")
-        v = _verify(out, pages, cw=cw, ch=ch)
+        v = _verify(out, pages, cw=cw, ch=ch, master_lufs=a.master_lufs)
         meta = {
             "success": v["passed"], "output": str(out),
             "canvas": f"{cw}x{ch}", "fps": fps,
             "pages": pages, "verify": v,
             "bgm": a.bgm or None, "kenburns": a.kenburns, "xfade": a.xfade,
+            # 响度凭证：改任何音频参数后都要回来核这一段（audio-checklist.md 最后一条）
+            "audio": {
+                "narration_lufs_raw": round(narr_lufs, 2),
+                "bgm_duck_db": a.bgm_duck if bgm else None,
+                "bgm_target_lufs": round(narr_lufs - a.bgm_duck, 2) if bgm else None,
+                # ★ 实测：BGM 轨归一后真的到了多少，以及由它反推的**实际**压差
+                "bgm_measured_lufs": round(bgm_lufs, 2) if bgm else None,
+                "bgm_actual_duck_db": round(narr_lufs - bgm_lufs, 2) if bgm else None,
+                # 成片里 BGM 的绝对响度（母带是线性增益，故可相加；linear 生效的判据是前后 LRA 不变）
+                "bgm_in_film_lufs": round(bgm_lufs + (v["measured_lufs"] - master["pre_master"]["i"]), 2) if bgm else None,
+                "master": master,
+                "final_lufs": v["measured_lufs"],
+                "final_tp_dbtp": v["measured_tp"],
+                "final_lra": v["measured_lra"],
+            },
             "size_bytes": out.stat().st_size,
         }
         Path(str(out) + ".meta.json").write_text(
@@ -608,7 +713,12 @@ def main() -> None:
     p.add_argument("--script-file", help="分页口播稿，内部串行调 TTS（与 --narration-dir 二选一）")
     p.add_argument("--out", required=True, help="成片 mp4 路径")
     p.add_argument("--bgm", help="BGM：文件路径，或 auto（gen_bgm.py 纯合成，零版权）")
-    p.add_argument("--bgm-duck", type=float, default=18.0, help="BGM 低于口播多少 dB（默认 18）")
+    p.add_argument("--bgm-duck", type=float, default=14.0,
+                   help="BGM 低于口播多少 LU（默认 14，老板 2026-08-16 实听从 18 调下来；"
+                        "要更突出音乐用 12，要纯背景用 18）")
+    p.add_argument("--master-lufs", type=float, default=-16.0,
+                   help="成片母带整体响度目标 LUFS（默认 −16，平台常态 −14~−16）；"
+                        "真峰恒定压 −1.5 dBTP")
     p.add_argument("--canvas", default=DEFAULT_CANVAS, help=f"画布，默认 {DEFAULT_CANVAS}（3:4）")
     p.add_argument("--fps", type=int, default=30)
     p.add_argument("--kenburns", type=float, default=0.03,

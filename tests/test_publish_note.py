@@ -130,9 +130,21 @@ def test_api_error_both_shapes():
 
 # ---- 账号解析 ----
 
-def test_resolve_account_digit_fast_path():
+def test_resolve_account_digit_path_resolves_the_name(monkeypatch):
+    """数字入参照样返回该 id，但 label 换成账号名——台账/报告只写名字，不写编号。"""
     import publish_note
-    assert publish_note.resolve_account("https://x", "k", "7")[0] == 7
+    monkeypatch.setattr(publish_note, "list_accounts",
+                        lambda *a: [{"id": 7, "name": "NBDpsy-好好生活", "nickname": "好好生活"}])
+    assert publish_note.resolve_account("https://x", "k", "7") == (7, "NBDpsy-好好生活", None)
+
+
+def test_resolve_account_digit_path_survives_lookup_failure(monkeypatch):
+    """名字查不到不许挡住发布：退化成明示 id 的写法（⛔ 不是把编号打扮成名字）。"""
+    import publish_note
+    def boom(*a, **k):
+        raise ConnectionError("network down")
+    monkeypatch.setattr(publish_note, "list_accounts", boom)
+    assert publish_note.resolve_account("https://x", "k", "7") == (7, "账号id=7", None)
 
 
 def test_resolve_account_by_name_and_cookie_warn(monkeypatch):

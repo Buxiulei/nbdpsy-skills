@@ -16,6 +16,9 @@
       拿到终态回执后回填「实际」并算出**差集**（意图有、实际没有的那些）。
       **差集非空 = 本批不许报完成**（exit 3）；差集空才 `- [x]`。
       fresh agent 接手第一件事：`--ledger-check`。
+      台账从稿件/媒体目录推导（或显式 `--ledger`，或 cwd 里**已存在**那份），⛔ 任何时候都不新建；
+      差集**合并事后补救**：`--fix-cover` 成功会把 note-components 任务号登记进那一行，
+      `--recheck` 拿它回服务端读 applied.cover，真 true 才把 cover 这项算达成。
 
 用法：
     # 发布（意图从 post-NN.md 读：title / 「## 发布文案」正文 / 标签行→topics）
@@ -27,8 +30,10 @@
     # 播客
     python3 publish_video.py --note post-01.md --account 2 --audio ep1.m4a --cover c.jpg
     # 回执复查 + 重算差集 + 闭环台账（会话断了、或补救之后跑这个）
-    python3 publish_video.py --recheck 338
+    # 在稿件/媒体目录里跑即可；别处跑要带 --ledger（或 --note/--video/--cover）——不猜路径也不新建
+    python3 publish_video.py --recheck 338 [--ledger 路径]
     # 发布后补封面（发布时 cover=error 的标准补救；note-components 链已真号验过）
+    # 成功后会把补救任务号登记进台账那一行，供 --recheck 消费；再跑一次 --recheck 才闭环
     python3 publish_video.py --fix-cover --job 338 --cover cover-2.jpg
     # 读欠账（fresh agent 接手第一件事）
     python3 publish_video.py --ledger-check [路径]
@@ -81,6 +86,10 @@ ledger_replace = pn.ledger_replace
 ledger_find_by_job = pn.ledger_find_by_job
 ledger_row = pn.ledger_row
 ledger_check = pn.ledger_check                        # 台账不存在 = exit 4（⛔ 不与全闭环同绿）
+ledger_remedies = pn.ledger_remedies                  # 台账行里登记的补救任务号（索引，不是凭据）
+ledger_set_remedies = pn.ledger_set_remedies
+verify_remedies = pn.verify_remedies                  # 回服务端验 applied：只有 true 才算数
+account_display = pn.account_display                  # 台账账号字段只写账号名，⛔ 不写编号
 diff_intent_actual = pn.diff_intent_actual
 intent_summary = pn.intent_summary
 intent_from_view = pn.intent_from_view
@@ -157,7 +166,7 @@ def do_publish(args, api_base, key):
 
     lp = ledger_path(args, args.note or args.content_file)
     ts = now_iso()
-    who = f"号{account_id}({account_label})"
+    who = account_display(api_base, key, account_id, account_label)
     pending_row = ledger_row(False, ts, what, who, "待回执", intent_summary(intent),
                              "—", "待回执")
     ledger_append(lp, pending_row)          # 闸门 C：**提交之前**先落意图行
@@ -201,16 +210,21 @@ def do_publish(args, api_base, key):
         return 2 if job_id else 1
 
     return finish(view, intent, lp, pending_row_or_job=job_id, ts=ts, what=what, who=who,
-                  intent_txt=intent_summary(intent))
+                  intent_txt=intent_summary(intent), api_base=api_base, key=key)
 
 
-def finish(view, intent, lp, pending_row_or_job, ts, what, who, intent_txt):
-    actual, gap, ngap = diff_intent_actual(view, intent)
+def finish(view, intent, lp, pending_row_or_job, ts, what, who, intent_txt,
+           api_base=None, key=None):
+    jid = view.get("job_id") or pending_row_or_job
+    old = ledger_find_by_job(lp, jid)
+    # 闭环判据 = 发布回执 ⊕ 事后补救任务的终态。补救任务号从台账那行读（服务端没有按 note 列
+    # 补救任务的端点），但**生效与否一律回服务端问**——⛔ 不拿台账里那句登记当凭据。
+    remedies = ledger_remedies(old)
+    verified = verify_remedies(api_base, key, remedies) if (api_base and remedies) else {}
+    actual, gap, ngap = diff_intent_actual(view, intent, verified)
     status = view.get("status")
     closed = (status == "published" and ngap == 0)
-    row = ledger_row(closed, ts, what, who, view.get("job_id") or pending_row_or_job,
-                     intent_txt, actual, gap)
-    old = ledger_find_by_job(lp, view.get("job_id") or pending_row_or_job)
+    row = ledger_row(closed, ts, what, who, jid, intent_txt, actual, gap, remedies)
     if old:
         ledger_replace(lp, old, row)
     else:
@@ -219,6 +233,8 @@ def finish(view, intent, lp, pending_row_or_job, ts, what, who, intent_txt):
     out = pn.job_brief(view)
     out.update({"ledger": str(lp), "intent": intent_txt, "actual": actual, "gap": gap,
                 "gap_count": ngap})
+    if remedies:
+        out["remedies"] = {"recorded": remedies, "verified": verified}
     if status in ("failed", "canceled"):
         code = 1
     elif status != "published":
@@ -238,16 +254,53 @@ def finish(view, intent, lp, pending_row_or_job, ts, what, who, intent_txt):
 # ---------------------------------------------------------------- 复查 / 补封面
 
 def do_recheck(args, api_base, key):
-    view = pn.poll_job(api_base, key, args.recheck, timeout=0)
+    # ⛔ 先定位台账再打网络：定位不到 / 台账不存在就报错指路，**绝不新建**
+    # （2026-08-16 事故：旧代码回落 cwd，在 NBDpsy 仓库根凭空造了一份空台账，
+    #  真台账在媒体目录里永远闭不掉——「另起一份」比报错危险得多）。
     lp = ledger_path(args)
+    if not lp.exists():
+        raise ValueError(
+            f"台账不存在：{lp}。--recheck 只回填既有台账、不新建。"
+            "① 台账在别处 → 给 `--ledger <台账路径>`（或在稿件目录里跑）；"
+            "② 这批压根没落过台账 → 说明发布没走 publish_video.py（手搓 payload 直调不落台账），"
+            "先 `publish_note.py --list-jobs` 把已发的 job 捞回来核对，⛔ 别据此报完成。")
+    view = pn.poll_job(api_base, key, args.recheck, timeout=0)
     old = ledger_find_by_job(lp, args.recheck)
     intent = intent_from_view(view)
     parts = old.split(" | ") if old else []
     ts = parts[0][6:] if parts else now_iso()
     what = parts[1] if len(parts) > 1 else str(view.get("title") or "—")
-    who = parts[2] if len(parts) > 2 else f"号{view.get('account_id')}"
+    who = account_display(api_base, key, view.get("account_id"),
+                          parts[2] if len(parts) > 2 else None)
     intent_txt = parts[4][4:] if len(parts) > 4 else intent_summary(intent)
-    return finish(view, intent, lp, args.recheck, ts, what, who, intent_txt)
+    return finish(view, intent, lp, args.recheck, ts, what, who, intent_txt,
+                  api_base=api_base, key=key)
+
+
+def record_remedy(args, comp: str, cjob) -> dict:
+    """把补救任务号登记回台账那一行——**recheck 靠它才找得到这条补救**（服务端没有按 note
+    列补救任务的端点）。登记的是索引不是凭据：翻不翻 `- [x]` 仍由 --recheck 回服务端验 applied。
+
+    登记失败只告警不改退出码：封面已经真补上了，为「记账没写成」把成功报成失败更误导人。"""
+    if not args.job:
+        return {"recorded": False,
+                "reason": f"没给 --job，定位不到台账行：手工在那行差集之后补一段 `| 补救: {comp}={cjob} `，"
+                          "或带 --job <发布任务号> 重跑本命令（封面补挂是幂等的，已是自定义封面会 "
+                          "skipped、零点击零提交）"}
+    try:
+        lp = ledger_path(args)
+    except ValueError as e:
+        return {"recorded": False, "reason": str(e)}
+    old = ledger_find_by_job(lp, args.job)
+    if not old:
+        return {"recorded": False, "ledger": str(lp),
+                "reason": f"{lp} 里没有 job={args.job} 那一行——台账路径给错了？"
+                          "用 `--ledger <台账路径>` 指准再重跑登记（补封面本身已成功，别重跑 --fix-cover，"
+                          "每次重跑都是一次真提交）"}
+    remedies = ledger_remedies(old)
+    remedies[comp] = str(cjob)
+    ledger_replace(lp, old, ledger_set_remedies(old, remedies))
+    return {"recorded": True, "ledger": str(lp), "remedies": remedies}
 
 
 def do_fix_cover(args, api_base, key):
@@ -294,6 +347,8 @@ def do_fix_cover(args, api_base, key):
     out = {"outcome": cview.get("status"), "component_job_id": cjob, "note_id": note_id,
            "applied_cover": (cview.get("applied") or {}).get("cover"),
            "reason": cview.get("reason"), "cover_receipt": receipt}
+    if ok:
+        out["ledger_remedy"] = record_remedy(args, "cover", cjob)
     if ok and args.job:
         out["next"] = f"封面已补上，跑 --recheck {args.job} 把台账那一行闭掉"
     elif not ok:
@@ -345,7 +400,13 @@ def main():
     args = ap.parse_args()
 
     if args.ledger_check is not None:
-        p = Path(args.ledger_check) if args.ledger_check else ledger_path(args)
+        try:
+            p = Path(args.ledger_check) if args.ledger_check else ledger_path(args)
+        except ValueError as e:
+            # 定位不到台账同样**不是闭环**（exit 4 = 没有证据），⛔ 别回 0
+            print(json.dumps({"ledger": None, "exists": False, "open_rows": [],
+                              "hint": str(e)}, ensure_ascii=False))
+            sys.exit(4)
         sys.exit(ledger_check(p))
     if args.check_cover:
         try:

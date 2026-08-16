@@ -54,6 +54,16 @@ SETTLE_JS = "() => new Promise(res => requestAnimationFrame(() => requestAnimati
 FRAME_RE = re.compile(r"^f(\d+)\.(?:png|jpe?g)$", re.I)
 LOCK_RE = re.compile(r"^\.render\.pid(?:\.s(\d+)of(\d+))?$")
 
+# 模板可声明画布：<meta name="render-canvas" content="1080x1440">。
+# 不声明＝1080×1920，与四个存量版式逐字节同一条路径（它们都没有这行）。
+CANVAS_RE = re.compile(r"""<meta\s+name=["']render-canvas["']\s+content=["'](\d+)x(\d+)["']""", re.I)
+DEFAULT_CANVAS = (1080, 1920)
+
+
+def read_canvas(html_text: str):
+    m = CANVAS_RE.search(html_text)
+    return (int(m.group(1)), int(m.group(2))) if m else DEFAULT_CANVAS
+
 
 # ────────── 分片 ──────────
 
@@ -255,7 +265,10 @@ def render(html_name: str, out_name: str = None, shard=None, angle: str = "swift
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
             b = p.chromium.launch(args=launch_args(angle))
-            pg = b.new_page(viewport={"width": 1080, "height": 1920})
+            vw, vh = read_canvas(html)
+            if (vw, vh) != DEFAULT_CANVAS:
+                print(f"画布 {vw}x{vh}（模板 render-canvas 声明）", file=sys.stderr)
+            pg = b.new_page(viewport={"width": vw, "height": vh})
             _probe_gl_renderer(pg, angle)
             errs = []
             pg.on("pageerror", lambda e: errs.append(str(e)))

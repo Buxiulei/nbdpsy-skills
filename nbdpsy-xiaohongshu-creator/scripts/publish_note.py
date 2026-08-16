@@ -43,6 +43,11 @@ POST {base}/api/publish-jobs（异步 202 拿 job_id）→ 轮询 GET /api/publi
   闸门 B · 无 job 不发：本脚本每个动作都建一条 server 侧 job，⛔ 手搓 payload 直调 API 是违规路径。
   闸门 C · 台账先行 + 回读差集：提交前先往 `publish-ledger.md` 落一行「意图」，拿到终态回执后
       回填「实际」并算差集。**差集非空 ＝ 本批不许报完成**（exit 3）。
+      台账**只落在稿件/媒体同目录**（或显式 `--ledger`；复查时也认 cwd 里**已存在**那份）——
+      ⛔ 绝不在 cwd 推导的位置**新建**（2026-08-16 事故：单独跑复查时台账被新建到了 NBDpsy
+      仓库根，真台账永远闭不掉）。
+      差集会**合并事后补救任务的终态**（台账行的 `补救: cover=<任务号>` 是索引，
+      生效与否回服务端读 applied 才作数）——否则补完封面台账也翻不成 `- [x]`。
 
 凭据：NBDPSY_XHS_API_KEY（必需）、NBDPSY_XHS_API_BASE（可选，默认 https://mcp.nbdpsy.com），
 由 nbdpsy_common 三层解析（环境变量 > workspace/.env > 用户级 secrets.env），
@@ -407,10 +412,28 @@ def now_iso() -> str:
 
 
 def ledger_path(args, note: Path = None) -> Path:
+    """台账路径从稿件/媒体文件所在目录推导；**绝不在 cwd 推导出的位置新建台账**。
+
+    2026-08-16 事故：`--recheck 340` 单独跑时既没 --ledger 也没 --note，旧代码无条件回落 cwd，
+    于是台账被**新建**在 /home/roots/NBDpsy 仓库根——发布时那份真台账（在媒体目录里）永远闭不掉，
+    还往别人仓库根撒文件。要害在「新建」而不在「cwd」：人就在稿件目录里跑复查是最自然的用法，
+    那时 ./publish-ledger.md 本就是这批的台账。所以 cwd 只作**最后一档只读锚点**——
+    文件已经在那儿才认，不在就抛错指路，绝不凭空造一份干净台账假装这批没欠账。"""
     if getattr(args, "ledger", None):
         return Path(args.ledger)
-    base = note.parent if note else Path.cwd()
-    return base / LEDGER_NAME
+    for cand in (note, getattr(args, "note", None), getattr(args, "content_file", None),
+                 getattr(args, "video", None), getattr(args, "audio", None),
+                 getattr(args, "cover", None)):
+        if cand:
+            return Path(cand).parent / LEDGER_NAME
+    here = Path.cwd() / LEDGER_NAME
+    if here.exists():
+        return here
+    raise ValueError(
+        f"定位不到台账（{LEDGER_NAME}）：当前目录 {Path.cwd()} 下没有它，"
+        "命令行也没给 `--ledger <台账路径>` 或 --note/--video/--audio/--cover。"
+        "⛔ 不按当前工作目录**新建**——那会把台账落进无关仓库根目录（2026-08-16 实证）；"
+        "请到稿件/媒体目录里跑，或显式指路。")
 
 
 def ledger_append(path: Path, line: str) -> None:
@@ -442,11 +465,69 @@ def ledger_find_by_job(path: Path, job_id) -> str:
 
 
 def ledger_row(closed: bool, ts: str, what: str, account: str, job_id, intent: str,
-               actual: str, gap: str) -> str:
+               actual: str, gap: str, remedies: dict = None) -> str:
     box = "x" if closed else " "
     tail = "已闭环" if closed else "未闭环"
+    # 补救段落放在差集之后、结论之前：既不动前面 7 段的位次（旧行照样解析），
+    # 又让「这一项是靠补救达成的」留在纸上。
+    mid = f" | 补救: {ledger_remedies_txt(remedies)}" if remedies else ""
     return (f"- [{box}] {ts} | {what} | {account} | job={job_id} | 意图: {intent} | "
-            f"实际: {actual} | 差集: {gap} | {tail}")
+            f"实际: {actual} | 差集: {gap}{mid} | {tail}")
+
+
+# 补救登记：`补救: cover=<note-components 任务号>`（多项逗号分隔）。
+# ⚠️ 它只是**索引**，不是凭据——闭环判据永远是拿这个任务号回服务端读 applied（见 verify_remedies）。
+_REMEDY_SEG = re.compile(r"\|\s*补救:\s*([^|]+)")
+
+
+def ledger_remedies(row: str) -> dict:
+    """从台账行里读出已登记的补救任务：{组件名: 补救任务号}。没有就空 dict。"""
+    m = _REMEDY_SEG.search(row or "")
+    if not m:
+        return {}
+    out = {}
+    for item in m.group(1).split(","):
+        key, _, jid = item.strip().partition("=")
+        if key.strip() and jid.strip():
+            out[key.strip()] = jid.strip()
+    return out
+
+
+def ledger_remedies_txt(remedies: dict) -> str:
+    return ",".join(f"{k}={v}" for k, v in sorted((remedies or {}).items()))
+
+
+def ledger_set_remedies(row: str, remedies: dict) -> str:
+    """在既有台账行上写入/更新补救登记，**其余字段一字不动**（补救发生时差集还没重算，
+    翻不翻 `- [x]` 由之后的 --recheck 说了算——补上封面不等于话题也挂上了）。"""
+    body = _REMEDY_SEG.sub("", row, count=1)
+    head, sep, tail = body.rpartition(" | ")
+    if not sep:
+        return body
+    return f"{head} | 补救: {ledger_remedies_txt(remedies)}{sep}{tail}"
+
+
+def verify_remedies(api_base: str, key: str, remedies: dict) -> dict:
+    """拿登记的补救任务号回服务端读终态，**只有 applied.<组件> is True 才算数**。
+
+    差集必须消费补救结果，否则闭环判据是死的：发布回执是**发布那一刻的快照**，
+    补封面走的是另一条 note-components 任务，快照永远停在 cover=error，
+    台账那行再怎么 --recheck 都翻不成 `- [x]`（2026-08-16 job340 实证）。
+    ⛔ 反过来也不许「recheck 忽略 cover」——那是放弃校验，不是闭环。
+    服务端没有「按 note_id 列补救任务」的端点，所以任务号只能由台账登记（fix_cover 落的），
+    但**真伪一律回服务端问**：台账负责记得，服务端负责作数。"""
+    ok = {}
+    for comp, jid in (remedies or {}).items():
+        try:
+            resp = send_request("GET", f"{api_base}/api/note-components/{jid}", key)
+            if resp.status_code >= 400:
+                continue
+            view = resp.json()
+        except Exception:
+            continue  # 读不到就当没补上——宁可留着欠账，也不放行假绿
+        if (view.get("applied") or {}).get(comp) is True:
+            ok[comp] = jid
+    return ok
 
 
 def ledger_check(path: Path) -> int:
@@ -477,12 +558,17 @@ def ledger_check(path: Path) -> int:
 
 # ---------------------------------------------------------------- 回读校验（意图 vs 实际）
 
-def diff_intent_actual(view: dict, intent: dict) -> tuple:
+def diff_intent_actual(view: dict, intent: dict, remedied: dict = None) -> tuple:
     """拿服务端回执逐项比对意图，返回 (实际摘要, 差集摘要, 差集项数)。
 
     ⚠️ `published` ≠ 组件全成：封面/话题/合集失败**不阻断发布**，任务照样 published
     （2026-08-13 job337 实证：published + cover error + topics 全空）。所以判据在 applied 层。
+
+    remedied = 已经**回服务端验过**的补救结果 {组件: 补救任务号}（verify_remedies 的产物）：
+    发布回执是发布那一刻的快照，补救走的是另一条任务，不合并进来这行永远闭不掉。
+    ⛔ 只接受验过的，别把台账里那句登记当凭据。
     """
+    remedied = remedied or {}
     applied = view.get("applied") or {}
     comps = applied.get("components") or {}
     actual, gaps = [], []
@@ -505,6 +591,10 @@ def diff_intent_actual(view: dict, intent: dict) -> tuple:
         if not intent.get(key):
             continue
         st = (comps.get(key) or {}).get("status")
+        if st not in ("done", "skipped") and remedied.get(key):
+            # 发布时没成、事后补救任务已被服务端确认生效 → 这项意图已达成，不再计欠账
+            actual.append(f"{label}={st or 'null'}→补救done(note-components {remedied[key]})")
+            continue
         actual.append(f"{label}={st or 'null'}")
         if st not in ("done", "skipped"):
             gaps.append(f"{label}=FAIL(补救: {fix.format(job=view.get('job_id'))})")
@@ -646,7 +736,8 @@ def resolve_account(api_base: str, key: str, account: str):
     restricted 与 invalid 不是一回事：前者 cookie 好好的，是账号被小红书挂了风控验证墙，
     催人重新扫码登录没用（也治不好），得用手机小红书 App 扫码验证身份。"""
     if account.isdigit():
-        return int(account), account, None
+        # 数字入参也要换回账号名：给人看的一切文字只认名字（见 account_display）
+        return int(account), account_display(api_base, key, int(account)), None
     accounts = list_accounts(api_base, key)
     hits = [a for a in accounts if account in (a["name"], a["nickname"])]
     if len(hits) == 1:
@@ -661,6 +752,27 @@ def resolve_account(api_base: str, key: str, account: str):
         return a["id"], a["name"] or account, warn
     avail = "、".join(f'{a["name"]}(id={a["id"]})' for a in accounts) or "（无可用账号）"
     raise ValueError(f"账号「{account}」{'匹配到多个' if hits else '不存在或未授权'}；可用：{avail}")
+
+
+def account_display(api_base: str, key: str, account_id, label=None) -> str:
+    """台账/报告里的账号字段——**只写账号名**。
+
+    编号是 agent 与 server 之间的内部主键，运营脑子里只有名字；台账行写「号1」等于每次读都要
+    去查一遍对照表（2026-08-16 现场：`号1(1)`——数字入参连 label 都是那个数字）。
+    实在拿不到名字时写 `账号id=1`，**明示这是 id**，绝不把编号打扮成名字。"""
+    name = (label or "").strip()
+    if name.startswith("号") and name[1:2].isdigit():
+        name = ""      # 旧台账行写的就是「号1(1)」，复查经过时顺手换回名字，别让它一直挂在那
+    if name and not name.isdigit():
+        return name
+    try:
+        hit = next((a for a in list_accounts(api_base, key)
+                    if str(a.get("id")) == str(account_id)), None)
+        if hit and hit.get("name"):
+            return hit["name"]
+    except Exception:
+        pass  # 名字查不到不该挡住发布/复查，退化成明示 id 的写法
+    return f"账号id={account_id}" if account_id not in (None, "") else "账号未知"
 
 
 def extension_info(api_base: str, key: str) -> dict:
@@ -1173,7 +1285,13 @@ def main():
 
     # 这两条不打网络、不需要凭据：出图后自查凭证、接手时先读欠账
     if args.ledger_check is not None:
-        p = Path(args.ledger_check) if args.ledger_check else ledger_path(args, args.note)
+        try:
+            p = Path(args.ledger_check) if args.ledger_check else ledger_path(args, args.note)
+        except ValueError as e:
+            # 定位不到台账同样**不是闭环**（exit 4 的语义就是「没有证据」），⛔ 别回 0
+            print(json.dumps({"ledger": None, "exists": False, "open_rows": [],
+                              "hint": str(e)}, ensure_ascii=False))
+            sys.exit(4)
         sys.exit(ledger_check(p))
     if args.check_cover:
         try:
@@ -1340,16 +1458,19 @@ def main():
             # 闸门 C：复查也算差集并回填台账（--no-wait / 轮询超时之后就靠这条闭环）。
             # 台账定位不到（既没 --ledger 也没 --note）时只算不写——绝不往 cwd 乱落台账文件。
             intent = intent_from_view(view)
-            actual, gap, ngap = diff_intent_actual(view, intent)
+            lp = ledger_path(args, args.note) if (args.ledger or args.note) else None
+            old = ledger_find_by_job(lp, args.job) if lp else ""
+            # 闭环判据必须合并事后补救的终态（台账登记任务号 → 回服务端验 applied）
+            remedies = ledger_remedies(old)
+            actual, gap, ngap = diff_intent_actual(
+                view, intent, verify_remedies(api_base, key, remedies))
             out.update({"intent": intent_summary(intent), "actual": actual,
                         "gap": gap, "gap_count": ngap})
-            if args.ledger or args.note:
-                lp = ledger_path(args, args.note)
+            if lp:
                 closed = view.get("status") == "published" and ngap == 0
                 row = ledger_row(closed, now_iso(), args.note.name if args.note else "—",
-                                 f"号{view.get('account_id')}", args.job,
-                                 intent_summary(intent), actual, gap)
-                old = ledger_find_by_job(lp, args.job)
+                                 account_display(api_base, key, view.get("account_id")), args.job,
+                                 intent_summary(intent), actual, gap, remedies)
                 ledger_replace(lp, old, row) if old else ledger_append(lp, row)
                 out["ledger"] = str(lp)
             owed = view.get("status") == "published" and ngap > 0
@@ -1413,7 +1534,7 @@ def main():
         # 闸门 C：**提交之前**先落意图行（台账先行）。会话断了、回执没读到，欠账仍在纸上。
         lp = ledger_path(args, args.note)
         ts = now_iso()
-        who = f"号{account_id}({account_label})"
+        who = account_display(api_base, key, account_id, account_label)
         pending_row = ledger_row(False, ts, args.note.name, who, "待回执", intent_txt, "—", "待回执")
         ledger_append(lp, pending_row)
         ledger_state = (lp, ts, who, pending_row, intent_txt, args.note.name)

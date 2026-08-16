@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- ⚠️ render_card.py 读这一行定 viewport（缺省 1080x1920）。别删、别改 name。 -->
+<meta name="render-canvas" content="__CANVAS__">
+<title>一行字卡 tpl-oneline</title>
+<!--
+  ════════════════════════════════════════════════════════════════════════
+  tpl-oneline · 一行字卡（第五版式，2026-08-16 立）
+  ════════════════════════════════════════════════════════════════════════
+  硬契约（改这个文件前先读完）：
+
+  ① **一屏只有一行字，绝不折行、绝不缩字号**。字号是版式身份的一部分，写死在
+     __FONT_PX__，⛔ 任何"装不下就调小一点"的改动都等于废掉这个版式。装不下＝
+     断句，断不开＝拒渲染（闸门在 build_oneline.py，本文件只做像素层复核）。
+  ② 本文件**不是手改文案的模板**，是 build_oneline.py 的模子：分屏数据、画幅、
+     各档色值一律由它填（占位符形如两侧双下划线）。⛔ 别在这里硬编码句子。
+  ③ 画面上除了正在说的那一句，什么都没有——纸纹背景静止、无插画、无进度条。
+     落款只在最后一屏浮出。往里加任何常驻元素都是在破坏这个版式。
+  ④ GSAP 必须内置（同目录 gsap.min.js）。缺了页面不报错，只会渲染器静默超时。
+  ⑤ 时间轴位置参数一律走 at()——GSAP 里裸的负数位置会平移整条时间轴。
+  ════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  @font-face {
+    font-family:"ONELINE";
+    src:url("ZCOOLKuaiLe-Regular.ttf") format("truetype");
+    font-display:block;          /* 绝不用回退字体先画一帧 */
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:__W__px; height:__H__px; overflow:hidden; }
+  body { background:__BASE__; position:relative; }
+
+  /* 纸纹：内联 SVG feTurbulence + feDiffuseLighting（零外网依赖），静态一层 */
+  #paper { position:absolute; inset:0; z-index:1;
+    background-image:__PAPER_URL__;
+    background-size:__TEX_SCALE__px __TEX_SCALE__px;
+    mix-blend-mode:multiply; opacity:__TEX_OPACITY__; }
+  /* 四角压暗，把视线收到中间那行字上 */
+  #vignette { position:absolute; inset:0; z-index:2; pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 42%, __VIGNETTE__ 100%); }
+
+  #stage { position:absolute; inset:0; z-index:3; }
+  /* ⚠️ 宽度必须收缩到文字本身（不给 width）——像素闸量的就是这个盒子。
+     给它定宽会让每屏都量出同一个数，闸门就成了摆设（2026-08-16 初版即踩）。
+     居中靠 GSAP 的 xPercent/yPercent，不用 CSS transform，免得跟补间抢 transform。 */
+  .scr { position:absolute; left:50%; top:50%;
+    font-family:"ONELINE"; font-size:__FONT_PX__px; line-height:1.28;
+    color:__INK__; white-space:nowrap;            /* ⛔ 绝不折行 */
+    -webkit-text-stroke:__STROKE_PX__px #FFFFFF;
+    paint-order:stroke fill;                       /* 描边只长在字外，不吃笔画 */
+    opacity:0; will-change:transform,opacity; }
+
+  #brand { position:absolute; left:0; right:0; bottom:__BRAND_BOTTOM__px; z-index:4;
+    text-align:center; font-family:"ONELINE"; font-size:__BRAND_PX__px;
+    letter-spacing:.18em; color:__BRAND_COLOR__; opacity:0; }
+</style>
+</head>
+<body>
+<div id="paper"></div>
+<div id="vignette"></div>
+<div id="stage"></div>
+<div id="brand">NBDpsy 心理科普</div>
+
+<script src="gsap.min.js"></script>
+<script>
+const CUES    = __CUES__;      // 句级 cues（渲染器注入），本版式只用它对总时长
+const SCREENS = __SCREENS__;   // build_oneline.py 断句分屏后的逐屏 {text,start,end,cue}
+const SAFE_W  = __SAFE_W__;
+const STROKE  = __STROKE_PX__;
+const TAIL    = 1.4;           // 末屏定格
+
+const stage = document.getElementById('stage');
+const els = SCREENS.map(s => {
+  const d = document.createElement('div');
+  d.className = 'scr';
+  d.textContent = s.text;
+  stage.appendChild(d);
+  return d;
+});
+/* 居中的基准形变，不进时间轴——补间里的 y/scale 会跟它复合而不是互相覆盖 */
+gsap.set(els, { xPercent:-50, yPercent:-50 });
+
+const total = (SCREENS.length ? SCREENS[SCREENS.length - 1].end : 0) + TAIL;
+const tl = gsap.timeline({ paused:true });
+/* 位置参数护栏：GSAP 里裸负数不是"第 0 秒"，是把整条时间轴往后平移。 */
+const at = t => Math.max(0, t);
+
+const LEAD = 0.07;   // 视觉比语音早这么一点点起手，换来翻屏零空窗（0.07s 人耳无感）
+const OUT  = 0.16;   // 退场时长
+
+SCREENS.forEach((s, i) => {
+  const el = els[i], last = (i === SCREENS.length - 1);
+  const t0 = at(s.start - LEAD);
+  // 入场：整行一起浮起——⛔ 不做逐字，本版式的意义就是"没有第二个东西在动"
+  tl.fromTo(el, { opacity:0, y:__RISE__, scale:.988 },
+                { opacity:1, y:0, scale:1, duration:.26, ease:'power2.out', immediateRender:false }, t0);
+  // 停留：极缓推近，给静止画面一点呼吸，幅度小到不构成"动效"
+  const hold = Math.max(s.end - s.start, .3);
+  tl.fromTo(el, { scale:1 }, { scale:1.014, duration:hold, ease:'none', immediateRender:false }, at(t0 + .26));
+  // 退场：与下一屏入场同刻交错，两屏同向上移＝推进感，不是溶解
+  if (!last) tl.to(el, { opacity:0, y:-__RISE__, duration:OUT, ease:'power1.in' }, at(s.end - LEAD));
+});
+
+if (SCREENS.length) {
+  const end = SCREENS[SCREENS.length - 1].end;
+  tl.fromTo('#brand', { opacity:0, y:14 },
+    { opacity:1, y:0, duration:.9, ease:'power2.out', immediateRender:false }, at(end - .35));
+}
+
+/* ── 像素层复核：字号写死，所以"装不下"只可能是断句闸门漏了 ──
+   build_oneline.py --check 会开浏览器读这份 report 并据此判成败。
+   offsetWidth 是布局宽（不受 transform 影响），描边画在布局盒之外，须自己把 2×STROKE 加回去。 */
+function report() {
+  const over = [];
+  SCREENS.forEach((s, i) => {
+    const w = els[i].offsetWidth + 2 * STROKE;
+    if (w > SAFE_W) over.push({ i, text:s.text, width:Math.round(w), limit:SAFE_W });
+  });
+  window.ONELINE_REPORT = {
+    bg:"__BG_NAME__", canvas:[__W__, __H__], font_px:__FONT_PX__,
+    screens:SCREENS.length, total, overflow:over,
+  };
+}
+
+/* 字体没就位就开渲＝第一批帧是回退字体。window.SEEK 等字体加载完才挂出去，
+   渲染器的 wait_for_function 自然就成了字体就绪闸门。 */
+document.fonts.load('__FONT_PX__px "ONELINE"', SCREENS.map(s => s.text).join(''))
+  .then(() => document.fonts.ready)
+  .then(() => {
+    report();
+    window.TOTAL = total;
+    window.SEEK = t => { tl.seek(Math.min(t, total - 0.001), false); };
+  });
+</script>
+</body>
+</html>
