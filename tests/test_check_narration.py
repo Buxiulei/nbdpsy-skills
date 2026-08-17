@@ -187,3 +187,89 @@ def test_cli_reads_shots_and_beats(tmp_path):
         r = _run(["--shots", str(p)])
         assert r.returncode == 1, key
         assert json.loads(r.stdout)["over"][0]["label"] == "第1镜"
+
+
+# ────────── 结构自证（§八 骨架三段；写完稿回头粘原句） ──────────
+# 🩸 它治的病：判断类规范不阻塞任何一步，所以不被读（2026-08-17 实证：某线写三稿，
+# 上墙十条一次没读，却把「12 字」实现成了量字脚本——因为 12 字是个可执行的数）。
+# ⇒ 让答案变成**可字符串比对的原句**，判断类规范才获得同样的质地。
+
+_ITEMS = [("P01", "对自己好一点，压根不是放过自己。"),
+          ("P02", "有人把它理解成少干活多休息，结果越歇越空。"),
+          ("P03", "我认识一个人，她每天下班先躺四十分钟，躺完更累。"),
+          ("P04", "后来她改成下班先走二十分钟，反而睡得着了。"),
+          ("P05", "研究里那组人练了一个月才有变化，当场是没感觉的。"),
+          ("P06", "它是一个月的功课，不是当场的开关。")]
+_OK = {"hook": "对自己好一点，压根不是放过自己。",
+       "scene": "她每天下班先躺四十分钟，躺完更累。",
+       "closing": "它是一个月的功课，不是当场的开关。"}
+
+
+def test_自证三句都在稿里且位置对():
+    r = cn.check_intent(_ITEMS, _OK)
+    assert r["ok"] and not r["fail"]
+    assert r["hook"]["at"] == "P01" and r["closing"]["at"] == "P06"
+
+
+def test_自证句子压根不在稿里_报不在():
+    r = cn.check_intent(_ITEMS, {**_OK, "hook": "这句我编的根本没写过。"})
+    assert not r["ok"] and "不在稿里" in r["fail"][0]
+    assert r["hook"]["near"] is None, "真编造的句子⛔ 不该有 near"
+
+
+def test_自证粘歪了标点_与压根没写必须分开报():
+    """⚠️ 两者都报「不在稿里」的话，写手会以为漏写而**转头去补一句**——那就写重了。"""
+    r = cn.check_intent(_ITEMS, {**_OK, "hook": "对自己好一点,压根不是放过自己。"})
+    assert not r["ok"]
+    assert r["hook"]["near"] == "P01" and "字面对不上" in r["fail"][0]
+
+
+def test_自证位置错要报出来():
+    hook_late = cn.check_intent(_ITEMS, {**_OK, "hook": _ITEMS[4][1]})
+    assert not hook_late["ok"] and "不在前 2 项内" in hook_late["fail"][0]
+    close_early = cn.check_intent(_ITEMS, {**_OK, "closing": _ITEMS[1][1]})
+    assert not close_early["ok"] and "不在后 3 项内" in close_early["fail"][0]
+
+
+def test_自证漏声明一项也是不过():
+    r = cn.check_intent(_ITEMS, {k: v for k, v in _OK.items() if k != "scene"})
+    assert not r["ok"] and "scene：未声明" in r["fail"]
+    assert r["scene"] == {"declared": False}
+
+
+def test_项数不足5时不判位置_否则是恒真恒假的假闸门():
+    """前 2 与后 3 在短稿里重叠，判了等于没判——本仓「恒报红的闸门等于没报」同族。"""
+    short = _ITEMS[:3]
+    r = cn.check_intent(short, {"hook": short[0][1], "scene": short[1][1],
+                                "closing": short[0][1]})
+    assert r["judge_position"] is False and r["ok"], "短稿只验存在性"
+    assert "position_ok" not in r["closing"], "⛔ 没判就别留这个键，留了会被读成判过了"
+
+
+def _run_intent(tmp_path, intent=None):
+    """⚠️ 名字必须避开本文件上面已有的 `_run(args)`——在文件末尾追加时同名函数会**静默覆盖**
+    前面的定义，让前面的用例改用后来的实现。这次撞上了（5 个老用例报 TypeError），
+    但那是**运气**：签名若恰好兼容，它们会静默地用错实现跑、照样报绿。
+    ⇒ 往测试文件尾部追加辅助函数前，先 grep 一遍同名。"""
+    md = tmp_path / "n.md"
+    md.write_text("".join(f"## {lb}\n{tx}\n\n" for lb, tx in _ITEMS), encoding="utf-8")
+    cmd = [sys.executable, str(SCRIPT), "--script-file", str(md)]
+    if intent is not None:
+        f = tmp_path / "i.json"
+        f.write_text(json.dumps(intent, ensure_ascii=False), encoding="utf-8")
+        cmd += ["--intent-file", str(f)]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    return p.returncode, json.loads(p.stdout), p.stderr
+
+
+def test_端到端_自证不过要真的拦停(tmp_path):
+    code, out, err = _run_intent(tmp_path, {**_OK, "hook": "这句我编的根本没写过。"})
+    assert code == 1, "声明了就得对得上，自证不过与超字数同级"
+    assert out["intent"]["ok"] is False and out["ok"] is False
+
+
+def test_端到端_没传自证时JSON里不能有intent键(tmp_path):
+    """🔴「没做」与「做了没问题」必须分得开：给 False 会被读成判过了没问题。"""
+    code, out, err = _run_intent(tmp_path)
+    assert code == 0 and "intent" not in out
+    assert "未做结构自证" in err and "不是「查过了没问题」" in err

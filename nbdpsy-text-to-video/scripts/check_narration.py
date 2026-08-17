@@ -40,10 +40,16 @@ python3 check_narration.py --shots <workdir>/shots.json
 python3 check_narration.py --script-file narration.md
 # 单条速查
 python3 check_narration.py --text "这一镜的旁白……" --label P03
+# 附结构自证（§八 骨架三段；三值必须是成稿里的**逐字原句**）
+python3 check_narration.py --script-file narration.md --intent-file intent.json
 ```
 
 stdout = 纯 JSON（可被别的脚本消费），stderr = 人读的明细。
-exit 0 = 硬闸门过（可能带 warn）｜exit 1 = 有镜超字数｜exit 2 = 输入/文件错误。
+exit 0 = 硬闸门过（可能带 warn）｜exit 1 = 有镜超字数**或结构自证不过**｜exit 2 = 输入/文件错误。
+
+⚠️ 不传 `--intent-file` 时，输出 JSON 里**没有 `intent` 键**，stderr 明写「未做结构自证」。
+⛔ 别把它读成「自证通过」——**「没做」与「做了没问题」在本仓必须分得开**（同 `hero_fill_min`
+在竖版恒 `null` 而非 `False` 的口径：`False` 会被读成"判过了没问题"）。
 """
 from __future__ import annotations
 
@@ -159,6 +165,86 @@ def check(items: list[tuple[str, str]], *, limit: int = HARD_LIMIT,
             "total_hanzi": sum(s["hanzi"] for s in shots)}
 
 
+# ---------- 结构自证（§八 骨架三段，写完稿回头粘原句） ----------
+
+INTENT_KEYS = ("hook", "scene", "closing")
+"""§八 结构骨架三段，与 content-reviewer `checklist-video.md` 判-9 同一组判据。
+
+## 为什么是「粘原句」而不是「答一句话」
+
+2026-08-17 实证（博客长文线自陈）：**规格里"能拿来跑通一件事"的部分（参数、命令、
+阈值）会被精准读取；"指导判断"的部分（十条、结构骨架）不会**——因为它不阻塞任何一步，
+不读也能交差。同一天该线写三稿，`narration-spec` 上墙十条**一次没读**，
+却把「12 字」实现成了量字脚本——**因为 12 字是个可执行的数**。
+
+⇒ 让判断类规范获得同样的质地，唯一的办法是**让答案可被机器比对**：
+- ⛔ 「钩子是开头那个反直觉的说法」——描述，无法比对，随手写一句就过了；
+- ⭕ 「钩子＝『对自己好一点，压根不是放过自己』」——**原句，脚本能直接查它在不在稿里、是不是第一句**。
+
+副作用是好的：**要求粘原句会逼写手写完后真的回去找那一句；找不到＝他没写钩子。
+这一步本身就是审查**，比问「你写钩子了吗」强得多（后者会得到真诚的、且是错的回答）。
+
+## 🩸 它的射程：只验「有没有」，⛔ 验不了「好不好」
+
+同日实证：某 81 屏稿钩子/场景/收尾**三样俱全**、逐条都能过，仍被判不合格——
+真因是**句子被切碎**，那是三问照不到的地方。**⛔ 别指望它治"读起来不通顺"，
+也别因为它没治好就去加第四问第五问——那就真变成填表了。**
+"""
+
+
+def _norm(s: str) -> str:
+    """比对前只去空白（含换行）。⛔ 不去标点——要求粘的是原句，标点是原句的一部分；
+    连标点都对不上，说明粘的时候改了字，那正是该报出来的事。"""
+    return re.sub(r"\s+", "", s or "")
+
+
+def _depunct(s: str) -> str:
+    """只用于**失败后的二次定位**：去掉标点再比一次，好把「压根没写」与「写了但粘歪了」
+    分开报。⛔ 不能拿它当主判据——那等于默许凭记忆敲一句近似的就过闸。"""
+    return re.sub(r"[^\w]", "", _norm(s), flags=re.UNICODE)
+
+
+def check_intent(items: list[tuple[str, str]], intent: dict) -> dict:
+    """比对结构自证。items = [(标签, 文本)]，intent = {hook/scene/closing: 原句}。
+
+    位置判据：hook 在前 2 项内、closing 在后 3 项内、scene 不限位置（中段道理的载体，
+    落在哪一镜都合法）。⚠️ **项数 < 5 时不判位置**——前 2 与后 3 会重叠，
+    判了就是恒真/恒假，属于本仓「恒报红的闸门等于没报」的同族。
+    """
+    n = len(items)
+    judge_pos = n >= 5
+    out = {"provided": True, "judge_position": judge_pos, "items_count": n, "fail": []}
+    for key in INTENT_KEYS:
+        raw = (intent.get(key) or "").strip()
+        if not raw:
+            out[key] = {"declared": False}
+            out["fail"].append(f"{key}：未声明")
+            continue
+        needle = _norm(raw)
+        at = next((lb for lb, tx in items if needle and needle in _norm(tx)), None)
+        rec = {"declared": True, "text": raw, "found": at is not None, "at": at}
+        if at is None:
+            # 严格没中就再宽松比一次（去标点），把「压根没写」与「写了但粘歪了」分开报。
+            # ⚠️ 不分开的话报错只有一句「不在稿里」，写手会以为自己漏写，**转头去补一句**——
+            # 那就写重了。报错的精度直接决定人会不会走错路。
+            loose = _depunct(raw)
+            near = next((lb for lb, tx in items if loose and loose in _depunct(tx)), None)
+            rec["near"] = near
+            out["fail"].append(
+                f"{key}：这句不在稿里" if near is None else
+                f"{key}：{near} 里有这句，但字面对不上（多半是标点）——从成稿原样复制")
+        elif judge_pos:
+            idx = [lb for lb, _ in items].index(at)
+            ok = idx < 2 if key == "hook" else (idx >= n - 3 if key == "closing" else True)
+            rec["position_ok"] = ok
+            if not ok:
+                where = "前 2 项内" if key == "hook" else "后 3 项内"
+                out["fail"].append(f"{key}：在 {at}，不在{where}")
+        out[key] = rec
+    out["ok"] = not out["fail"]
+    return out
+
+
 def _sentence_of(text: str, hit: str) -> str:
     """把命中处所在的那一句摘出来——报"哪个词"没用，得让人看见原句才判得动。"""
     i = text.find(hit[0] if hit == "该" else hit)
@@ -222,6 +308,23 @@ def report(res: dict) -> None:
         _err("时间范围）永远最后一个动，动不了就砍整页。")
         _err("  ⛔ 别一上来就删场景——§八「道理让场景说」，场景删光就退回念论点了。")
 
+    it = res.get("intent")
+    if not it:
+        _err("\n⚠️ 本次**未做结构自证**（没传 --intent-file）——钩子/场景/收尾有没有，"
+             "这一轮谁也没查。")
+        _err("  ⛔ 这不是「查过了没问题」。要查：写完稿回头把三句原句粘进一个 json 传进来。")
+    elif it["ok"]:
+        _err(f"\n✅ 结构自证过（§八 骨架三段都在稿里"
+             f"{'、位置也对' if it['judge_position'] else '；项数 <5 未判位置'}）。")
+    else:
+        _err(f"\n⛔ 结构自证不过（§八 骨架三段，{len(it['fail'])} 项）：")
+        for f in it["fail"]:
+            _err(f"  · {f}")
+        _err("  两种可能，**先分清是哪一种再动手**：")
+        _err("  ① 这一项你压根没写 → 去读 narration-spec §八，补上它；")
+        _err("  ② 写了，但粘进来时改了字 → 从成稿里原样复制，⛔ 别凭记忆敲。")
+        _err("  ⚠️ 它只验「有没有」，⛔ 验不了「好不好」——三样俱全也可能是不合格的稿。")
+
 
 def main() -> None:
     p = argparse.ArgumentParser(
@@ -236,6 +339,11 @@ def main() -> None:
     p.add_argument("--no-warn", action="store_true", help="关掉十四律软提醒（不影响硬闸门）")
     p.add_argument("--allow-empty", action="store_true",
                    help="确属「全片无口播」时才加；默认全镜皆空视为**观测失败**而非通过")
+    p.add_argument("--intent-file",
+                   help="结构自证 json：{\"hook\":\"…\",\"scene\":\"…\",\"closing\":\"…\"}，"
+                        "三值都要是**成稿里的逐字原句**（脚本按字符串比对，只去空白不去标点）。"
+                        "⛔ 别写描述——描述无法比对，等于没查。不传则本次不做这项检查，"
+                        "输出里会明写「未自证」（⛔ 不是「自证通过」）")
     a = p.parse_args()
 
     try:
@@ -251,6 +359,20 @@ def main() -> None:
         sys.exit(2)
 
     res = check(items, limit=a.max_hanzi, warn=not a.no_warn, allow_empty=a.allow_empty)
+
+    if a.intent_file:
+        try:
+            intent = json.loads(Path(a.intent_file).read_text(encoding="utf-8"))
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": f"读不到 --intent-file：{e}"},
+                             ensure_ascii=False))
+            _err(f"⛔ 读不到结构自证文件：{e}")
+            sys.exit(2)
+        res["intent"] = check_intent(items, intent)
+        # 声明了就得对得上：自证不过与超字数同级拦停。
+        # ⛔ 不传 --intent-file 则 res 里没有 intent 键——「没做」与「做了没问题」必须分得开。
+        res["ok"] = res["ok"] and res["intent"]["ok"]
+
     report(res)
     print(json.dumps(res, ensure_ascii=False, indent=2))
     sys.exit(0 if res["ok"] else 1)
