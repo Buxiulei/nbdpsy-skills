@@ -31,12 +31,24 @@
 GET {base}/api/op/drafts/{session_id}/jobs/{job_id} 到终态 → done 后逐张下载并转码
 （result.urls 顺序与提交的 prompts 对齐，相对 /uploads/… 公开免鉴权）。
 
+**出图 provider（2026-08-17 加）**：`--provider openai`（**默认**，即上文全部内容）走 gpt-image-2；
+`--provider html` 改走兄弟 skill 的确定性 HTML 渲染（`nbdpsy-xiaohongshu-creator/scripts/render_cover.py`），
+零额度、秒出、改文案不动版式——OpenAI 额度耗尽后的主力路径。
+两者**共用同一个「## 配图」区块结构**（`### 封面` / `### 插图N` + 各一个 ``` 围栏），
+差别只在**围栏里装什么**：openai 装自然语言提示词，html 装**结构化 JSON**。
+⛔ **不做自动推断**：绝不「看着像 JSON 就当 JSON、不像就当提示词」。provider 说了算，
+`--provider html` 下围栏解析不出 JSON 就点名报错并指路（怎么改 / 怎么退回 openai）。
+理由是本仓反复踩过的坑——自动推断一旦猜错，是最难查的一类 bug（图出来了、只是出错了）。
+
 用法：
     python3 gen_gzh_images.py --md post.md --cover-only              # 只出封面（风格闸门第一步）
     python3 gen_gzh_images.py --md post.md --anchor-url <URL>        # 出全部（封面+插图，各自锚定）
     python3 gen_gzh_images.py --md post.md --pages 1-3 --anchor-url <URL>  # 只出指定插图/重试失败张
     python3 gen_gzh_images.py --md post.md --job <id> [--session <id>]     # 复查已入队任务并补下载
         [--images-dir DIR] [--api-base URL] [--no-wait] [--wait-timeout N] [--dry-run]
+    python3 gen_gzh_images.py --md post.md --provider html                # HTML 渲染出全部（同步、零额度）
+    python3 gen_gzh_images.py --md post.md --provider html --cover-only   # 只渲封面
+    （--provider html 是同步渲染，没有任务队列，故 --anchor-url/--job/--no-wait 等异步参数在这条路上会被拒）
 
 稿子里没有「## 配图」区块 → 直接报错并指路 `references/gzh-illustration-spec.md`，
 **绝不替运营现编提示词**（编出来的图没人对过风格档案，出了也是废图）。
@@ -58,7 +70,9 @@ pending/unknown=0（任务已入队仍在跑，hint 教 --job 复查，**绝不�
 """
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -84,6 +98,10 @@ JPEG_QUALITIES = (92, 86, 80, 72, 64)
 
 # 配图区块的两种标题：`### 封面` 与 `### 插图N`（N 从 1 起）。后面可带 · 说明，同小红书 `### PN`。
 _HEADING = re.compile(r"^###\s+(封面|插图\s*(\d+))\b")
+
+# ---- provider 白名单 ----
+# 显式白名单（不是「猜」）：传别的值由 argparse choices 直接顶回并列出合法值。
+PROVIDERS = ("openai", "html")
 
 _NO_PILLOW_HINT = (
     "缺少 Pillow（图像库），无法裁封面/转 JPEG。请先安装：\n"
@@ -157,6 +175,40 @@ def validate_complete(items):
         raise ValueError(f"插图编号有重复：{sorted(nums)}——每张插图编号唯一，改完重试")
 
 
+def guard_openai_fences(selected):
+    """反方向的对称校验：openai 路径上拦住「明显是写给 html provider 的结构化 JSON」。
+
+    为什么必须拦：那段 JSON 会被**原样当成提示词**发给 gpt-image-2，模型照着
+    `{"template":"still-life","icons":[...]}` 这串字符去画——图必然是废图、白烧一次额度，
+    而且回执一切正常（有 URL、有落盘、outcome=done）。这是「静默走错路」的典型形态，
+    比直接报错难查一百倍。
+
+    判据**故意收得很紧**（防过度拦截，那会把正常提示词挡在门外）：
+    必须①整段是合法 JSON ②解析出来是对象 ③带 html 数据的招牌键——三条全中才拦。
+    ⛔ 只是围栏里出现花括号、或提示词里嵌了 JSON 片段，一律放行。
+
+    招牌键取 `template`（封面）与 `layout`（插图）**两个**：html 的封面 JSON 用 template、
+    插图 JSON 用 layout，只认 template 等于这道闸门对插图全员失效——而插图恰恰是量最大的那批。
+    自然语言提示词整段恰好是「带 layout 键的合法 JSON 对象」的概率为零，判据一样紧。"""
+    for item in selected:
+        text = (item.get("prompt") or "").strip()
+        if not text.startswith("{"):        # 提示词几乎不可能以 { 开头，先便宜地挡掉绝大多数
+            continue
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            continue                        # 解析不了 = 就是自然语言提示词，放行
+        if not isinstance(data, dict) or not ({"template", "layout"} & set(data)):
+            continue                        # 不是对象、或没有招牌键 = 判据不满足，放行
+        keys = "/".join(list(data)[:4])
+        raise ValueError(
+            f"`### {item['label']}` 的围栏是 html provider 的结构化字段（含 {keys}），"
+            "不能当自然语言提示词喂给 gpt-image-2——模型会照着这串字符去画，"
+            "出来必然是废图还白烧一次额度。"
+            "请加 `--provider html` 用 HTML 渲染出图，"
+            "或把围栏改回自然语言提示词（见 references/gzh-illustration-spec.md）。")
+
+
 def parse_illus_spec(spec):
     """解析 --pages（插图编号）：'1-3' / '1,3' / '1-2,4' 混合 → 升序去重的编号列表。"""
     nums = set()
@@ -202,9 +254,12 @@ def select_items(items, cover_only, spec):
     return list(items)
 
 
-def build_warnings(selected, cover_only, anchor_url):
+def build_warnings(selected, cover_only, anchor_url, provider="openai"):
+    """provider 默认值 openai 保证既有调用点行为一字不变。
+    html 路径没有「锚点」这个概念（版式由模板定死、天然一致），故不发那条锚点警告——
+    发了等于教运营去做一件在这条路径上不存在的事。"""
     w = []
-    if not cover_only and not anchor_url and any(i["slot"] == "illus" for i in selected):
+    if provider == "openai" and not cover_only and not anchor_url and any(i["slot"] == "illus" for i in selected):
         w.append("未带锚点参考图（--anchor-url），整篇一致性无保障；正常流程应先 --cover-only 出封面"
                  "过风格闸门，运营确认后用返回的 anchor_url 再出插图")
     n_illus = sum(1 for i in selected if i["slot"] == "illus")
@@ -501,6 +556,386 @@ def emit_result(images_out, sid, jid, cover_only, anchor, warnings):
     sys.exit(1 if outcome in ("partial", "failed") else 0)
 
 
+# ---------------- HTML 渲染 provider（--provider html） ----------------
+# 为什么有这条路（2026-08-17 立）：OpenAI 额度耗尽且无法充值，出图要能整体切到确定性 HTML 渲染。
+# 渲染脚本是**兄弟 skill 的地盘**（nbdpsy-xiaohongshu-creator），本文件只负责
+# 「解析配图区块 → 调它 → 核产物 → 出回执」四件事，⛔ 绝不在这里复制一份版式实现（两份必然漂移）。
+
+# 渲染脚本按相对路径推导：<本 skill 目录>/../nbdpsy-xiaohongshu-creator/scripts/render_cover.py
+# （__file__ 在 <skill>/scripts/ 下，故上溯两级到 skills 根再往兄弟目录拐）
+_RENDER_REL = ("nbdpsy-xiaohongshu-creator", "scripts", "render_cover.py")
+# 测试接缝：本仓无法在单测里改兄弟 skill 的文件，留个环境变量以便指向替身脚本验证成功路径。
+_RENDER_ENV = "NBDPSY_RENDER_COVER"
+
+# 渲染脚本必须认得的参数。**存在 ≠ 可用**：它可能还是给小红书竖版封面写的那版（只有
+# --data/--out/--template），不认 --canvas/--template 就会被 argparse 顶回一句 unrecognized arguments。
+# 与其让 agent 对着晦涩的 usage 猜，不如出图前先探一次 --help，点名说清缺哪个参数。
+#
+# ⚠️ 按**本次真正要用的**参数探，不是一律要求全齐：渲染脚本是分批落地的
+# （2026-08-17 skill 线订正：真源已有 --canvas 与 --template，安装副本尚未装上）。一律要求全齐会把
+# 「只出封面」这种今天就能跑的活也一并拦死——闸门该拦的是缺的那件事，不是顺带拦住能干的事。
+_RENDER_FLAGS_ALWAYS = ("--data", "--out", "--canvas")
+# 2026-08-17 skill 线定案：CLI 一律用 --template，⛔ 不新增 --layout——
+# 「同一件事有两个名字」比名字不贴切更糟。⚠️ 注意区分层级：
+# 围栏 JSON 里插图仍用 `layout` 键（数据字段），传给渲染脚本的 flag 统一是 --template。
+_RENDER_FLAG_FOR_SLOT = {"cover": "--template", "illus": "--template"}
+
+# 正文插图的三种版式。三种讲的是三件不同的事，⛔ 不替运营挑默认值（挑错了整张图白出）。
+_HTML_LAYOUTS = ("compare", "steps", "define")
+# 画布比例：封面用微信官方的 2.35:1。html 路径**直接按此比例渲染**，
+# 不像 openai 路径要先出横版再居中裁——所以也就没有 cover-raw.jpg。
+CANVAS_COVER = "2.35:1"
+CANVAS_ILLUS = "16:9"
+# 2026-08-17：html 路径的插图**传真实比例 `3:2`**，⛔ 不沿用 `16:9` 那个错名。
+# 分界线在「这个名字是谁的契约」：`16:9` 是出图 API 那边的 aspect_ratio 参数名，我们改不了，
+# 只能在 openai 分支里照它的规矩喊；而 render_cover.py 是我们自己的脚本，没有任何理由
+# 继承一个从第一天起就名不副实的名字。**错名的传染范围到此为止。**
+# 否则会变成「传 16:9 / 出 3:2 / 闸门按 3:2 判」三者各说各话——三个数都对得上产物，
+# 却没有一处能自证，下一个人读到哪一处都会怀疑是别处错了。
+CANVAS_ILLUS_HTML = "3:2"
+
+# canvas 名 → 产物**实际**期望宽高比。⚠️ 这张表是显式映射，⛔ 不许按 canvas 名字面去算比例。
+# 因为 `16:9` 是传给出图 API 的 `aspect_ratio` **参数名**，不是到手画布的真实比例：
+# gpt-image-2 横版标称 1536×1024 本身就是 **3:2**（1536/1024=1.5），去水印等比缩小到
+# 1313×876 仍是 3:2。规格文档那行「16:9」与产物从第一天起就不一致，只是此前没有闸门去量它。
+# 2026-08-17 实测在产 42 张（6 cover + 6 cover-raw + 30 illus）：
+#   cover.jpg      1313×559 → 2.3488 ✅ 合 2.35
+#   illus/raw      1313×876 → 1.4989 ✅ 合 3:2，**零例外**
+# 照字面 16:9（1.7778）卡，会把每一张插图都判红——而且是最难自证的那种恒报红闸门：
+# 文档白纸黑字写着 16:9，查的人会先怀疑图错了，不会怀疑闸门。
+CANVAS_EXPECTED_RATIO = {
+    CANVAS_COVER: 2.35,        # 微信封面官方比例
+    CANVAS_ILLUS: 3 / 2,       # 名字叫 16:9，真身是 3:2 —— 见上（openai 路径）
+    CANVAS_ILLUS_HTML: 3 / 2,  # 同一个真身，html 路径用真名。两行同值不是重复：
+                               # 左边是两条链路各自的「叫法」，右边是同一个客观事实
+}
+# 产物核验：比例容差。渲染落到整数像素，除不尽会有零点几像素的误差，故不苛求精确相等。
+# 实测两类的偏差都在 0.0012 以内，±0.01 够宽也够紧。
+RATIO_TOLERANCE = 0.01
+# 四角判白边：读四角 RGB 求和，>740（≈ 每通道 247）即疑似白边。
+# 这是实测坑——模板只给 body 设背景色、没给 html 设，截图边缘就会露出浏览器默认白底。
+# 渲染「成功」了但图是废的，只有像素能看出来（沿用本仓纪律：渲染成功 ≠ 渲染对了）。
+CORNER_WHITE_SUM = 740
+# 单张渲染超时：起 chromium + 等字体落位 + 截图，正常几秒；给足余量但不无限等。
+RENDER_TIMEOUT = 180
+
+
+def render_script_path():
+    """渲染脚本的预期路径（不保证存在，存在性由 require_render_script 判）。"""
+    override = os.environ.get(_RENDER_ENV)
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent.parent.parent.joinpath(*_RENDER_REL)
+
+
+def needed_render_flags(selected):
+    """本次真正会传给渲染脚本的参数集合（封面与插图都传 --template（值不同））。"""
+    flags = set(_RENDER_FLAGS_ALWAYS)
+    for item in selected:
+        flags.add(_RENDER_FLAG_FOR_SLOT[item["slot"]])
+    return sorted(flags)
+
+
+def require_render_script(needed):
+    """出图前确认渲染脚本**存在且认得本次要传的参数**，两道都不过就明确失败。
+    ⛔ 绝不因为「让流程跑通」而在这里降级或假装成功——缺依赖就是缺依赖。"""
+    script = render_script_path()
+    if not script.is_file():
+        raise ValueError(
+            f"HTML 渲染脚本尚未就绪（预期路径 {script}），skill 线正在实现；"
+            "当前可用 --provider openai（需额度）。"
+            f"若脚本装在别处，可用环境变量 {_RENDER_ENV} 指过去。")
+    try:
+        proc = subprocess.run([sys.executable, str(script), "--help"],
+                              capture_output=True, text=True, timeout=60)
+    except Exception as e:  # noqa: BLE001 — 连 --help 都跑不起来，说明脚本本身坏了
+        raise ValueError(
+            f"HTML 渲染脚本跑不起来（{script}）：{e}。"
+            "当前可用 --provider openai（需额度）。") from e
+    helptext = (proc.stdout or "") + (proc.stderr or "")
+    missing = [f for f in needed if f not in helptext]
+    if missing:
+        # 点名缺的那个参数**是给谁用的**，运营才知道该等 skill 线还是换 provider。
+        # ⚠️ 2026-08-17 随 flag 统一到 --template，这里**删掉了原来的 --cover-only 绕行建议**：
+        # 从前封面用 --template、插图用 --layout，缺 --layout 时封面确实照样能出，那句建议成立；
+        # 现在两者共用 --template，缺了它封面和插图一起做不了，再劝人加 --cover-only 就是骗人
+        # ——运营照做仍会失败，还会以为是自己用错了参数。改名要连着**依赖旧名的判断**一起改。
+        who = "、".join(f"{f}（{'版式' if f == '--template' else '基础参数'}）"
+                        for f in missing)
+        raise ValueError(
+            f"HTML 渲染脚本已存在（{script}），但**不认识**本次要传的参数：{who}。"
+            "说明它还在分批落地中，与公众号横版契约尚未对齐。"
+            "这不是本脚本能兜的事，请找 skill 线补齐；"
+            "当前也可用 --provider openai（需额度）。")
+    return script
+
+
+def expected_ratio(canvas):
+    """canvas 名 → 期望宽高比，**查表**不算数（见 CANVAS_EXPECTED_RATIO 的注释：
+    canvas 名是 API 参数名，字面算出来的比例与真实产物对不上）。
+    表里没有的名字直接报错，⛔ 不回落到「按名字算」——那正是这道闸门要防的那类静默错。"""
+    if canvas not in CANVAS_EXPECTED_RATIO:
+        raise ValueError(
+            f"canvas {canvas!r} 不在期望比例映射表里（已知：{', '.join(CANVAS_EXPECTED_RATIO)}）。"
+            "新增画布必须同时在 CANVAS_EXPECTED_RATIO 里登记**实测**比例，"
+            "⛔ 不要按名字字面推算——16:9 这个名字的真身就是 3:2。")
+    return CANVAS_EXPECTED_RATIO[canvas]
+
+
+def _json_fence_hint(label):
+    return (
+        f"`### {label}` 的围栏是自然语言提示词，不能用 --provider html 出图；"
+        "请改成结构化 JSON（封面示例："
+        '{"template":"still-life","icons":["headphones","coffee","sprout"],'
+        '"accent":"cord","baseline":true,"bg":"warm-paper"}；'
+        '插图示例：{"layout":"compare", …}），'
+        "或去掉 --provider html 用默认的 openai provider（需额度）。")
+
+
+def parse_html_spec(item):
+    """把一张配图的围栏解析成渲染数据 dict，并取出该走哪个版式参数。
+    返回 (data, flag, value)：封面 → ('--template', 'still-life')；插图 → ('--template', 版式名)。
+
+    ⛔ 全程不做推断：解析不了就报错指路，缺 template/layout 就点名，绝不替运营挑一个默认版式。"""
+    label = item["label"]
+    text = (item.get("prompt") or "").strip()
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ValueError(f"{_json_fence_hint(label)}（JSON 解析报错：{e}）") from e
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"`### {label}` 的围栏解析出来是 {type(data).__name__}，不是 JSON 对象。"
+            f"{_json_fence_hint(label)}")
+    if item["slot"] == "cover":
+        tpl = str(data.get("template") or "").strip()
+        if not tpl:
+            raise ValueError(
+                f"`### {label}` 的 JSON 缺 `template` 字段（如 \"still-life\"）——"
+                "版式名要显式写。⛔ 不替你挑默认版式：挑错了整张封面白出。")
+        return data, "--template", tpl
+    layout = str(data.get("layout") or "").strip()
+    if not layout:
+        raise ValueError(
+            f"`### {label}` 的 JSON 缺 `layout` 字段——合法值：{' / '.join(_HTML_LAYOUTS)}。"
+            "三种版式讲的是三件不同的事（对比 / 步骤 / 定义），⛔ 不替你猜。")
+    if layout not in _HTML_LAYOUTS:
+        raise ValueError(
+            f"`### {label}` 的 `layout` 是 {layout!r}，不在合法值里：{' / '.join(_HTML_LAYOUTS)}")
+    # ⚠️ 数据字段叫 `layout`，但传给渲染脚本的 flag 是 `--template`（2026-08-17 skill 线定案）：
+    # 渲染脚本那边「选哪套版式」只有一个入口，⛔ 不给同一件事两个 flag 名。
+    # 两层名字不同是有意的：JSON 里 `layout` 描述的是插图的版式语义（对比/步骤/定义），
+    # CLI 的 `--template` 指的是"用哪个模板文件"，封面与插图共用这个入口。
+    return data, "--template", layout
+
+
+def html_data_path(images_dir, item):
+    """数据文件与产物同名同目录（cover.jpg ↔ cover.json）——契约要求的「同名 .json 留痕」就是它，
+    出了问题能直接看到当时喂进去的是什么，不用回头猜。
+    ⚠️ 渲染脚本按**数据文件所在目录**解析 JSON 里的相对资源路径（头像等），
+    所以它必须落在 images_dir，不能图省事塞进 /tmp。"""
+    return images_dir / (Path(image_filename(item)).stem + ".json")
+
+
+def render_one(script, data_path, out_path, canvas, flag, value):
+    """调一次 render_cover.py。返回 (ok, payload, err)。
+    payload = 渲染脚本 stdout 的 JSON——它自己量出来的坏消息（字体没落位、溢出等）都在 warnings 里，
+    必须原样往上带，⛔ 不能吞（吞了就成了「恒绿的假闸门」）。"""
+    cmd = [sys.executable, str(script), "--data", str(data_path),
+           "--canvas", canvas, flag, value, "--out", str(out_path)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, {}, f"渲染超时（>{RENDER_TIMEOUT}s），命令：{' '.join(cmd)}"
+    except Exception as e:  # noqa: BLE001
+        return False, {}, f"渲染脚本调用失败：{e}"
+    payload = {}
+    lines = (proc.stdout or "").strip().splitlines()
+    if lines:
+        try:  # 约定 stdout 最后一行是结果 JSON；不是也不炸，退回读 stderr
+            payload = json.loads(lines[-1])
+        except (json.JSONDecodeError, ValueError):
+            payload = {}
+    if proc.returncode != 0 or payload.get("ok") is False:
+        err = (payload.get("error") or (proc.stderr or "").strip()[:300]
+               or f"渲染脚本退出码 {proc.returncode}，且没给出错误信息")
+        return False, payload, err
+    return True, payload, None
+
+
+def verify_artifact(path, canvas, label):
+    """产物核验：**渲染成功 ≠ 渲染对了**。返回 (fatal, warnings)。
+    ⛔ 不静默放行（本仓纪律：能量出来的坏消息一律显式报）。
+
+    fatal 与 warnings 的分界＝**这张图还能不能用**：
+    - fatal（文件不存在 / 0 字节 / 打不开）＝压根没拿到图，按「这张失败」记进 rec.error 走 partial，
+      与 openai 路径下载失败的处置同构。⛔ 绝不能让 0 字节文件顶着 outcome=done + path 交出去——
+      下游会拿它去传微信（本仓纪律：绿必须是被验证过的绿）。
+    - warnings（比例偏 / 四角白边 / 超 1MB）＝图拿到了但可能不对，交人判断，不替人否决。"""
+    from PIL import Image
+    w = []
+    if not path.is_file():
+        return f"渲染脚本报成功，但产物文件根本不存在（{path}）", w
+    size = path.stat().st_size
+    if size == 0:
+        return f"产物是 0 字节空文件（{path}）", w
+    try:
+        im = Image.open(path).convert("RGB")
+    except Exception as e:  # noqa: BLE001
+        return f"产物打不开、不是有效图片（{path}）：{e}", w
+    want = expected_ratio(canvas)
+    got = im.width / im.height
+    if abs(got - want) > RATIO_TOLERANCE:
+        w.append(f"🔴 {label}：比例不符——canvas {canvas} 期望 {want:.4f}，"
+                 f"实际 {im.width}×{im.height}（={got:.4f}），超出容差 ±{RATIO_TOLERANCE}。"
+                 "微信按固定比例展示，比例错了会被切掉一截")
+    corners = {"左上": (0, 0), "右上": (im.width - 1, 0),
+               "左下": (0, im.height - 1), "右下": (im.width - 1, im.height - 1)}
+    white = [name for name, xy in corners.items() if sum(im.getpixel(xy)) > CORNER_WHITE_SUM]
+    if white:
+        w.append(f"🔴 {label}：{'、'.join(white)} 角接近纯白（RGB 和 >{CORNER_WHITE_SUM}），疑似留白边。"
+                 "已知根因＝模板只给 body 设了背景色、没给 html 设，截图边缘露出浏览器默认白底。"
+                 "这是模板侧的事，反馈给 skill 线改模板，⛔ 别在这里裁掉了事")
+    if size > MAX_IMAGE_BYTES:
+        w.append(f"⚠️ {label}：{size // 1024}KB 超过微信正文图上限 1MB，放进正文会被拒收")
+    return None, w
+
+
+def summarize_outcome_html(images_out):
+    """html 是**同步**渲染，没有 url 这一层，故只认 path：全有=done、部分=partial、全无=failed。
+    （openai 那边先拿 URL 再下载，判据是两段式，不能共用。）"""
+    ok = [p for p in images_out if p["path"]]
+    if not ok:
+        return "failed"
+    return "done" if len(ok) == len(images_out) else "partial"
+
+
+def html_retry_hint(failed, cover_only):
+    if cover_only:
+        return "封面没渲染出来，改完 JSON 重跑 --cover-only --provider html"
+    nums = [f["label"][2:] for f in failed if f["slot"] == "illus"]
+    if not nums:
+        return "封面没渲染出来，重跑 --cover-only --provider html 单独补出（插图已好的不必重出）"
+    return (f"部分图没渲染出来，用 --pages {','.join(nums)} --provider html 只重出失败的那几张"
+            "（HTML 渲染零额度，重跑不心疼）")
+
+
+def run_html(args, md, images_dir):
+    """--provider html 主流程：解析配图区块（围栏=JSON）→ 逐张调 render_cover.py → 核产物 → 出回执。
+
+    与 openai 路径最大的结构差异是**同步**：没有 job/session，也就没有 pending/unknown 这两种终态，
+    因此不写状态文件、也没有 --job 复查。回执字段保持一致（多余的字段给 null），消费方不必分支。"""
+    # 这些开关全是 openai 异步链路的概念，在同步渲染里没有对应物。
+    # 静默忽略是本仓踩过的坑（参数静默回落），故一律显式报错。
+    for flag, val in (("--anchor-url", args.anchor_url), ("--job", args.job),
+                      ("--session", args.session), ("--no-wait", args.no_wait or None),
+                      ("--wait-timeout", args.wait_timeout)):
+        if val:
+            sys.exit(f"{flag} 是 openai 异步出图链路的参数，--provider html 是同步渲染、没有这个概念"
+                     "（没有任务队列，也就不存在锚点/复查/等待）。去掉它重试。")
+    if not md:
+        sys.exit("--provider html 出图需要 --md")
+    if images_dir is None:
+        sys.exit("无法确定落盘目录，请给 --md 或 --images-dir")
+
+    items = extract_items(md.read_text(encoding="utf-8"))
+    validate_complete(items)
+    selected = select_items(items, args.cover_only, args.pages)
+    warnings = build_warnings(selected, args.cover_only, args.anchor_url, provider="html")
+
+    # **先把所有围栏解析完再渲染任何一张**：解析失败是配置问题，半途报错会留下一半图，
+    # 运营还得自己分辨哪几张是新的（fail fast）。
+    specs = []
+    for item in selected:
+        data, flag, value = parse_html_spec(item)
+        canvas = CANVAS_COVER if item["slot"] == "cover" else CANVAS_ILLUS_HTML
+        specs.append((item, data, flag, value, canvas))
+
+    if args.dry_run:
+        run_dry_html(md, images_dir, specs, warnings)
+        return
+
+    _require_pillow()          # 产物核验要读像素，缺 Pillow 先说，别渲染完才发现核不了
+    script = require_render_script(needed_render_flags(selected))
+    for w in warnings:
+        print(f"⚠ {w}", file=sys.stderr)
+    print(f"HTML 渲染：{md.name} {len(specs)} 张"
+          f"（{', '.join(i['label'] for i, *_ in specs)}）→ {script.name} …", file=sys.stderr)
+
+    images_dir.mkdir(parents=True, exist_ok=True)
+    images_out = []
+    for item, data, flag, value, canvas in specs:
+        label = item["label"]
+        # raw_path 固定 None：html 直接按目标比例渲染，不存在 openai 那边「未裁原图」的概念
+        rec = {"slot": item["slot"], "label": label,
+               "url": None, "path": None, "raw_path": None, "error": None}
+        data_path = html_data_path(images_dir, item)
+        data_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_path = images_dir / image_filename(item)
+        ok, payload, err = render_one(script, data_path, out_path, canvas, flag, value)
+        if not ok:
+            rec["error"] = err
+            print(f"  ⚠ {label} 渲染失败：{err}", file=sys.stderr)
+        else:
+            # 渲染脚本自己量出来的坏消息原样上带（字体没落位 / 溢出 / 裁切带等）
+            for w in payload.get("warnings") or []:
+                warnings.append(f"{label}：{w}")
+            fatal, verify_warns = verify_artifact(out_path, canvas, label)
+            warnings.extend(verify_warns)
+            if fatal:  # 没拿到能用的图 = 这张就是失败，⛔ 不留 path 冒充成功
+                rec["error"] = fatal
+                print(f"  ⚠ {label} 产物核验不过：{fatal}", file=sys.stderr)
+            else:
+                rec["path"] = str(out_path)
+                print(f"  ✓ {label} → {out_path.name}（{canvas}）", file=sys.stderr)
+        images_out.append(rec)
+
+    outcome = summarize_outcome_html(images_out)
+    out = {"outcome": outcome, "session_id": None, "job_id": None,
+           "images": images_out, "anchor_url": None,
+           "error": None, "hint": None, "warnings": warnings,
+           "provider": "html"}
+    if outcome != "done":
+        out["hint"] = html_retry_hint([r for r in images_out if not r["path"]], args.cover_only)
+        if outcome == "failed":
+            out["error"] = "全部图未渲染出来（见各条 error）"
+    print(json.dumps(out, ensure_ascii=False))
+    sys.exit(1 if outcome in ("partial", "failed") else 0)
+
+
+def run_dry_html(md, images_dir, specs, warnings):
+    """html 的 dry-run：打印将要执行的渲染命令与解析出的字段，不起浏览器、不写文件。
+    顺带把渲染脚本的就绪情况报出来——这是这条路最常见的卡点。"""
+    needed = needed_render_flags([i for i, *_ in specs])
+    try:
+        script = str(require_render_script(needed))
+        ready, ready_msg = True, None
+    except ValueError as e:
+        script, ready, ready_msg = str(render_script_path()), False, str(e)
+    cmds = []
+    for item, data, flag, value, canvas in specs:
+        out_path = images_dir / image_filename(item)
+        cmds.append({
+            "label": item["label"],
+            "canvas": canvas,
+            "data_file": str(html_data_path(images_dir, item)),
+            "data_keys": sorted(data),
+            "cmd": f"python3 {script} --data {html_data_path(images_dir, item)} "
+                   f"--canvas {canvas} {flag} {value} --out {out_path}",
+        })
+    print(json.dumps({
+        "outcome": "dry_run",
+        "provider": "html",
+        "md": str(md),
+        "render_script": script,
+        "render_script_ready": ready,
+        "render_script_hint": ready_msg,
+        "images_dir": str(images_dir),
+        "renders": cmds,
+        "warnings": warnings,
+    }, ensure_ascii=False, indent=2))
+
+
 # ---------------- 状态文件 / dry-run / main ----------------
 
 def resolve_images_dir(md, images_dir):
@@ -545,6 +980,7 @@ def run_dry(args, md, images_dir, api_base):
     try:
         validate_complete(items)
         selected = select_items(items, args.cover_only, args.pages)
+        guard_openai_fences(selected)  # 拦「写给 html 的结构化 JSON 被当提示词发出去」
         warnings = build_warnings(selected, args.cover_only, args.anchor_url)
     except ValueError as e:
         print(json.dumps({"outcome": "failed", "error": str(e),
@@ -576,6 +1012,10 @@ def main():
     ap = argparse.ArgumentParser(
         description="用后端 gpt-image 锚点法给公众号稿子出横版配图（封面 2.35:1 + 正文插图 16:9，异步）")
     ap.add_argument("--md", type=Path, help="稿子文件（长文/公众号分发稿，须含「## 配图」区块）")
+    # 显式白名单：传别的值 argparse 直接顶回并列出合法值。默认 openai = 现有行为一字不变。
+    ap.add_argument("--provider", choices=PROVIDERS, default="openai",
+                    help="出图方式：openai=gpt-image-2 锚点法（默认，需额度）；"
+                         "html=确定性 HTML 渲染（零额度，围栏内容须为结构化 JSON）")
     ap.add_argument("--cover-only", action="store_true", help="只出封面（风格闸门第一步）")
     ap.add_argument("--anchor-url", help="锚点参考图 URL（封面确认后的那张），插图据此锚定保持一致")
     ap.add_argument("--pages", help="只出指定插图：'1-3' / '1,3' / '1-2,4' 混合（不含封面）")
@@ -590,6 +1030,21 @@ def main():
 
     md = args.md
     images_dir = resolve_images_dir(md, args.images_dir)
+
+    # ---- provider 分流：html 走确定性渲染（同步、零额度、不碰凭据也不碰网络）----
+    # 放在这里是为了让下面 openai 那一整条路**一行都不用改**（默认行为零变化的最省事保证）。
+    if args.provider == "html":
+        try:
+            run_html(args, md, images_dir)
+        except ValueError as e:  # 解析/依赖类失败：没入队、没花钱，判 failed 是安全的
+            print(f"  → 失败: {e}", file=sys.stderr)
+            print(json.dumps({"outcome": "failed", "session_id": None, "job_id": None,
+                              "images": [], "anchor_url": None, "error": str(e),
+                              "hint": None, "warnings": [], "provider": "html"},
+                             ensure_ascii=False))
+            sys.exit(1)
+        return
+
     api_base = (args.api_base or nbdpsy_common.video_api_base()).rstrip("/")
 
     # dry-run 离线，不需要凭据
@@ -638,6 +1093,7 @@ def main():
         items = extract_items(md.read_text(encoding="utf-8"))
         validate_complete(items)
         selected = select_items(items, args.cover_only, args.pages)
+        guard_openai_fences(selected)  # 拦「写给 html 的结构化 JSON 被当提示词发出去」（白烧额度且回执正常）
         cover_only = args.cover_only
         anchor = args.anchor_url
         warnings = build_warnings(selected, cover_only, anchor)
