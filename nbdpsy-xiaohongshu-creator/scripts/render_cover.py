@@ -64,8 +64,16 @@ still-life 还多两道闸，都在读者真正看到的 220px 信息流尺寸�
 主体墨迹占比与外接框比例同样在这个尺寸上量，但**只报不拦**（stdout 的 feed_thumb.ink）。
 
 退出码（三态，⛔ 别只判 0/非 0 就完事）:
-    0  成功，且校验全过
-    1  **图产出来了，但不合格**——比例超差、四角有白边、图标缺失、画面里有文字、
+    🔴 **验收判 `gates_ok`，⛔ 别判退出码**（2026-08-17 订正：此处原写「0 = 成功且校验全过」，
+       那句话对 jinjin 是**假的**——jinjin 这条路退出码**恒 0**，闸门红着也是 0）。
+       两条路故意不一样，因为它们的调用方不一样：
+         · still-life（公众号）——红灯 → 退出码 1，脚本调用方直接被拦住；
+         · jinjin（小红书）——**恒 0**，红字交人判断。小红书线现有用法都是「照常出图、
+           红字交排版 agent 自解」，把 hero 偏长这类内容判断变成硬失败会打断它们。
+       ⇒ 两条路**都**在 stdout 与凭证里给 `gates_ok`（bool）。⛔ 只判退出码的调用方
+       会把 jinjin 的红灯当成功收走。要不要把 jinjin 也改成退 1，是小红书线的口径决定。
+    0  跑完了。**still-life**：校验全过；**jinjin**：出图了，合格与否看 `gates_ok`
+    1  **图产出来了，但不合格**（只有 still-life 会走到这里）——比例超差、四角有白边、图标缺失、画面里有文字、
        赭红在缩略图上没活下来、cord 挂在不带线的物件上等，
        成图与凭证都在盘上，可以直接看图定位问题
     2  参数/环境错误，**压根没出图**——模板不存在、JSON 解析失败、没装 playwright、
@@ -103,14 +111,62 @@ FIT_KEYS = {
     # 退出码会撞上「1＝出图了但不合格」，把版本不同步伪装成质量不合格。
     'jinjin': ('hero_fs', 'hero_lines', 'sub_fs', 'step_fs', 'name_fs', 'role_fs',
                'overflow_px', 'safe_3x4_ok', 'crop_3x4',
-               'hero_glyph_pct_band', 'hero_glyph_band_canvas',
-               'hero_fill_pct', 'hero_fill_min', 'hero_fill_low', 'hero_at_max'),
+               'hero_glyph_pct_band', 'hero_ink_ratio', 'hero_max',
+               'hero_fill_pct', 'hero_fill_min', 'hero_fill_low', 'hero_at_max',
+               'steps_count'),
     'still-life': ('icons', 'gaps', 'group_ink_w', 'margin_left', 'margin_right', 'margin_top',
                    'baseline_y', 'baseline_drawn', 'baseline_align_dev_px', 'desk_w',
                    'desk_overhang_px', 'accent', 'accent_form', 'accent_spots', 'accent_options',
                    'accent_unknown', 'bg_unknown', 'bg_known', 'cord', 'overlap', 'min_gap',
                    'out_of_canvas', 'margin_asym_px', 'text_in_canvas'),
 }
+
+
+# ── 闸门 A（publish_note.py --check-cover）要的凭据 ──────────────────
+# 为什么落在这里：闸门只认「有提示词」那套（prompt_excerpt + 色值 + 具名版式），而确定性渲染
+# 压根没有提示词。发布端已按来源分岔（COVER_SOURCES 增了 render_cover 档），⛔ 但缺了这几个
+# 键就仍然过不去——于是「如实做发不出去、能发出去的唯一做法正是伪造凭证」。这几个键补的是那个死结。
+#
+# 🔴 三条红线，⛔ 一条都不许破：
+#   ① `layout` 只从**模板 kind** 映射来，⛔ 绝不从 cover.json 抄调用方自己声明的版式——
+#      那只是换个地方说谎。⚠️ `still-life` **故意不在表里**：它是公众号横版零文字封面，
+#      本就不在小红书的版式白名单内 → 不写 layout → 闸门红，**这是正确结果**。
+#      将来 jinjin 长出第二种版式时，必须由模板/数据交回真实版式，⛔ 不许继续写死。
+#   ② `palette` 记**实际渲出来的**色值（截图前从 :root 上读已解析的 CSS 变量），⛔ 不从数据里抄。
+#   ③ `style_profile` 复用 gen_images 那一份解析，⛔ 不另写——两处口径一漂，闸门就形同虚设。
+LAYOUT_BY_KIND = {'jinjin': '通栏大字压顶'}
+# 从 :root 上读这几个已解析的 CSS 变量当调色板。⛔ 只收 `#RRGGBB`：
+#   · `--paper` 是 `color-mix(...)`，getComputedStyle **不会**把它解析成 hex；
+#   · `getComputedStyle(body).backgroundColor` 在当前 Chromium 返回 `color(srgb 0.9458 …)`
+#     而**不是** `rgb()`——正则找 `rgb(` 会静默拿到空集，又一个「量不出来却报绿」。
+# 所以判据只认声明里本来就是 hex 的那几个，拿不到就是拿不到（闸门会红），⛔ 不猜。
+PALETTE_VARS = ('--bg', '--paper', '--accent', '--ink', '--muted', '--sage', '--haze')
+
+
+def read_palette(page) -> list:
+    """从渲染好的页面上读**实际生效**的调色板（⛔ 不是数据里许诺的）。"""
+    vals = page.evaluate(
+        "(names) => {const cs = getComputedStyle(document.documentElement);"
+        " return names.map(n => cs.getPropertyValue(n).trim());}", list(PALETTE_VARS))
+    out = []
+    for v in vals:
+        m = re.fullmatch(r'#([0-9A-Fa-f]{6})', str(v).strip())
+        if m and f'#{m.group(1).upper()}' not in out:
+            out.append(f'#{m.group(1).upper()}')
+    return out
+
+
+def resolve_style_profile(data_path: pathlib.Path, override):
+    """本批风格档案 —— ⛔ 复用 gen_images 那一份，别另写一份解析。
+
+    口径必须与 gen_images 一模一样：`--style-profile "图文 v3"` 优先，否则从 --data 所在目录
+    → 上一级找 `00-overview.md` 的留痕行。都拿不到就**不写**这个键 → 闸门红（fail-closed，
+    与 gen_images 同）。⚠️ gen_images 拿不到时会 import 失败/找不到函数——那属于安装不完整，
+    ⛔ 不静默当成「没有档案」放行：两者后果完全不同（一个是没配置，一个是装坏了）。
+    """
+    sys.path.insert(0, str(HERE))
+    import gen_images                                   # noqa: E402  同目录脚本，⛔ 别复制它的解析
+    return gen_images.resolve_style_profile(str(data_path), override)
 
 
 def die(msg, **extra):
@@ -138,7 +194,7 @@ EXEMPT_WHY = ('横版（w > h）用作视频封面：四层版式的第 ④ 层�
 def check_fields(data: dict, landscape: bool = False):
     """缺字段以前是静默留白（首版实测缺头像空出 19.3% 版面，零警告）——一律报红。
 
-    返回 (红字列表, 被豁免的判据名列表)。
+    返回 (告警列表, 被豁免的判据名列表)。告警列表里 🔴 开头的才算红灯，⚠️ 开头的只是提示。
 
     ⚠️ **横版豁免头像层**：这套四层版式（hero/递进/头像/落款）本来就是为**竖版**定的，
     那条红字自己说的是「右下角空一大片」——那是竖版布局的说法。横版（视频封面）下第 ④ 层
@@ -155,6 +211,22 @@ def check_fields(data: dict, landscape: bool = False):
                    f'长句请降到 subtitle 副题层（方案 1），别硬塞进 hero')
     if landscape:
         exempted = ['avatar', 'identity']
+        # 🔴 豁免「没传」与吞掉「传了的」是**两件事**，⛔ 不许混成一件（2026-08-17 干跑抓到）：
+        # 横版会把第 ④ 层整层收起，所以数据里**真的传了** avatar/identity 时，那份数据
+        # 静默消失在成图里，而 gates_ok 照样 true。条件头像闸门规定「署名长文拆解的封面
+        # 没有真人头像 = 不过审」——头像传了、图上没有、闸门是绿的，正是那道闸门的反面。
+        # ⛔ 不报红：横版收起第 ④ 层是**有意的版式行为**，不是缺陷；但必须说出来。
+        got = [k for k in ('avatar', 'identity') if str(
+            (data.get(k) if k == 'avatar' else (data.get(k) or {}).get('name')) or '').strip()]
+        if got:
+            # ⛔ 挂进同一个列表、⛔ 不改返回形状：调用方按 `w.startswith('🔴')` 过红灯，
+            # ⚠️ 开头的这条自然只进 warnings 不进 red。改成三元组会重演
+            # 「实参个数没变、变的是返回形状」那次全线渲不出图的事故。
+            red.append(f'⚠️ 数据里传了 {got}，但横版会把第 ④ 层（头像 + 姓名/身份行）**整层收起**，'
+                       f'这些字段**不会出现在成图里**。⛔ 若这是「署名长文拆解」那类必须带真人头像的'
+                       f'封面，横版版式不适用——改出竖版，或换一个把头像画进版面的版式。'
+                       f'（⛔ 别把这条当红灯：横版收起第 ④ 层是有意的，报出来只是为了'
+                       f'让「传了却没渲」不再是静默的）')
     else:
         if not str(data.get('avatar') or '').strip():
             red.append('🔴 缺 avatar：头像是这个版式的第 ④ 层，缺了右下角空一大片（首版实测 19.3% 版面）')
@@ -634,6 +706,10 @@ def main():
                     help='顺带产的缩略图**文件**宽度（0=不产），默认 220。'
                          '⚠️ 缩略图存活闸不吃这个值——它恒在 220px 上判，改这里关不掉它')
     ap.add_argument('--html-only', action='store_true', help='只产 HTML 不截图（没装 playwright 时降级）')
+    ap.add_argument('--style-profile', metavar='"套名 vN"',
+                    help='本批风格档案，写进凭证的 style_profile（闸门 A 要）。'
+                         '不给就从 --data 同级 → 上一级的 00-overview.md 留痕行读；'
+                         '⚠️ 都拿不到就**不写**这个键，发布时闸门 A 会拒（与 gen_images 同口径）')
     args = ap.parse_args()
 
     dpath = pathlib.Path(args.data).resolve()
@@ -759,6 +835,9 @@ def main():
                        f'把模板更新到与本脚本同一版（多半是安装副本还是旧的）',
                        template=str(tpl_path))
         landed = platform_fonts(page, KIND_FONT_SEL[kind])
+        # ⚠️ 必须在关浏览器**之前**读：调色板要的是**实际渲出来**的色值，
+        # 页面一关就只剩数据里许诺的那份了（那正是闸门要防的东西）。
+        palette = read_palette(page)
         page.wait_for_timeout(60)
         page.screenshot(path=str(out_png), **shot)
         browser.close()
@@ -785,9 +864,22 @@ def main():
     # —— 产出凭证：出问题时不重跑就能定位 ——
     # icons_svg 是内联进去的整段 SVG 源码，几十 KB 且看不出信息，剔掉；
     # 图标真正要留痕的是**从哪个文件读来的**（icons_resolved），一眼看出走没走本地库。
+    # 闸门 A 要的四样（见 LAYOUT_BY_KIND 那段的三条红线）。⛔ 不写进 receipt 的话，
+    # 照文档主路径出的封面**发不出去**，而唯一能发出去的做法就是手搓一份假凭证。
+    style_profile = resolve_style_profile(dpath, args.style_profile)
     receipt = {
         'schema': 'render_cover/receipt@1',
         'kind': kind,
+        # schema 本身就是证据：这份凭证只可能由本脚本写出来
+        'source': 'render_cover',
+        # 一次渲染只出一张图 —— 天然单出。⚠️ 缺这个键闸门 fail-closed 会判「不是单出」直接拒
+        'cover_only': True,
+        # ⛔ 从模板 kind 映射，⛔ 不从数据里抄；still-life 不在表里 → 不写这个键 → 闸门红（对的）
+        **({'layout': LAYOUT_BY_KIND[kind]} if kind in LAYOUT_BY_KIND else {}),
+        # 实际渲出来的调色板（截图前从 :root 读的已解析值）
+        'palette': palette,
+        # 拿不到就不写 → 闸门红（与 gen_images 同口径的 fail-closed），⛔ 不填个空壳糊弄
+        **({'style_profile': style_profile} if style_profile else {}),
         'input': {
             'data_file': str(dpath),
             'data': {k: v for k, v in data.items() if k != 'icons_svg'},
@@ -820,41 +912,30 @@ def main():
         warnings.append(f"🔴 陪衬 `{fit['orn_unknown']}` 不在模板 ORN 库里，右下角**什么都没画**。"
                         f"可选：{fit['orn_known']}（注意是连字符不是下划线）")
     if fit.get('hero_glyph_pct_low'):
-        # 下限 9% 两个画幅通用（横版下同样可达、单调、且这条的处置真的管用：砍字能把字号抬回去），
-        # ⛔ 但引用的**区间**得跟着画幅走——横版是 9–15.5%，照抄「§2-b 的 9–13%」就是又搬一次常数。
         lo, hi = fit['hero_glyph_pct_band']
-        if fit.get('landscape'):
-            band = f"横版判据带 {lo}–{hi}%（标定画幅 {fit['hero_glyph_band_canvas']}）"
-        else:
-            band = f" §2-b 的 {lo}–{hi}%"   # 前导空格是**故意**的：竖版这句逐字不动（原文「低于 §2-b」）
-        warnings.append(f"🔴 hero 字高只占画面高 {fit['hero_glyph_pct_of_h']}%，低于{band}——"
+        warnings.append(f"🔴 hero 字高只占画面高 {fit['hero_glyph_pct_of_h']}%，低于 §2-b 的 {lo}–{hi}%——"
                         f"hero 太长撑不起来。处置＝把 hero 砍成最扎心的那个短句、"
                         f"剩下的降到 subtitle 副题层（方案 1），⛔ 不是调参数")
-    # 上限告警**按画幅分岔**：同一句「hero 太短，加字让字号落回甜区」在竖版成立、在横版
-    # 两处都不成立（横版 2→10 字字号恒 = HERO_MAX，加字对字高零影响）。分岔判据与阈值
-    # 都由模板交回（hero_glyph_pct_band / hero_glyph_band_canvas），⛔ 这里不另立一套数。
-    if fit.get('hero_glyph_pct_high') and fit.get('landscape'):
-        # 横版这条在默认参数下**打不出来**（结构天花板 14.74% < 15.5%）。真打出来了，
-        # 说明字号上限被显式改过或字族换了——⛔ 别再叫人改文案，改文案在这里毫无作用。
-        warnings.append(f"⚠️ 横版 hero 字高 {fit['hero_glyph_pct_of_h']}% 冲破横版上限 "
-                        f"{fit['hero_glyph_pct_band'][1]}%（标定画幅：{fit['hero_glyph_band_canvas']}）——"
-                        f"默认参数下这条**顶不上来**（引擎自己的天花板是 (0.13/0.86)×0.975 = 14.74%），"
-                        f"能顶上来只有两种可能：theme.hero_max 被显式调大了，或者字体落到了墨迹更高的字族上。"
-                        f"处置＝去掉/调回 theme.hero_max，或核对 font_landed 是不是 Noto Sans SC 那一族。"
-                        f"⛔ 不是改文案——横版下加字减字都不改字号")
-    elif fit.get('hero_glyph_pct_high'):
-        warnings.append(f"⚠️ hero 字高 {fit['hero_glyph_pct_of_h']}% 冲破 §2-b 上限 13%——"
-                        f"hero 太短（4 字以内），撑满版心必然超标。这里两条规格天然打架："
-                        f"「通栏撑满」与「字高 ≤13%」不可兼得。**排版 agent 自行处置**："
-                        f"从原金句里多留两个字、让字号自然落回甜区（首选）／保持字数、右侧留白不撑满通栏／"
-                        f"换版式。⛔ 不必上报人工"
-                        f"（⚠️ 方向别搞反：这条是 hero **太短**导致字被撑大，加字才降字高，截字只会更超）")
-    # 横版「hero 太短」的真正落点：⛔ 不在字高（2→10 字恒 14.4%），在**占版心宽**。
-    # 这条补的就是上面那条上限在横版被取消后留下的空当——⛔ 别让「短到版面空」在横版无人看管。
+    # 上限告警**两个画幅同一句**。⛔ 别再按画幅分岔——分岔是上一版为绕开根因加的：
+    # 那时 HERO_MAX 拿 0.86 反推，夹取处字高恒 14.2～14.7%，13% 在横版恒被冲破。
+    # 现在 HERO_MAX 由二分实测解出，夹取处字高由构造 ≤13.00%（580 样本实扫，越线 0 个），
+    # 于是这条**默认参数下打不出来**，能打出来的只剩「字号被设大了」这一类真异常。
+    # 🔴 旧文案「hero 太短（4 字以内），加字让字号落回甜区」已删：修复后 4 字不再超标，
+    # 那句话描述的是一个**不会再发生的场景**，留着就是一条误导人去改文案的死文案。
+    if fit.get('hero_glyph_pct_high'):
+        warnings.append(f"⚠️ hero 字高 {fit['hero_glyph_pct_of_h']}% 冲破 §2-b 上限 "
+                        f"{fit['hero_glyph_pct_band'][1]}%（字号 {fit['hero_fs']}px，"
+                        f"引擎解出的上限 {fit['hero_max']}px，实测墨迹比 {fit['hero_ink_ratio']}）——"
+                        f"⛔ 这条与文案长短无关：字号上限是按「字高＝画面高 13%」在真实字号上二分解出来的，"
+                        f"默认参数下顶不破。能顶破只有两种可能：① theme.hero_max 被显式调大了；"
+                        f"② 字体没落在 Noto Sans SC 那一族、墨迹比变了。"
+                        f"处置＝去掉/调回 theme.hero_max，或核对 font_landed。⛔ 不是改文案")
+    # 横版「hero 太短」的真正落点：⛔ 不在字高（夹取区间内字高恒 12.96%），在**占版心宽**。
+    # ⛔ 别让「短到版面空」在横版无人看管——字高那条量不出它。
     if fit.get('hero_fill_low'):
         warnings.append(f"⚠️ 横版 hero 只占版心宽 {fit['hero_fill_pct']}%（下限 {fit['hero_fill_min']}%）——"
                         f"横版画布太宽，这么短的 hero 撑不起通栏：大字比副题还窄，焦点不成立"
-                        f"（实测 16:9：4 字 39%／5 字 49%／6 字 59%／10 字 98%）。"
+                        f"（实测 16:9：4 字 35%／5 字 44%／6 字 53%／10 字 87%）。"
                         f"处置＝从金句里多留两三个字。⚠️ 注意这里加字**不会改字号**"
                         f"（横版字号被 HERO_MAX 顶死），它只加宽——横版下加字唯一管用的就是这个维度")
     if fit.get('sub_seg_overflow'):
@@ -868,7 +949,10 @@ def main():
                         f"姓名太长，缩略图上会糊掉")
     if fit.get('sub_ratio_ok') is False:
         warnings.append(f"🔴 hero:副题 = {fit['hero_sub_ratio']}:1，低于 §2-b 硬下限 2.5:1，焦点没跳级")
-    if fit.get('step_over_sub'):
+    # ⛔ 三条 steps 告警全部先判「有没有 steps」：整份不传 steps 时求解器照样解出一个
+    # stepFs，那三条会对着**画面上不存在的层**报红，且处置无从执行（同本次要治的病）。
+    has_steps = (fit.get('steps_count') or 0) > 0
+    if has_steps and fit.get('step_over_sub'):
         warnings.append(f"🔴 递进行 {fit['step_fs']}px 追平/超过副题 {fit['sub_fs']}px，四级字阶塌成三级")
     if fit.get('hero_below_min'):
         warnings.append(f"🔴 hero 太长：撑满版心只解出 {fit['hero_fs']}px，低于缩略图可读下限 {fit['hero_min']}px"
@@ -877,9 +961,12 @@ def main():
     if fit.get('role_below_min'):
         warnings.append(f"身份行被压到 {fit['role_fs']}px 才放得下——把身份行写短一点，或换个更窄的陪衬")
     if fit['hero_squeezed']:
+        # ⛔ 处置得跟着「有没有 steps」走：没有递进行时叫人「删递进行的字」是句做不到的话
+        cut = ("优先删递进行的字，别削 hero" if has_steps
+               else "这份数据没有递进行，超容的是副题——把 subtitle 写短，别削 hero")
         warnings.append(f"递进三行降到下限还塞不下，已回头压 hero 到 {fit['hero_fs']}px——"
-                        f"说明整幅文案总量超容，优先删递进行的字，别削 hero")
-    if fit['step_at_floor']:
+                        f"说明整幅文案总量超容，{cut}")
+    if has_steps and fit['step_at_floor']:
         warnings.append(f"递进行已经压到字号下限 {fit['step_fs']}px，再长就得删字了")
     if fit['overflow_px'] > 1:
         warnings.append(f"仍有 {fit['overflow_px']}px 溢出——文案实在太长，必须删字")
@@ -923,7 +1010,10 @@ def main():
         # 判据带与**标定画幅**跟着实测值一起交出去：只看到「14.44% 超了 13%」的人，
         # 无从判断这个 13 对这张画布成不成立——本次翻车的正是这一点。
         'hero_glyph_pct_band': fit['hero_glyph_pct_band'],
-        'hero_glyph_band_canvas': fit['hero_glyph_band_canvas'],
+        # 上限是**解出来的**不是写死的：把解它用的墨迹比和解出的字号上限一起交出去，
+        # 「为什么这张图的上限是 147px」才查得到（⛔ 别让它变成一个不可复核的黑数）。
+        'hero_ink_ratio': fit['hero_ink_ratio'],
+        'hero_max': fit['hero_max'],
         # 横版才有值（竖版 null）：横版下「hero 太短」的后果落在占宽上，⛔ 不落在字高上
         'hero_fill_pct': fit['hero_fill_pct'],
         'sub_fs': fit['sub_fs'],
