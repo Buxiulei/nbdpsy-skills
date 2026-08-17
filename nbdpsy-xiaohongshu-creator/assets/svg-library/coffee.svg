@@ -1,0 +1,19 @@
+<!-- NBDpsy 封面素材库 | 意象：咖啡杯：停下来、喘口气、日常时刻
+     来源：Lucide · coffee | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/coffee.svg
+     许可证：ISC（Lucide Icons and Contributors）| 需署名：否（商用免署名）
+     下载日期：2026-08-17 | 改造：仅加本注释与 class="nbd-svg-icon"，图形与 currentColor 未改 -->
+<svg class="nbd-svg-icon"   xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10 2v2" />
+  <path d="M14 2v2" />
+  <path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1" />
+  <path d="M6 2v2" />
+</svg>

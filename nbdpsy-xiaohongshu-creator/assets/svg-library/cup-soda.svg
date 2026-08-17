@@ -1,0 +1,19 @@
+<!-- NBDpsy 封面素材库 | 意象：冷饮杯：轻松、放松时刻（coffee 的替代）
+     来源：Lucide · cup-soda | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/cup-soda.svg
+     许可证：ISC（Lucide Icons and Contributors）| 需署名：否（商用免署名）
+     下载日期：2026-08-17 | 改造：仅加本注释与 class="nbd-svg-icon"，图形与 currentColor 未改 -->
+<svg class="nbd-svg-icon"   xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 8 1.75 12.28a2 2 0 0 0 2 1.72h4.54a2 2 0 0 0 2-1.72L18 8" />
+  <path d="M5 8h14" />
+  <path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0" />
+  <path d="m12 8 1-6h2" />
+</svg>

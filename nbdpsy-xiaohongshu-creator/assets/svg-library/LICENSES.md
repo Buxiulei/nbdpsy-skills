@@ -30,6 +30,8 @@
 
 ---
 
+> ⚠️ **核对口径**：`plant-stake.svg` 与 `domino-fall.svg` 在本文件出现两次——一次在主表、一次在下方「自绘件」说明区（记录为什么自绘）。**核一致性时按主表计**：主表行数 = 目录 `*.svg` 文件数。
+
 ## 一、逐文件台账
 
 ### 手
@@ -202,6 +204,9 @@
 |---|---|---|---|---|---|
 | `domino-fall.svg` | 骨牌连锁：一件事推倒下一件 | NBDpsy 自绘（对齐 Lucide 24×24 网格与 2px 线宽规范，未复制任何上游路径数据） | NBDpsy 自有版权 | 否 | 2026-08-17 |
 | `plant-stake.svg` | 植物与支架：有支撑才长得直 | NBDpsy 自绘（同上） | NBDpsy 自有版权 | 否 | 2026-08-17 |
+| `headphones.svg` | 耳机：听、陪伴、引导音频 | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/headphones.svg | ISC（Lucide） | 否 | 2026-08-17 |
+| `coffee.svg` | 咖啡杯：停下来、喘口气、日常时刻 | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/coffee.svg | ISC（Lucide） | 否 | 2026-08-17 |
+| `cup-soda.svg` | 冷饮杯：轻松、放松时刻 | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/cup-soda.svg | ISC（Lucide） | 否 | 2026-08-17 |
 
 ---
 
