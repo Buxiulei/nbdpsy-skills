@@ -679,3 +679,270 @@ def test_竖版不走横版那套():
     assert fit["content_center_pct"] is None, "竖版⛔ 不该被平移，量具也不该有值"
     assert fit["landscape_layer4_hidden"] is False
     assert not hidden, "竖版第 ④ 层必须照常渲染"
+
+
+# ══════════ hero 字高判据带：竖版 13% / 横版 15.5%，各标各的 ══════════
+# 背景（2026-08-17）：`hero_glyph_pct_high` 在横版下**恒报**，且它给的处置做不到。
+# 机制：字号 = min(HERO_MAX, 版心宽/行宽系数, 竖向余量)，HERO_MAX = H×0.13/0.86，
+# 而真实墨迹/字号 = 0.955～0.975 ——HERO_MAX 一饱和，字高就恒 ≈14.2～14.7% > 13%。
+# 竖版版心只有 756px，≥4 字就轮到宽度约束，所以那条上限只对极短 hero 报、且加字真的管用；
+# 横版版心 ≈0.87W，要 ≥11 字宽度才接管，于是 2–10 字**字号分毫不动**，加字对字高零影响。
+# 🔴 与 accent 存活闸的 20px 是同一个形状：**常数被搬出了它的标定条件**。
+#
+# ⛔ 本节每条阈值都配一条「把它改坏 → 必须变红/变绿」的证伪：恒绿的闸门等于没闸门，
+# 恒报的闸门更坏（会把人训练成「那条不用看」）。
+
+_LAND_POOL = "你不是想太多只是那句话把你整个人都卷进去了从此夜里再也停不下来了啊"
+
+
+@pytest.fixture(scope="module")
+def _browser():
+    """一个模块共用一个 chromium。⛔ 页面**不复用**（见 _fit_band）。"""
+    pytest.importorskip("playwright.sync_api",
+                        reason="没装 playwright——⛔ 字高标定这一整节等于没验，别当它绿了")
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        yield b
+        b.close()
+
+
+def _cover(n, **over):
+    """复刻真实视频封面的数据形态：hero + 副题 + 落款，⛔ 无 steps 层。"""
+    d = {"hero": [_LAND_POOL[:n]],
+         "subtitle": "深夜停不下来地想，不是你想太多，是你被那句话卷进去了",
+         "footer": "NBDpsy 心理科普", "identity": {"name": "NBDpsy", "line": "心理科普"}}
+    d.update(over)
+    return d
+
+
+def _fit_band(browser, data, W, H, tpl_patch=None):
+    """跑一遍 __fit() 拿量具。tpl_patch=(旧串, 新串) 时先把模板改坏——证伪用。
+
+    ⚠️ **每次都开一张新 page**：同一张 page 连着 set_content 跑第二遍，__fit() 会
+    直接抛 `Cannot read properties of null`（2026-08-17 标定时实测），量具变成假失败。
+    """
+    src = TPL_JINJIN.read_text(encoding="utf-8")
+    if tpl_patch:
+        old, new = tpl_patch
+        assert src.count(old) == 1, f"证伪要改的那句在模板里出现了 {src.count(old)} 次：{old}"
+        src = src.replace(old, new)
+    pg = browser.new_page(viewport={"width": W, "height": H})
+    try:
+        pg.set_content(rc.build_html(src, dict(data, canvas={"w": W, "h": H})))
+        pg.evaluate("document.fonts.ready")
+        return pg.evaluate("window.__fit()")
+    finally:
+        pg.close()
+
+
+# ────────── 横版：正常文案不许报，真异常必须报 ──────────
+
+@pytest.mark.parametrize("n", [5, 6, 8])
+def test_横版正常文案的字高不报(_browser, n):
+    """老板打回的那一条：6–7 字的正常金句被报「hero 太短（4 字以内）」。"""
+    fit = _fit_band(_browser, _cover(n), 1920, 1080)
+    assert fit["hero_glyph_pct_high"] is False, \
+        f"{n} 字横版实测字高 {fit['hero_glyph_pct_of_h']}%，正常文案⛔ 不该报"
+    assert fit["hero_glyph_pct_low"] is False
+    assert fit["hero_fill_low"] is False, f"{n} 字占版心宽 {fit['hero_fill_pct']}%，够撑"
+
+
+@pytest.mark.parametrize("W,H", [(1280, 720), (1920, 1080), (2560, 1440)])
+def test_横版三档画布同判(_browser, W, H):
+    """字高% 只随**宽高比**走，与画布绝对大小无关——三档必须给同一个结论。
+    ⛔ 别拿一档的结论推广到所有画幅（accent 闸门就是这么翻的车）。"""
+    fit = _fit_band(_browser, _cover(6), W, H)
+    assert fit["hero_glyph_pct_high"] is False
+    assert 14.0 <= fit["hero_glyph_pct_of_h"] <= 14.8, \
+        f"{W}x{H} 实测 {fit['hero_glyph_pct_of_h']}%，出了 HERO_MAX 饱和档的实测带"
+
+
+def test_横版加字确实不改字号(_browser):
+    """这是那条告警「做不到」的直接证据：2→10 字字号分毫不动。
+    ⛔ 只要这条还成立，横版就不许再叫人「多留两个字让字号落回甜区」。"""
+    fs = [_fit_band(_browser, _cover(n), 1920, 1080)["hero_fs"] for n in (2, 6, 10)]
+    assert len(set(fs)) == 1, f"2/6/10 字的字号 {fs} 不再相同——机制变了，本节阈值要重标"
+
+
+def test_横版超长hero字被压小要报(_browser):
+    """真异常①：20 字的 hero，字高 7.5%——这条的处置（砍字降到副题）在横版**成立**。"""
+    fit = _fit_band(_browser, _cover(20), 1920, 1080)
+    assert fit["hero_glyph_pct_low"] is True, f"20 字实测 {fit['hero_glyph_pct_of_h']}%"
+    assert fit["hero_glyph_pct_high"] is False
+
+
+def test_横版字号被显式调大要报(_browser):
+    """真异常②：默认参数下横版字高顶不破 14.74%，能顶破只有 theme.hero_max 被调大
+    （或字族换了）。⛔ 这就是「15.5% 不是死闸门」的可达路径。"""
+    fit = _fit_band(_browser, _cover(6, theme={"hero_max": 200}), 1920, 1080)
+    assert fit["hero_fs"] == 200
+    assert fit["hero_glyph_pct_high"] is True, f"实测 {fit['hero_glyph_pct_of_h']}%"
+
+
+@pytest.mark.parametrize("n,fill_low", [(3, True), (4, True), (6, False), (10, False)])
+def test_横版短hero撑不住通栏要报占宽(_browser, n, fill_low):
+    """真异常③：横版下「hero 太短」的后果**不落在字高上**（2–10 字恒 14.4%），
+    落在占宽上。4 字只占 39%，大字比副题还窄；6 字 59% 起才立得住。"""
+    fit = _fit_band(_browser, _cover(n), 1920, 1080)
+    assert fit["hero_fill_low"] is fill_low, \
+        f"{n} 字占版心宽 {fit['hero_fill_pct']}%（下限 {fit['hero_fill_min']}%）"
+    assert fit["hero_glyph_pct_high"] is False, "字高⛔ 不该替占宽背这口锅"
+
+
+def test_占宽告警只在字号顶在上限时才出(_browser):
+    """⛔ 别把「给的处置做不到」换个地方再犯一次：字号已经被压下来时（小画布/带 steps 的横版），
+    「加字」只会把字压得更小。实测 876×493 + 三行递进：字号 57 < HERO_MAX 75、占宽 44.9%。"""
+    squeezed = _cover(6, steps=["一直复盘白天说错的话", "越想越清醒", "第二天更累"])
+    fit = _fit_band(_browser, squeezed, 876, 493)
+    assert fit["hero_at_max"] is False and fit["hero_fill_pct"] < 45, \
+        f"这个样本本来就该是「压下来且占宽不足」，实测 {fit['hero_fs']}px / {fit['hero_fill_pct']}%"
+    assert fit["hero_fill_low"] is False, "字号没顶在上限时⛔ 不许再叫人加字"
+
+
+def test_判据带与标定画幅一起交出去(_browser):
+    """⛔ 别让阈值再变成裸数字：读的人得能当场判断这个数对不对这张画布成立。"""
+    land = _fit_band(_browser, _cover(6), 1920, 1080)
+    port = _fit_band(_browser, _fields(avatar=""), 876, 1313)
+    assert land["hero_glyph_pct_band"] == [9, 15.5]
+    assert port["hero_glyph_pct_band"] == [9, 13]
+    assert "16:9" in land["hero_glyph_band_canvas"]
+    assert "876" in port["hero_glyph_band_canvas"]
+    assert port["hero_fill_pct"] is None and port["hero_fill_low"] is None, \
+        "竖版⛔ 不判占宽——恒 null，⛔ 不是 0（0 会被读成「量到了，占 0%」）"
+
+
+# ────────── 竖版三档回归：13%/9% 一个字不许动 ──────────
+
+@pytest.mark.parametrize("n,high,low", [(3, True, False), (5, False, False),
+                                        (6, False, False), (8, False, True)])
+def test_竖版三档字高判据原样不动(_browser, n, high, low):
+    """锁死竖版没被横版那档带偏：3 字仍报上限、5/6 字全绿、8 字仍报下限。"""
+    fit = _fit_band(_browser, _cover(n), 876, 1313)
+    assert fit["hero_glyph_pct_high"] is high, f"{n} 字竖版实测 {fit['hero_glyph_pct_of_h']}%"
+    assert fit["hero_glyph_pct_low"] is low, f"{n} 字竖版实测 {fit['hero_glyph_pct_of_h']}%"
+
+
+# ────────── 逐条证伪：把阈值改坏，对应的闸门必须变色 ──────────
+
+def test_证伪_横版上限退回13就会恒报(_browser):
+    """这条同时是**病症复现**：把横版那档改回竖版的 13，正常 6 字文案立刻恒报。"""
+    fit = _fit_band(_browser, _cover(6), 1920, 1080,
+                    tpl_patch=("LANDSCAPE ? 15.5 : 13", "LANDSCAPE ? 13 : 13"))
+    assert fit["hero_glyph_pct_high"] is True, "改坏了还不红＝这条上限压根没在判"
+
+
+def test_证伪_竖版上限放到99就不该再报(_browser):
+    """竖版那档确实在判 13，⛔ 不是恒报。"""
+    fit = _fit_band(_browser, _cover(3), 876, 1313,
+                    tpl_patch=("LANDSCAPE ? 15.5 : 13", "LANDSCAPE ? 15.5 : 99"))
+    assert fit["hero_glyph_pct_high"] is False, "把上限放到 99 还报＝这条是恒报的假闸门"
+
+
+def test_证伪_下限清零就不该再报(_browser):
+    fit = _fit_band(_browser, _cover(20), 1920, 1080,
+                    tpl_patch=("const GLYPH_PCT_LOW  = 9;", "const GLYPH_PCT_LOW  = 0;"))
+    assert fit["hero_glyph_pct_low"] is False, "把下限清零还报＝这条是恒报的假闸门"
+
+
+def test_证伪_占宽下限清零就不该再报(_browser):
+    fit = _fit_band(_browser, _cover(3), 1920, 1080,
+                    tpl_patch=("const HERO_FILL_MIN = 45;", "const HERO_FILL_MIN = 0;"))
+    assert fit["hero_fill_low"] is False, "把占宽下限清零还报＝这条是恒报的假闸门"
+
+
+def test_证伪_占宽下限抬到100就该连撑满的也报(_browser):
+    fit = _fit_band(_browser, _cover(10), 1920, 1080,
+                    tpl_patch=("const HERO_FILL_MIN = 45;", "const HERO_FILL_MIN = 100;"))
+    assert fit["hero_fill_low"] is True, "把下限抬到 100 还不报＝这条是恒绿的死闸门"
+
+
+# ────────── 告警文案分岔：横版⛔ 不许再说「hero 太短，加字」 ──────────
+# ⛔ 这一段必须走**真脚本**（要出图，所以要 playwright + Pillow）：
+# 文案是在 render_cover.py 里拼的，只跑 __fit() 验不到它。
+
+def _run_real(tmp_path, data, *extra):
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(SCRIPT), "--data", str(p),
+                        "--out", str(tmp_path / "o.png"), *extra],
+                       capture_output=True, text=True)
+    return r, (json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None)
+
+
+def _need_render():
+    pytest.importorskip("playwright.sync_api", reason="没装 playwright——⛔ 这条等于没验")
+    pytest.importorskip("PIL", reason="没装 Pillow——⛔ 这条等于没验")
+
+
+def test_横版正常文案一条字高告警都不出(tmp_path):
+    """老板打回的那张（hero「你不是想太多」1920×1080）现在必须干干净净。"""
+    _need_render()
+    r, out = _run_real(tmp_path, _cover(6), "--canvas", "1920x1080")
+    assert r.returncode == 0, r.stderr
+    assert [w for w in out["warnings"] if "字高" in w or "版心宽" in w] == [], \
+        f"横版正常文案还在报：{out['warnings']}"
+    assert out["hero_glyph_pct_band"] == [9, 15.5]
+    assert out["hero_fill_pct"] == pytest.approx(58.6, abs=1.0)
+
+
+def test_横版上限告警不许再叫人改文案(tmp_path):
+    """⛔ 横版这条的处置只能是「调回 theme.hero_max / 核对字体」——
+    「多留两个字让字号落回甜区」在横版是**做不到**的动作（字号被 HERO_MAX 顶死）。"""
+    _need_render()
+    _r, out = _run_real(tmp_path, _cover(6, theme={"hero_max": 200}), "--canvas", "1920x1080")
+    hit = [w for w in out["warnings"] if "字高" in w]
+    assert len(hit) == 1, f"该报且只报一条，实际：{out['warnings']}"
+    assert "hero_max" in hit[0] and "顶不上来" in hit[0]
+    for banned in ("太短", "多留两个字", "4 字以内"):
+        assert banned not in hit[0], f"横版告警里还留着做不到的处置「{banned}」：{hit[0]}"
+
+
+def test_横版短hero的处置说清了加字只加宽不改字号(tmp_path):
+    """⛔ 「加字」这个动作本身没错，错在上一版把它挂到了字高上。挂到占宽上才是真的。"""
+    _need_render()
+    _r, out = _run_real(tmp_path, _cover(3), "--canvas", "1920x1080")
+    hit = [w for w in out["warnings"] if "版心宽" in w]
+    assert len(hit) == 1, f"3 字横版该报占宽，实际：{out['warnings']}"
+    assert "不会改字号" in hit[0], "⛔ 不说清这一点，排版方会以为加字能把字高也解掉"
+
+
+def test_横版下限告警引用的区间也跟着画幅走(tmp_path):
+    """下限 9% 两个画幅通用，但**引用的区间**得跟着走——照抄「§2-b 的 9–13%」
+    就是在同一条告警里又搬了一次常数。"""
+    _need_render()
+    _r, out = _run_real(tmp_path, _cover(20), "--canvas", "1920x1080")
+    hit = [w for w in out["warnings"] if "字高只占画面高" in w]
+    assert len(hit) == 1, f"20 字横版该报下限，实际：{out['warnings']}"
+    assert "9–15.5%" in hit[0] and "16:9" in hit[0]
+    assert "§2-b 的 9–13%" not in hit[0]
+
+
+def test_竖版下限告警一个字没动(tmp_path):
+    """竖版这条逐字不动：还是「低于 §2-b 的 9–13%」。"""
+    _need_render()
+    _r, out = _run_real(tmp_path, _cover(9))
+    hit = [w for w in out["warnings"] if "字高只占画面高" in w]
+    assert len(hit) == 1, f"9 字竖版该报下限，实际：{out['warnings']}"
+    assert "低于 §2-b 的 9–13%——hero 太长撑不起来" in hit[0]
+
+
+def test_竖版上限告警一个字没动(tmp_path):
+    """竖版这条是老板验收过的，⛔ 逐字不动——连「hero 太短（4 字以内）」都照旧。"""
+    _need_render()
+    _r, out = _run_real(tmp_path, _cover(3))
+    hit = [w for w in out["warnings"] if "字高" in w]
+    assert len(hit) == 1
+    assert "hero 太短（4 字以内），撑满版心必然超标" in hit[0]
+    assert "冲破 §2-b 上限 13%" in hit[0]
+    assert out["hero_fill_pct"] is None, "竖版⛔ 不出占宽这条"
+
+
+def test_阈值旁边必须写清标定画幅():
+    """这次的病根就是**常数被搬出了它的标定条件**。⛔ 别再犯一次：
+    判据带那一段代码里必须同时点名两个画幅，否则下一个人还是照搬。"""
+    src = TPL_JINJIN.read_text(encoding="utf-8")
+    i = src.index("const GLYPH_PCT_LOW")
+    block = src[max(0, i - 3000):i]
+    assert "876×1313" in block, "上限/下限旁边没写清竖版那档是在 876×1313 上标的"
+    assert "16:9" in block, "上限/下限旁边没写清横版那档是在 16:9 上标的"

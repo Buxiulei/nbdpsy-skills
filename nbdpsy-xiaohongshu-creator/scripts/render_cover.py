@@ -98,8 +98,13 @@ KIND_FONT_SEL = {'jinjin': '.hero .l', 'still-life': '#font-probe'}
 # 报告阶段会硬取的 fit 字段。模板版本对不上时**提前报明白**，别等到 KeyError 抛出来
 # （见下方版本校验：未接住的异常会把退出码搅成 1，与「出图了但不合格」混为一谈）。
 FIT_KEYS = {
+    # ⚠️ hero_glyph_pct_band / hero_glyph_band_canvas / hero_fill_* 必须进这张表：
+    # 上限告警的文案会硬取它们，模板老一版就会 KeyError——那是个**没被接住的异常**，
+    # 退出码会撞上「1＝出图了但不合格」，把版本不同步伪装成质量不合格。
     'jinjin': ('hero_fs', 'hero_lines', 'sub_fs', 'step_fs', 'name_fs', 'role_fs',
-               'overflow_px', 'safe_3x4_ok', 'crop_3x4'),
+               'overflow_px', 'safe_3x4_ok', 'crop_3x4',
+               'hero_glyph_pct_band', 'hero_glyph_band_canvas',
+               'hero_fill_pct', 'hero_fill_min', 'hero_fill_low', 'hero_at_max'),
     'still-life': ('icons', 'gaps', 'group_ink_w', 'margin_left', 'margin_right', 'margin_top',
                    'baseline_y', 'baseline_drawn', 'baseline_align_dev_px', 'desk_w',
                    'desk_overhang_px', 'accent', 'accent_form', 'accent_spots', 'accent_options',
@@ -815,16 +820,43 @@ def main():
         warnings.append(f"🔴 陪衬 `{fit['orn_unknown']}` 不在模板 ORN 库里，右下角**什么都没画**。"
                         f"可选：{fit['orn_known']}（注意是连字符不是下划线）")
     if fit.get('hero_glyph_pct_low'):
-        warnings.append(f"🔴 hero 字高只占画面高 {fit['hero_glyph_pct_of_h']}%，低于 §2-b 的 9–13%——"
+        # 下限 9% 两个画幅通用（横版下同样可达、单调、且这条的处置真的管用：砍字能把字号抬回去），
+        # ⛔ 但引用的**区间**得跟着画幅走——横版是 9–15.5%，照抄「§2-b 的 9–13%」就是又搬一次常数。
+        lo, hi = fit['hero_glyph_pct_band']
+        if fit.get('landscape'):
+            band = f"横版判据带 {lo}–{hi}%（标定画幅 {fit['hero_glyph_band_canvas']}）"
+        else:
+            band = f" §2-b 的 {lo}–{hi}%"   # 前导空格是**故意**的：竖版这句逐字不动（原文「低于 §2-b」）
+        warnings.append(f"🔴 hero 字高只占画面高 {fit['hero_glyph_pct_of_h']}%，低于{band}——"
                         f"hero 太长撑不起来。处置＝把 hero 砍成最扎心的那个短句、"
                         f"剩下的降到 subtitle 副题层（方案 1），⛔ 不是调参数")
-    if fit.get('hero_glyph_pct_high'):
+    # 上限告警**按画幅分岔**：同一句「hero 太短，加字让字号落回甜区」在竖版成立、在横版
+    # 两处都不成立（横版 2→10 字字号恒 = HERO_MAX，加字对字高零影响）。分岔判据与阈值
+    # 都由模板交回（hero_glyph_pct_band / hero_glyph_band_canvas），⛔ 这里不另立一套数。
+    if fit.get('hero_glyph_pct_high') and fit.get('landscape'):
+        # 横版这条在默认参数下**打不出来**（结构天花板 14.74% < 15.5%）。真打出来了，
+        # 说明字号上限被显式改过或字族换了——⛔ 别再叫人改文案，改文案在这里毫无作用。
+        warnings.append(f"⚠️ 横版 hero 字高 {fit['hero_glyph_pct_of_h']}% 冲破横版上限 "
+                        f"{fit['hero_glyph_pct_band'][1]}%（标定画幅：{fit['hero_glyph_band_canvas']}）——"
+                        f"默认参数下这条**顶不上来**（引擎自己的天花板是 (0.13/0.86)×0.975 = 14.74%），"
+                        f"能顶上来只有两种可能：theme.hero_max 被显式调大了，或者字体落到了墨迹更高的字族上。"
+                        f"处置＝去掉/调回 theme.hero_max，或核对 font_landed 是不是 Noto Sans SC 那一族。"
+                        f"⛔ 不是改文案——横版下加字减字都不改字号")
+    elif fit.get('hero_glyph_pct_high'):
         warnings.append(f"⚠️ hero 字高 {fit['hero_glyph_pct_of_h']}% 冲破 §2-b 上限 13%——"
                         f"hero 太短（4 字以内），撑满版心必然超标。这里两条规格天然打架："
                         f"「通栏撑满」与「字高 ≤13%」不可兼得。**排版 agent 自行处置**："
                         f"从原金句里多留两个字、让字号自然落回甜区（首选）／保持字数、右侧留白不撑满通栏／"
                         f"换版式。⛔ 不必上报人工"
                         f"（⚠️ 方向别搞反：这条是 hero **太短**导致字被撑大，加字才降字高，截字只会更超）")
+    # 横版「hero 太短」的真正落点：⛔ 不在字高（2→10 字恒 14.4%），在**占版心宽**。
+    # 这条补的就是上面那条上限在横版被取消后留下的空当——⛔ 别让「短到版面空」在横版无人看管。
+    if fit.get('hero_fill_low'):
+        warnings.append(f"⚠️ 横版 hero 只占版心宽 {fit['hero_fill_pct']}%（下限 {fit['hero_fill_min']}%）——"
+                        f"横版画布太宽，这么短的 hero 撑不起通栏：大字比副题还窄，焦点不成立"
+                        f"（实测 16:9：4 字 39%／5 字 49%／6 字 59%／10 字 98%）。"
+                        f"处置＝从金句里多留两三个字。⚠️ 注意这里加字**不会改字号**"
+                        f"（横版字号被 HERO_MAX 顶死），它只加宽——横版下加字唯一管用的就是这个维度")
     if fit.get('sub_seg_overflow'):
         warnings.append("副题里有**一整段没有标点**且比版心还宽，已退回自由折行——"
                         "断行会落在词中间。想让它断得好看，在金句里加个逗号")
@@ -888,6 +920,12 @@ def main():
         'hero_thumb_px': fit['hero_thumb_px'],
         'hero_glyph_px': fit['hero_glyph_px'],
         'hero_glyph_pct_of_h': fit['hero_glyph_pct_of_h'],
+        # 判据带与**标定画幅**跟着实测值一起交出去：只看到「14.44% 超了 13%」的人，
+        # 无从判断这个 13 对这张画布成不成立——本次翻车的正是这一点。
+        'hero_glyph_pct_band': fit['hero_glyph_pct_band'],
+        'hero_glyph_band_canvas': fit['hero_glyph_band_canvas'],
+        # 横版才有值（竖版 null）：横版下「hero 太短」的后果落在占宽上，⛔ 不落在字高上
+        'hero_fill_pct': fit['hero_fill_pct'],
         'sub_fs': fit['sub_fs'],
         'hero_sub_ratio': fit['hero_sub_ratio'],
         'step_fs': fit['step_fs'],
