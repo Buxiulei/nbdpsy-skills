@@ -145,11 +145,12 @@ def check(items: list[tuple[str, str]], *, limit: int = HARD_LIMIT,
     shots, over, warns, got_text = [], [], [], False
     for label, text in items:
         n = hanzi_count(text)
-        rec = {"label": label, "hanzi": n, "over": max(0, n - limit)}
+        rec = {"label": label, "hanzi": n,
+               "over": 0 if limit is None else max(0, n - limit)}
         shots.append(rec)
         if (text or "").strip():
             got_text = True
-        if n > limit:
+        if limit is not None and n > limit:
             over.append({**rec, "text": text})
         if warn:
             for f in soft_findings(text):
@@ -271,6 +272,44 @@ def from_shots(path: Path) -> list[tuple[str, str]]:
     return out
 
 
+SENT_END = re.compile(r"(?<=[。！？])")
+"""连续稿切句：只认句末三标点。⛔ 不切逗号——第五律已把破折号赶走、逗号在口播里是停顿
+不是句界，按逗号切会把一句话拆成半句，`closing 在后 3 句内` 这类位置判据立刻失真。"""
+
+
+def from_continuous(path: Path) -> list[tuple[str, str]]:
+    """连续稿（不分页的一整篇口播）→ [(第N句, 句子)]。
+
+    ## 为什么要有这个入口
+
+    2026-08-17 实测（博客长文线）：**oneline 线的稿子两种模式都跑不了**——
+    `--script-file` 要 `## P1` 页标题（连续稿没有），`--text` 把整篇当一镜必爆 100 字上限。
+    根因是形态不匹配：**分页形态（轮播/微电影）一页一镜，oneline 是一整篇连续文本**，
+    分屏是 `build_oneline.py` 事后按 TTS cues 自动断的，**写稿阶段根本没有"页"**。
+
+    🔴 **⛔ 别用"硬拆成页"糊弄过去**：oneline 若按屏分页每页 ≤12 字，
+    `≤100 汉字/镜` 这道闸**全过**——闸在，但对这条线**恒绿**。
+    本仓判据：**恒绿的闸门比没有闸门更糟**，它会让人以为查过了。
+    ⇒ 所以连续模式**显式关掉字数硬闸**（`limit=None`），⛔ 不是把它调大到永远不会触发。
+    """
+    text = path.read_text(encoding="utf-8")
+    # 去掉 markdown 标题行与注释行：它们不是口播内容，混进来会污染句序与位置判据
+    body = "\n".join(ln for ln in text.splitlines()
+                     if not ln.lstrip().startswith(("#", "<!--", ">")))
+    sents = [s.strip() for s in SENT_END.split(body) if s.strip()]
+    if not sents:
+        raise RuntimeError(f"{path} 里没读到任何句子（连续稿要有 。！？ 断句）")
+    # 🔴 切句失败会伪装成「一篇短稿」而不是报错：整篇没有句末标点时全篇算 1 句，
+    # 此时三句自证都能在那唯一一句里「找到」，且项数 <5 连位置都不判 ⇒ **全过**。
+    # ⛔ 这是恒绿。所以句数少到不像一篇口播稿时，显式把观测本身摆到人眼前。
+    if len(sents) < 3:
+        raise RuntimeError(
+            f"{path} 只切出 {len(sents)} 句——**多半是断句失败**（全篇缺 。！？，"
+            f"或标点用了半角 . ! ?），⛔ 不是稿子真的只有这么几句。"
+            f"\n   真是一两句的短稿，用 --text 查；连续稿请先补上中文句末标点。")
+    return [(f"第{i + 1}句", s) for i, s in enumerate(sents)]
+
+
 def from_script(path: Path) -> list[tuple[str, str]]:
     """分页口播稿 → [(页号, 文本)]。解析复用 slideshow_video._parse_script（唯一真源）。"""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -284,10 +323,16 @@ def _err(m: str) -> None:
 
 def report(res: dict) -> None:
     """人读的明细打 stderr。超字数的一定报清楚：哪一镜、多少字、超了多少。"""
-    for s in res["shots"]:
-        mark = "❌" if s["over"] else "✅"
-        tail = f"，超 {s['over']} 字" if s["over"] else ""
-        _err(f"  {mark} {s['label']}：{s['hanzi']} 汉字（上限 {res['limit']}）{tail}")
+    if res["limit"] is None:
+        # 连续稿：逐句报字数没有意义（没有「页」这个物理约束），报规模就够。
+        # ⚠️ 但必须**明写字数闸没跑**，⛔ 别让人以为「没报超标＝字数查过了」。
+        _err(f"  📄 连续稿 {len(res['shots'])} 句、{res['total_hanzi']} 汉字。")
+        _err("  ⛔ 本模式**不判字数**——≤100 是分页形态「这一页念不完」的闸，连续稿没有页。")
+    else:
+        for s in res["shots"]:
+            mark = "❌" if s["over"] else "✅"
+            tail = f"，超 {s['over']} 字" if s["over"] else ""
+            _err(f"  {mark} {s['label']}：{s['hanzi']} 汉字（上限 {res['limit']}）{tail}")
     if res["warnings"]:
         _err(f"\n⚠️ 十四律软提醒 {len(res['warnings'])} 处（**只提醒不拦**，人判）：")
         for w in res["warnings"]:
@@ -332,6 +377,10 @@ def main() -> None:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--shots", help="shots.json 路径（微电影/字卡线）")
     g.add_argument("--script-file", help="分页口播稿（轮播放映线，md 或 json）")
+    g.add_argument("--continuous-file",
+                   help="**不分页的一整篇口播稿**（oneline 字卡线）。按 。！？ 切句，"
+                        "⛔ 关掉 ≤100 汉字硬闸（那是分页形态"
+                        "「这一页念不完」的闸，连续稿没有页），保留十四律软提醒与结构自证")
     g.add_argument("--text", help="单条旁白直接查")
     p.add_argument("--label", default="单条", help="配合 --text 的标签")
     p.add_argument("--max-hanzi", type=int, default=HARD_LIMIT,
@@ -346,11 +395,15 @@ def main() -> None:
                         "输出里会明写「未自证」（⛔ 不是「自证通过」）")
     a = p.parse_args()
 
+    limit = a.max_hanzi
     try:
         if a.shots:
             items = from_shots(Path(a.shots))
         elif a.script_file:
             items = from_script(Path(a.script_file))
+        elif a.continuous_file:
+            items = from_continuous(Path(a.continuous_file))
+            limit = None            # 连续稿没有「页」，字数闸无意义——显式关掉，⛔ 不是调大
         else:
             items = [(a.label, a.text)]
     except Exception as e:
@@ -358,7 +411,7 @@ def main() -> None:
         _err(f"⛔ 读不到口播稿：{e}")
         sys.exit(2)
 
-    res = check(items, limit=a.max_hanzi, warn=not a.no_warn, allow_empty=a.allow_empty)
+    res = check(items, limit=limit, warn=not a.no_warn, allow_empty=a.allow_empty)
 
     if a.intent_file:
         try:

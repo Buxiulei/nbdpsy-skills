@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts"
 SCRIPT = SCRIPTS / "check_narration.py"
 sys.path.insert(0, str(SCRIPTS))
@@ -273,3 +275,56 @@ def test_端到端_没传自证时JSON里不能有intent键(tmp_path):
     code, out, err = _run_intent(tmp_path)
     assert code == 0 and "intent" not in out
     assert "未做结构自证" in err and "不是「查过了没问题」" in err
+
+
+# ────────── 连续稿模式（oneline 字卡线：不分页的一整篇） ──────────
+# 🩸 2026-08-17 实测缺口：oneline 的稿子**两种模式都跑不了**——--script-file 要 `## P1`
+# 页标题（连续稿没有）、--text 把整篇当一镜必爆 100 字上限。根因是形态不匹配：
+# 分页形态一页一镜，oneline 是一整篇，分屏由 build_oneline.py 事后按 cues 自动断。
+
+_CONT = ("对自己好一点，压根不是放过自己。有人把它理解成少干活多休息，结果越歇越空。"
+         "我认识一个人，她每天下班先躺四十分钟，躺完更累。后来她改成下班先走二十分钟，"
+         "反而睡得着了。研究里那组人练了一个月才有变化，当场是没感觉的。"
+         "它是一个月的功课，不是当场的开关。")
+
+
+def test_连续稿按句末标点切句(tmp_path):
+    f = tmp_path / "c.md"
+    f.write_text("# 标题行不算口播\n\n" + _CONT, encoding="utf-8")
+    items = cn.from_continuous(f)
+    assert len(items) == 6 and items[0][0] == "第1句"
+    assert items[0][1] == "对自己好一点，压根不是放过自己。"
+    assert not any("标题行不算口播" in t for _, t in items), "# 开头的行是标题，⛔ 不是口播"
+
+
+def test_连续稿显式关掉字数闸_而不是把阈值调大():
+    """⛔ 调大阈值＝闸还在但恒绿；limit=None 才读得出「这一项没判」。"""
+    res = cn.check([("第1句", "字" * 300)], limit=None)
+    assert res["ok"] is True and res["limit"] is None
+    assert res["over"] == [] and res["shots"][0]["over"] == 0
+
+
+def test_连续稿切句失败要报错_不许伪装成一篇短稿(tmp_path):
+    """🔴 全篇缺中文句末标点时会切成 1 句，此时三句自证都能在那唯一一句里「找到」、
+    且项数 <5 连位置都不判 ⇒ **全过**。这是恒绿，必须在入口就拦。"""
+    for body in ("整篇没有任何中文句末标点的一段话",
+                 "半角句点也不认.第二句同样如此.第三句还是."):
+        f = tmp_path / "bad.md"
+        f.write_text(body, encoding="utf-8")
+        with pytest.raises(RuntimeError, match="多半是断句失败"):
+            cn.from_continuous(f)
+
+
+def test_端到端_连续稿位置判据真的会报红(tmp_path):
+    f = tmp_path / "c.md"
+    f.write_text(_CONT, encoding="utf-8")
+    i = tmp_path / "i.json"
+    i.write_text(json.dumps({"hook": "对自己好一点，压根不是放过自己。",
+                             "scene": "她每天下班先躺四十分钟，躺完更累。",
+                             "closing": "有人把它理解成少干活多休息，结果越歇越空。"},
+                            ensure_ascii=False), encoding="utf-8")
+    p = subprocess.run([sys.executable, str(SCRIPT), "--continuous-file", str(f),
+                        "--intent-file", str(i)], capture_output=True, text=True)
+    assert p.returncode == 1, "closing 落在第 2 句，位置判据必须报红"
+    assert "不在后 3 项内" in p.stderr
+    assert "本模式**不判字数**" in p.stderr, "⛔ 必须明写字数闸没跑"

@@ -440,7 +440,16 @@ What-If/How-to-Tell 双路概念 → 结构选型 → 剧本 → 内部自检硬
 ```bash
 # intent.json：{"hook":"…","scene":"…","closing":"…"}  ⛔ 三值都得是原句，不是描述
 python3 {SKILL_DIR}/scripts/check_narration.py --script-file narration.md --intent-file intent.json
+# oneline 字卡线（稿子是**不分页的一整篇**）走这个入口：
+python3 {SKILL_DIR}/scripts/check_narration.py --continuous-file narration.md --intent-file intent.json
 ```
+
+⚠️ **三个入口按稿件形态选，⛔ 别硬套**：`--shots` 分镜 json｜`--script-file` 带 `## P1` 页标题的
+分页稿｜`--continuous-file` **不分页的一整篇**（oneline 的稿就是这种——分屏是
+`build_oneline.py` 事后按 TTS cues 自动断的，**写稿阶段没有「页」**）。
+连续模式**显式关掉 ≤100 汉字闸**（那是分页形态「这一页念不完」的物理闸），
+保留十四律软提醒与结构自证。🔴 **⛔ 别把 oneline 稿硬拆成页来凑这个闸**——
+每屏 ≤12 字，`≤100 汉字/镜` 会**全过**，闸在但对这条线恒绿，比没有更糟。
 
 脚本查：三句在不在稿里、hook 是不是在前 2 项、closing 是不是在后 3 项（项数 <5 不判位置）。
 🔴 **为什么要粘原句**：「钩子是开头那个反直觉的说法」这种描述**无法比对**，随手写一句就过了；
