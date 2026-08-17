@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """一行字卡（tpl-oneline）实例化 + 单行硬闸门。
 
-  build_oneline.py --cues narration.mp3.cues.json --bg liaoyu --canvas 3:4 --out 工作目录/
+  build_oneline.py --cues narration.mp3.cues.json --bg miwen --canvas 3:4 --out 工作目录/
 
 产出 `<out>/card-oneline.html`（连同 gsap.min.js、字体一并就位），随后照常：
 
@@ -71,6 +71,19 @@ BG = {
         vignette="rgba(30,44,62,.16)", brand="rgba(60,76,96,.50)",
         tex_opacity=1.0, tex_scale=300,
         turb=dict(freq=0.32, octaves=5, seed=23, alpha=0.62),
+    ),
+    # 🔴 老板 2026-08-17 G10 批复的 B 档（浅米白·强纹理），字卡的现行首选背景。
+    # 七个字段是运营线交出来的**原值**，⛔ 别凭观感重调——老板批的是那一张图，重调出来的是另一张。
+    # 尤其 seed=17：换个 seed 就是另一张纹理，它不是随便填的数。
+    # 校准图：seo-geo/content/videos/oneline-qiuqiu-jianyao/bg-candidates/B-浅米白-强纹理.png
+    # ⚠️ 拿校准图做像素比对前先读 spec 的口径提醒：那图出自候选预览页（纹理层没有 multiply），
+    #    比真模板出片更浅更淡，直接比像素会得出「没搬对」的错结论。
+    "miwen": dict(  # 浅米白，强纹理（暖调压角）
+        label="米纹（浅米白·强纹理）",
+        base="#F0E9DC", ink="#241E17",
+        vignette="rgba(120,98,70,.18)", brand="rgba(90,72,52,.50)",
+        tex_opacity=1.0, tex_scale=320,
+        turb=dict(freq=0.24, octaves=5, seed=17, alpha=0.85),
     ),
 }
 

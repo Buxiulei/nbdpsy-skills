@@ -56,7 +56,7 @@
 python3 tts_gen.py --engine minimax --timed --voice "Chinese (Mandarin)_Warm_Bestie" \
         --text "$(cat narration.txt)" --out 工作目录/narration.mp3
 # ② 断句分屏 + 实例化（双闸在这一步；不过闸不出文件）
-python3 build_oneline.py --cues narration.mp3.cues.json --bg liaoyu --canvas 3:4 --out 工作目录/
+python3 build_oneline.py --cues narration.mp3.cues.json --bg miwen --canvas 3:4 --out 工作目录/
 # ③ 照常渲染（画幅由模板里的 render-canvas meta 自己声明，render_card.py 不用传参）
 cd 工作目录 && python3 render_card.py card-oneline.html out.mp4
 ```
@@ -131,8 +131,44 @@ cd 工作目录 && python3 render_card.py card-oneline.html out.mp4
 
 | 档 | `--bg` | 底色 | 墨色 | 质感 |
 |---|---|---|---|---|
+| **米纹（现行首选）** | **`miwen`** | `#F0E9DC` 浅米白 | `#241E17` | 粗颗粒强纹理（`freq .24 / seed 17 / alpha .85`，纹理格 320px），暖调压角 |
 | 疗愈 | `liaoyu` | `#E8D8C4` 暖米白 | `#26201A` | 低频大颗粒、柔光（`freq .010 / el 60`），暖调压角 |
 | 科普 | `kepu` | `#EDEFF1` 冷白 | `#141C26` | 高频细折痕、硬光（`freq .016 / el 48`），冷调压角 |
+
+**`miwen` 是老板 2026-08-17 G10 亲批的那一档（候选 B「浅米白·强纹理」），新片默认用它。**
+七个字段（底色 / 墨色 / 压角 / 落款色 / 纹理透明度 / 纹理格 / turb）是运营线交出来的**原值**，
+⛔ 别凭观感重调——老板批的是那一张图，重调出来的是另一张。尤其 `seed=17`：换个 seed
+就是另一张纹理，它不是随便填的数。
+校准图：`seo-geo/content/videos/oneline-qiuqiu-jianyao/bg-candidates/B-浅米白-强纹理.png`。
+
+> ⚠️ 拿校准图做像素比对时注意口径：那张图出自**候选预览页**，预览页的纹理层少一句
+> `mix-blend-mode:multiply`，所以它比真模板出片**更浅更淡**（无文字带实测底色
+> `[212.82,207.93,199.48]`、R−B 13.35，真模板出片则是 `[208.00,201.08,188.80]`、R−B 19.20）。
+> **这个差是合成口径差，不是参数搬错了**——把模板的 multiply 去掉即可逐项复现到小数点后两位。
+> 要验参数对不对，比 `BG['miwen']` 的七个字段，⛔ 别拿预览图的像素当靶子。
+> 另注：候选页 B 格**没有品牌落款**（只有 `.txt` 一行），所以 `brand` 那个色老板没在图上看过，
+> 它沿用自 `liaoyu`。落款反差实测见下节。
+
+#### 落款反差（加背景档时必量的一项）
+
+`brand` 是半透明色（`rgba(...,.50)`）压在纹理底上，**换了底色它的实际反差就变了**——
+沿用别档的 `brand` 值 ≠ 沿用了它的可读性，必须实测，⛔ 别靠推断。
+
+量法：把 `#brand` 的 `opacity` 强制成 1（它初始是 0，靠 GSAP 补间才显形）、藏掉 `#stage`，
+截图取 `#brand` 的 boundingBox 横向中段，Otsu 把区内像素分成字与底两簇，
+**亮度差 = 底簇均值 − 字簇均值**（0–255）。
+
+2026-08-17 三档实测（3:4，`brand_px=30`）：
+
+| 档 | 亮度差（Otsu） | 峰谷差（最亮 − 最暗 1%） | WCAG |
+|---|---|---|---|
+| `liaoyu` | 53.1 | 76.0 | 1.87:1 |
+| `kepu` | 60.3 | 90.0 | 1.97:1 |
+| **`miwen`** | **56.0** | **88.0** | **1.91:1** |
+
+`miwen` 三种口径下都**高于 `liaoyu`**（底色更亮而落款色相同，绝对亮度差被拉开），
+所以沿用的这个 `brand` 值够用，不动。WCAG 比值都远低于 AA 的 4.5:1——**这是有意为之**：
+落款是装饰性水印不是正文，按正文标准拉高它会把视线从中间那行字上抢走。
 
 ### 双画幅（`CANVAS` 表，同理加档）
 
