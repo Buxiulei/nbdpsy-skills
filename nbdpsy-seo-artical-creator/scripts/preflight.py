@@ -403,10 +403,22 @@ def run(md_text: str, online: bool = False, api_base: str = DEFAULT_API_BASE):
     has_bjcrisis = "010-82951332" in body
     # 容错到带空格的「希望 24」与带连字符的号码：排版换行最容易把机构名拆开，
     # 与 check_compliance.py 的 DEAD_HOTLINE 同口径（两侧闸门必须对称，否则一边拦一边放）。
-    dead_hotline = re.search(r"4001619995|400-?161-?9995|希望\s*24", body) is not None
+    # ⚠️ 更正稿豁免（2026-08-17）：更正段**必须写出那个号码**，不写读者不知道更正的是哪条热线。
+    # 逐行判而不是整篇判——声明词必须与号码同行，否则文末一句「已停用」会豁免全篇。
+    # 判据两侧：有停用声明词 且 无推荐动词（⛔「已停用…请拨打 4001619995」不放行）。
+    # 与 check_compliance.is_retirement_citation 同口径，两侧闸门必须对称。
+    _DEAD = re.compile(r"4001619995|400-?161-?9995|希望\s*24")
+    _RETIRED_DECL = re.compile(
+        r"已(?:停止服务|停用|停运|下线|不再服务)|停止服务|此前(?:写过|提到|使用)|更正|勘误|不再(?:可用|使用|提供)")
+    _RECOMMEND = re.compile(r"请?(?:拨打|拨号|致电|打)|联系|求助(?:热线)?(?:：|:)")
+    dead_hotline = any(
+        _DEAD.search(ln) and not (_RETIRED_DECL.search(ln) and not _RECOMMEND.search(ln))
+        for ln in body.splitlines())
     if dead_hotline:
         add("R8", "crisis-statement", "fail",
-            "停用热线回流：希望24已于2026-08-14证据停用，用 010-82951332 替换", CRISIS_FIX)
+            "停用热线回流：希望24已于2026-08-14证据停用，用 010-82951332 替换。"
+            "⚠️ 若该行是**更正声明**（告诉读者这条热线已停），把「已停止服务／此前写过／更正」"
+            "写进同一行即可放行——⛔ 别为了过闸门把号码删掉，那样更正就废了", CRISIS_FIX)
     elif not (has_12356 and has_disclaimer):
         miss = []
         if not has_disclaimer:

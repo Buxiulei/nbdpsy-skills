@@ -468,3 +468,36 @@ def test_stdout_is_pure_json(tmp_path):
     r, d = run(build_doc(), tmp_path)
     # stdout 必须是可解析的纯 JSON（无多余打印）
     assert set(d.keys()) == {"ok", "summary", "checks"}
+
+
+# ── 更正稿豁免（2026-08-17 加，与 check_compliance 侧对称）────────────
+# 两侧闸门必须同口径，否则一边拦一边放，人会以为是随机的。
+CRISIS_WITH_CORRECTION = (
+    "本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356 "
+    "或北京心理危机研究与干预中心热线 010-82951332（24小时）；紧急情况拨打 110/120。\n\n"
+    "我们此前写过「希望 24 热线 4001619995」，这条热线已经停止服务，在此更正。\n")
+CRISIS_DECL_ON_OTHER_LINE = (
+    "本文不构成医疗建议；如处于心理危机请拨打希望24热线 4001619995 或全国统一心理援助热线 12356。\n\n"
+    "（顺带一提，某些旧热线已经停止服务。）\n")
+CRISIS_SELF_CONTRADICTORY = (
+    "本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356 "
+    "或北京心理危机研究与干预中心热线 010-82951332（24小时）。\n\n"
+    "这条热线已停止服务，请拨打 4001619995 求助。\n")
+
+
+def test_r8_更正声明放行(tmp_path):
+    # 更正段必须写出那个号码，否则读者不知道更正的是哪条热线。⛔ 别为过闸门把号码删掉
+    _, d = run(build_doc(crisis_text=CRISIS_WITH_CORRECTION), tmp_path)
+    assert status_of(d, "R8") == "pass"
+
+
+def test_r8_声明词在别行不豁免(tmp_path):
+    # 声明词必须与号码同行，否则文末一句「已停用」会豁免全篇
+    _, d = run(build_doc(crisis_text=CRISIS_DECL_ON_OTHER_LINE), tmp_path)
+    assert status_of(d, "R8") == "fail"
+
+
+def test_r8_自相矛盾写法不豁免(tmp_path):
+    # 有声明词但仍在叫人拨那个号 → 拦
+    _, d = run(build_doc(crisis_text=CRISIS_SELF_CONTRADICTORY), tmp_path)
+    assert status_of(d, "R8") == "fail"

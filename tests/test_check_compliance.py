@@ -237,3 +237,30 @@ def test_hotline_rules_skip_fenced_prompts(tmp_path):
     f = tmp_path / "fenced.md"; f.write_text(text, encoding="utf-8")
     r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
     assert r.returncode == 0
+
+
+# ── 更正稿豁免（2026-08-17 加）────────────────────────────────────
+# 起因：老板批 S1「已发布的不删不重发，在下一条推送里更正」。更正段**必须写出那个号码**——
+# 不写读者不知道更正的是哪条热线，更正就等于没更正。原判据只认字符串、不认它在句子里的角色。
+# ⚠️ 真正的危险不是被拦，是接下来那一步：有人照着闸门去「修」，会把更正段里的号码删掉，
+# 于是更正废了、闸门反而变绿——闸门亲手制造了它本该防的那个后果。
+def test_停用热线_更正声明放行(tmp_path):
+    """引用以更正 → 放行。判据＝同行有停用声明词 且 无推荐动词。"""
+    r, d = _with_decl(tmp_path, "（心理科普 · 全国统一心理援助热线 12356）\n\n"
+                                "我们此前写过「希望 24 热线 4001619995」，这条热线已经停止服务，在此更正。")
+    assert not any(v["rule"] == "停用热线" for v in d["violations"]), \
+        "更正声明被拦了：" + json.dumps(d["violations"], ensure_ascii=False)
+
+
+def test_停用热线_声明词在别行不豁免(tmp_path):
+    """声明词必须与号码**同行**——否则文末一句「已停用」会把全篇的号码都豁免掉。"""
+    r, d = _with_decl(tmp_path, "（心理科普 · 危机可拨希望24热线 4001619995 · 全国统一心理援助热线 12356）\n\n"
+                                "（顺带一提，某些旧热线已经停止服务。）")
+    assert any(v["rule"] == "停用热线" for v in d["violations"])
+
+
+def test_停用热线_自相矛盾写法不豁免(tmp_path):
+    """「已停止服务……请拨打 4001619995」有声明词，但它仍在叫人去拨那个号 → 必须拦。"""
+    r, d = _with_decl(tmp_path, "（心理科普 · 全国统一心理援助热线 12356）\n\n"
+                                "这条热线已停止服务，请拨打 4001619995 求助。")
+    assert any(v["rule"] == "停用热线" for v in d["violations"])
