@@ -97,6 +97,33 @@ def test_collect_images_missing_dir_raises(tmp_path):
         publish_note.collect_images(note, None)
 
 
+def test_collect_images_skips_thumbnails_and_names_them(tmp_path, capsys):
+    """🔴 render_cover.py 把缩略图落在成图**同目录**，按 stem 收图会把它当第二页发出去
+    （2026-08-17 dry-run 实测：images=['P01.png','P01.thumb220.png']，两页、零告警）。
+    跳过它——但**必须点名报出来**：静默跳过和静默收进来是同一个病的两面。"""
+    import publish_note
+    note, img_dir = _make_note_tree(tmp_path, pages=2)
+    (img_dir / "P01.thumb220.png").write_bytes(b"\x89PNG thumb")
+    (img_dir / "P02.thumb132.jpg").write_bytes(b"\xff\xd8 thumb")     # --thumb 宽度可改，正则认数字
+    paths = publish_note.collect_images(note, None)
+    assert [p.name for p in paths] == ["P01.png", "P02.png"]
+    err = capsys.readouterr().err
+    assert "跳过 2 张缩略图" in err
+    assert "P01.thumb220.png" in err and "P02.thumb132.jpg" in err   # ⛔ 只报个数不算点名
+    assert "同页多格式" not in err                                    # 别把跳过的缩略图算进去重计数
+
+
+def test_collect_images_only_thumbnails_says_why(tmp_path):
+    """目录里只剩缩略图时，报错要说清那是副产品——⛔ 别只回一句"没有图片"让人瞎找。"""
+    import publish_note
+    note, img_dir = _make_note_tree(tmp_path, pages=1, receipt=False)
+    (img_dir / "P01.png").unlink()
+    (img_dir / "P01.thumb220.png").write_bytes(b"\x89PNG thumb")
+    with pytest.raises(ValueError) as exc:
+        publish_note.collect_images(note, None)
+    assert "P01.thumb220.png" in str(exc.value) and "副产品" in str(exc.value)
+
+
 # ---- 约束 warning（服务端静默截断，提前提示） ----
 
 def test_build_warnings_boundaries():
@@ -1066,6 +1093,170 @@ def test_manual_confirmed_source_unaffected(tmp_path):
                    job_id=None, session_id=None,
                    confirmed_by="胡佰亿", confirmed_at="2026-08-14T15:00:00+08:00")
     assert publish_note.check_cover_receipt(img_dir / "P01.png")["ok"] is True
+
+
+# ---- 闸门 A · HTML 确定性渲染这条路（2026-08-17 干跑实测：闸门当时只放行谎话）----
+# 文档钦定 render_cover.py 的 HTML 渲染是封面主路径，但 ④ 只认 prompt_excerpt 里的色值+版式。
+# 确定性渲染压根没有提示词 → **如实填就发不出去，能过闸的唯一做法是编一段这张图没用过的提示词**。
+# 下面这组锁住新判据：三个确定性字段各自能报红，且 AI 那条路一个字都没被带偏。
+
+def _write_render_cover_receipt(img_dir, drop=(), **extra):
+    """落一份 render_cover.py 形状的凭证（键名与嵌套跟 `render_cover/receipt@1` 一致）。"""
+    meta = {
+        "schema": "render_cover/receipt@1",
+        "kind": "jinjin",
+        "source": "render_cover",
+        "cover_only": True,                       # 一次渲染只出一张图，天然单出
+        "template": {"path": "/x/assets/cover-templates/tpl-cover-jinjin.html",
+                     "kind": "jinjin", "alias": None},
+        "palette": ["#E8D8C4", "#A34B3A", "#2B3A4A"],
+        "layout": "通栏大字压顶",
+        "style_profile": {"套名": "图文", "version": 3},
+        "outputs": {"image": str(img_dir / "P01.png"), "format": "png"},
+        "gates_ok": True,
+        "generated_at": "2026-08-17T10:00:00+08:00",
+    }
+    meta.update(extra)
+    for k in drop:
+        meta.pop(k, None)
+    mp = img_dir / "P01.meta.json"
+    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return mp
+
+
+def test_render_cover_source_passes_without_any_prompt(tmp_path):
+    """本次改动的存在理由：HTML 渲染的封面**如实填就能发**，⛔ 不必编一段提示词。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_render_cover_receipt(img_dir)
+    out = publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert out["ok"] is True and out["source"] == "render_cover"
+    assert out["template"] == "jinjin" and out["layout"] == "通栏大字压顶"
+    assert out["palette"] == ["#E8D8C4", "#A34B3A", "#2B3A4A"]
+    assert "prompt_excerpt" not in json.loads((img_dir / "P01.meta.json").read_text("utf-8"))
+
+
+def test_render_cover_missing_template_is_rejected(tmp_path):
+    """缺 template＝没有模板背书：拒。⛔ 字段缺失绝不等于放行。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_render_cover_receipt(img_dir, drop=("template",))
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "缺字段 `template`" in str(exc.value)
+
+
+def test_render_cover_palette_without_hex_is_rejected(tmp_path):
+    """palette 里没有 #RRGGBB＝没按本批调色板出：拒（与 AI 路 ④ 的色值判据同实质）。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    for bad in ([], ["暖米白", "赭红"], "按品牌色出的", None):
+        _write_render_cover_receipt(img_dir, palette=bad)
+        with pytest.raises(ValueError) as exc:
+            publish_note.check_cover_receipt(img_dir / "P01.png")
+        assert "没有色值（#RRGGBB）" in str(exc.value)
+
+
+def test_render_cover_layout_outside_whitelist_is_rejected(tmp_path):
+    """layout 必须是 COVER_LAYOUTS 里的具名版式——自己起的名字不算版式工程。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    for bad in ("jinjin", "大字封面", "", None):
+        _write_render_cover_receipt(img_dir, layout=bad)
+        with pytest.raises(ValueError) as exc:
+            publish_note.check_cover_receipt(img_dir / "P01.png")
+        assert "不是具名版式" in str(exc.value)
+
+
+def test_unknown_source_is_still_rejected(tmp_path):
+    """新增一档来源 ≠ 什么都放行：白名单外的 source 照旧拒。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    for bad in ("self_rendered_html", "screenshot", "render-cover", "RENDER_COVER"):
+        _write_render_cover_receipt(img_dir, source=bad)
+        with pytest.raises(ValueError) as exc:
+            publish_note.check_cover_receipt(img_dir / "P01.png")
+        assert "非法" in str(exc.value) and "gen_images/render_cover/manual_confirmed" in str(exc.value)
+
+
+def test_render_cover_receipt_for_another_image_is_rejected(tmp_path):
+    """张冠李戴（校验①）：render_cover 的凭证没有 cover_file，图路径记在 outputs.image。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_render_cover_receipt(img_dir, outputs={"image": str(img_dir / "P02.png")})
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "张冠李戴" in str(exc.value)
+    # 两个键都没有 ＝ 校验①无从下手，同样拒（⛔ 不许"没记就跳过"）
+    _write_render_cover_receipt(img_dir, drop=("outputs",))
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "没记这份凭证是给哪张图的" in str(exc.value)
+
+
+def test_render_cover_still_needs_style_profile_and_single_out(tmp_path):
+    """新来源只换掉 ④，⛔ 不豁免 ⑤（风格档案）与 ⑥（单出确认）。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_render_cover_receipt(img_dir, style_profile={})
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "style_profile" in str(exc.value)
+    _write_render_cover_receipt(img_dir, cover_only=False)
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "cover_only=false 且无人工确认戳" in str(exc.value)
+
+
+def test_render_cover_red_light_passes_but_speaks_up(tmp_path, capsys):
+    """封面自己报了红：**放行**（版式红字归人判断，2026-08-17 老板拍板不硬拦），
+    但必须出声——stderr 一条 ⚠️ + 红字原文，返回值里也带着。⛔ 看不见的默认放行不算放行。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    red = "🔴 hero 字高只占画面高 5.1%，低于 §2-b 的 9–13%——hero 太长撑不起来"
+    _write_render_cover_receipt(img_dir, gates_ok=False, warnings=[red, "递进行已压到字号下限"])
+    out = publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert out["ok"] is True and out["render_gates_ok"] is False
+    assert out["render_red_lights"] == [red]          # 只收 🔴，普通告警不混进来
+    err = capsys.readouterr().err
+    assert "这张封面自己报了红" in err and "请确认你真的看过这张图" in err
+    assert red in err                                  # ⛔ 光说"报红了"不算，红字原文要在
+
+
+def test_render_cover_missing_gates_ok_also_speaks_up(tmp_path, capsys):
+    """缺 gates_ok（老凭证）同样出声：⛔ 不给"字段没有＝当它绿"留口子。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_render_cover_receipt(img_dir, drop=("gates_ok",))
+    assert publish_note.check_cover_receipt(img_dir / "P01.png")["ok"] is True
+    err = capsys.readouterr().err
+    assert "这张封面自己报了红" in err and "凭证里没有 🔴 原文" in err
+
+
+def test_render_cover_green_render_stays_quiet(tmp_path, capsys):
+    """渲染全绿时**不响**——恒响的告警等于没告警，没人会再看它一眼。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_render_cover_receipt(img_dir, gates_ok=True, warnings=[])
+    assert publish_note.check_cover_receipt(img_dir / "P01.png")["ok"] is True
+    assert "自己报了红" not in capsys.readouterr().err
+
+
+def test_gen_images_path_untouched_by_the_new_branch(tmp_path):
+    """AI 那条路一个字都不许改：仍然必须有提示词，且提示词里要有色值 + 具名版式。
+    ⛔ 新来源的判据不许外溢——给 gen_images 塞 template/palette/layout 也救不了它。"""
+    import publish_note
+    _note, img_dir = _make_note_tree(tmp_path, pages=3, receipt=False)
+    _write_receipt(img_dir, prompt_excerpt="封面版式：通栏大字压顶，没有色值",
+                   template="jinjin", palette=["#E8D8C4"], layout="通栏大字压顶")
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "prompt_excerpt 里没有色值" in str(exc.value)
+    _write_receipt(img_dir, prompt_excerpt="主色 #2F4F4F，没写版式",
+                   template="jinjin", palette=["#E8D8C4"], layout="通栏大字压顶")
+    with pytest.raises(ValueError) as exc:
+        publish_note.check_cover_receipt(img_dir / "P01.png")
+    assert "没有具名版式" in str(exc.value)
 
 
 def test_cli_batch_cover_blocked_then_confirmed_then_publishes(tmp_path):

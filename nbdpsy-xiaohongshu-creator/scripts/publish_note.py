@@ -221,26 +221,43 @@ def stage_media(path: Path, kind: str) -> str:
     return str(dst.resolve())
 
 
+# 出图脚本落在**成图同目录**的缩略图（`render_cover.py` 的 `<成图名>.thumb<宽度>.<扩展名>`，
+# 宽度跟 `--thumb` 走：P01.thumb220.png / P01.thumb132.jpg）。它是验收用的副产品，不是笔记的一页。
+# 🔴 2026-08-17 dry-run 实测：不挡的话 `images=['P01.png', 'P01.thumb220.png']`——**两页、零告警**，
+# 真发就是把 220px 缩略图当第二张图发出去。⛔ 挡了也必须出声：静默跳过和静默收进来是同一个病的两面。
+THUMB_STEM_RE = re.compile(r"\.thumb\d+$", re.I)
+
+
 def collect_images(note_path: Path, images_dir):
     """默认取笔记同目录 images/<note名>/ 下的图片，按文件名排序（P01→PNN 即页序）。
 
     同名不同扩展名视为同一页的两种格式（出图脚本常同时落 png 原图+jpg 压缩图），
     只取一份——否则一篇 7 页会被发成 14 张且零告警（2026-08-10 实战险情）。
     同页多格式时优先 jpg/jpeg（体积小、上传快），其次 png/webp。
+    缩略图（`*.thumbNNN.*`）跳过并**点名报出来**（见 THUMB_STEM_RE）。
     """
     d = Path(images_dir) if images_dir else note_path.parent / "images" / note_path.stem
     if not d.is_dir():
         raise ValueError(f"配图目录不存在: {d}（先出图，或用 --images-dir 指定）")
     prefer = {".jpg": 0, ".jpeg": 1, ".png": 2, ".webp": 3}
-    by_stem = {}
+    pages, thumbs = [], []
     for p in sorted(p for p in d.iterdir() if p.suffix.lower() in IMAGE_EXTS):
+        (thumbs if THUMB_STEM_RE.search(p.stem) else pages).append(p)
+    if thumbs:
+        print(f"⚠️ 跳过 {len(thumbs)} 张缩略图：{'、'.join(p.name for p in thumbs)}"
+              "——`*.thumbNNN.*` 是出图脚本落在同目录的验收副产品，不是笔记的一页。"
+              "真要发这个名字的图，把文件名里的 `.thumbNNN` 去掉再来", file=sys.stderr)
+    by_stem = {}
+    for p in pages:
         old = by_stem.get(p.stem)
         if old is None or prefer[p.suffix.lower()] < prefer[old.suffix.lower()]:
             by_stem[p.stem] = p
     paths = sorted(by_stem.values())
     if not paths:
-        raise ValueError(f"配图目录里没有图片: {d}")
-    dropped = sum(1 for p in d.iterdir() if p.suffix.lower() in IMAGE_EXTS) - len(paths)
+        raise ValueError(f"配图目录里没有图片: {d}"
+                         + (f"（只有 {len(thumbs)} 张缩略图 {'、'.join(p.name for p in thumbs)}，"
+                            "那是副产品不是笔记页——去出成图）" if thumbs else ""))
+    dropped = len(pages) - len(paths)
     if dropped:
         print(f"⚠️ 配图目录存在同页多格式，已按 jpg>png>webp 去重：取 {len(paths)} 张、忽略 {dropped} 张重复格式", file=sys.stderr)
     return paths
@@ -253,9 +270,16 @@ def collect_images(note_path: Path, images_dir):
 
 # 封面凭证认的五个具名版式（illustration-spec §2-b「封面版式工程」版式表，2026-08-14 补第五式）
 COVER_LAYOUTS = ("通栏大字压顶", "左字右图分栏", "留白场", "色块压条", "上图下字·真人照")
-# 凭证的合法来源只有两个。⛔ 自渲染 HTML / 视频截帧 / 随手找的图都不是合法来源；
-# 把它们写成 manual_confirmed 不是"绕过闸门"，是**伪造凭证**。
-COVER_SOURCES = ("gen_images", "manual_confirmed")
+# 凭证的合法来源三个，各自对应一条**真的走过**的封面产线：
+#   gen_images       —— AI 出图（工序③），凭据是 server 回执的 job/session + 提示词摘要；
+#   render_cover     —— HTML 确定性渲染（封面主路径，老板拍板「HTML 的更好」），
+#                       它没有提示词，凭据换成模板/调色板/版式三个确定性字段（见 render_cover_evidence）；
+#   manual_confirmed —— 人工/宿主出图，凭据是具名确认人 + 时间。
+# ⛔ 视频截帧 / 随手找的图 / 手搓的 HTML 仍然都不是合法来源；把它们写成上面任何一档都是**伪造凭证**。
+# ⚠️ 2026-08-17 补 render_cover 这一档的理由（干跑实测）：此前判据只认「AI 生图」这一个世界，
+# 照文档钦定的主路径出的封面**如实填就发不出去**，唯一能过闸的做法是编一段这张图根本没用过的
+# 提示词——**闸门只放行谎话**。那不是措辞问题，是判据缺了一整条合法产线。
+COVER_SOURCES = ("gen_images", "render_cover", "manual_confirmed")
 # 凭证比封面图旧多少秒算脱钩。留 2s 余量：同一次出图里「先落图、后写凭证」两步之间
 # 有正常的秒级时差，文件系统时间戳精度也不一致；真正要挡的是"图重出了、凭证还是旧那份"。
 COVER_RECEIPT_MTIME_SLACK = 2.0
@@ -267,6 +291,65 @@ COVER_BATCH_REJECT_MSG = "封面凭证是批量顺带产出的（cover_only=fals
 
 def cover_meta_path(cover: Path) -> Path:
     return cover.with_suffix(".meta.json")
+
+
+def render_cover_evidence(cover: Path, mp: Path, meta: dict) -> dict:
+    """`source=render_cover` 的校验项①与④——**确定性渲染没有提示词，凭据换成确定性字段**。
+
+    ④ 原本要 `prompt_excerpt` 里有色值 + 具名版式，本意是「证明这张封面按本批风格档案的
+    调色板、按某个具名版式出的」。对 AI 路，提示词是唯一能拿到的凭据；对 HTML 渲染路，
+    提示词根本不存在，而 **模板名 / 调色板 / 版式** 三样都是渲染器自己就知道的确定性事实——
+    比一段人写的提示词更硬。所以这条路 ⛔ 不要 `prompt_excerpt`，改判这三样。
+
+    ⚠️ 缺字段一律拒（fail-closed）：新来源如果允许"字段没有就跳过"，等于给闸门开了一整条旁路。
+    """
+    # ① 张冠李戴：render_cover 的凭证里没有 `cover_file`（它把图路径记在 outputs.image），
+    # 两个键都不认就等于这条新来源整个跳过校验 ①——那正是"字段缺失＝放行"的老病。
+    img = str(meta.get("cover_file") or (meta.get("outputs") or {}).get("image") or "").strip()
+    if not img:
+        raise ValueError(f"封面凭证 {mp.name} 没记这份凭证是给哪张图的"
+                         "（`cover_file` 与 `outputs.image` 都没有）——校验不了张冠李戴，拒发")
+    if Path(img).stem != cover.stem:
+        raise ValueError(f"封面凭证张冠李戴：凭证记的是 {Path(img).name} ≠ 实际文件 {cover.name}"
+                         "（主名不同；若只是 png→jpg 转档不会报这条）")
+    # 模板：render_cover 的凭证里 `template` 本来就是 {path, kind, alias}（receipt@1 已占了这个键），
+    # 所以两种写法都收——字符串，或那个 dict 里的 kind/alias/文件名。
+    tpl = meta.get("template")
+    if isinstance(tpl, dict):
+        tpl = tpl.get("kind") or tpl.get("alias") or Path(str(tpl.get("path") or "")).stem
+    tpl = str(tpl or "").strip()
+    if not tpl:
+        raise ValueError(f"封面凭证 {mp.name} 缺字段 `template`——HTML 渲染这条路靠模板背书"
+                         "（写模板名字符串，或 render_cover 的 {path, kind, alias} 都收）")
+    # 调色板：记的是**实际渲出来的**色值，⛔ 不是提示词里许诺的色值。
+    pal = meta.get("palette")
+    pal_txt = " ".join(str(x) for x in pal) if isinstance(pal, (list, tuple)) else str(pal or "")
+    hexes = re.findall(r"#[0-9A-Fa-f]{6}\b", pal_txt)
+    if not hexes:
+        raise ValueError(f"封面凭证 {mp.name} 的 `palette` 里没有色值（#RRGGBB）——"
+                         "说明这张封面没按本批风格档案的调色板出"
+                         "（这条路记的是实际渲出来的调色板，⛔ 别拿提示词顶）")
+    layout = str(meta.get("layout") or "").strip()
+    if layout not in COVER_LAYOUTS:
+        raise ValueError(f"封面凭证 {mp.name} 的 layout={layout or '(缺)'} 不是具名版式"
+                         f"（{'/'.join(COVER_LAYOUTS)}）——封面版式工程没走，见 illustration-spec §2-b")
+    # gates_ok 是 render_cover 自己对这次渲染的判决（红灯＝排版不达标）。**只报不拦**——
+    # 小红书线现行口径是「照常出图、红字交人判断」（render_cover jinjin 路退出码故意恒 0），
+    # 硬拦会打断正在跑活的用法（2026-08-17 老板拍板）。
+    # 🔴 但「不拦」≠「不响」：放行必须留下声音，否则它就是一个看不见的默认放行
+    #    （同型事故：横版豁免了 avatar 却不说，图上没头像闸门还是绿的）。
+    #    ⚠️ 判据是 `is not True`——缺字段 / null 一样出声，⛔ 不给"字段没有＝当它绿"留口子。
+    gates_ok = meta.get("gates_ok")
+    reds = [str(w) for w in (meta.get("warnings") or []) if str(w).startswith("🔴")]
+    if gates_ok is not True:
+        print(f"⚠️🔴 这张封面自己报了红（{mp.name} gates_ok={gates_ok!r}）——闸门 A 照样放行，"
+              "因为版式红字归人判断。**请确认你真的看过这张图**，"
+              "⛔ 别把「闸门绿了」当成「封面合格了」", file=sys.stderr)
+        for w in reds or ["（凭证里没有 🔴 原文：可能是老凭证、或渲染时没落 warnings——"
+                          "⛔ 同样不代表这张图合格，去看图）"]:
+            print(f"   {w}", file=sys.stderr)
+    return {"template": tpl, "palette": hexes, "layout": layout,
+            "render_gates_ok": gates_ok, "render_red_lights": reds}
 
 
 def check_cover_receipt(cover: Path) -> dict:
@@ -285,7 +368,8 @@ def check_cover_receipt(cover: Path) -> dict:
         raise ValueError(
             f"缺封面产出凭证 {mp.name}——⛔ 无凭证一律拒发。\n"
             "  封面必须走工序③（三形态共用同一道封面闸门，视频没有旁路）：\n"
-            "  gen_images.py 出封面时会自动落盘同名 .meta.json（字段见 SKILL.md 工序③「封面产出凭证」）；\n"
+            "  render_cover.py（HTML 渲染，封面主路径）与 gen_images.py 出封面时都会自动落盘\n"
+            "  同名 .meta.json（字段见 SKILL.md 工序③「封面产出凭证」）；\n"
             "  人工/宿主出图的批次写 source=manual_confirmed 并记下是谁在什么时候认可的。")
     try:
         meta = json.loads(mp.read_text(encoding="utf-8"))
@@ -303,7 +387,8 @@ def check_cover_receipt(cover: Path) -> dict:
     source = need("source")
     if source not in COVER_SOURCES:
         raise ValueError(f"封面凭证 source={source!r} 非法（只认 {'/'.join(COVER_SOURCES)}）——"
-                         "自渲染 HTML / 视频截帧不是合法来源，改走工序③ 出图")
+                         "视频截帧 / 随手找的图 / 手搓的 HTML 都不是合法来源："
+                         "HTML 封面走 render_cover.py（它自己落凭证），AI 封面走工序③ gen_images.py")
     # 只比主名不比扩展名：发布前把 PNG 转 JPG 是文档要求的常规动作（PNG 八张 11MB 会撑爆
     # CF 100s 网关），而凭证是出图时写的、记的是 P01.png。转档换的是容器不是内容，
     # 凭证仍然为这张图背书；比全名会让「照文档转档」的人必撞（2026-08-16 干跑实测）。
@@ -324,6 +409,8 @@ def check_cover_receipt(cover: Path) -> dict:
     if source == "gen_images":
         need("job_id")
         need("session_id")
+    elif source == "render_cover":
+        pass                     # 本地确定性渲染，没有 server job；凭据见 render_cover_evidence
     else:
         need("confirmed_by")     # 谁认可的——空串/纯空白不算数
         need("confirmed_at")
@@ -343,13 +430,19 @@ def check_cover_receipt(cover: Path) -> dict:
             + f"  补戳：<本脚本> --confirm-cover {cover} --confirmed-by \"<姓名>\""
             "（看过这张图的人签名，⛔ 别代签）\n"
             "  单出：gen_images.py --note <稿件> --cover-only（出完看缩略图再批量出后续页）")
-    excerpt = str(need("prompt_excerpt"))
-    if not re.search(r"#[0-9A-Fa-f]{6}\b", excerpt):
-        raise ValueError(f"封面凭证 {mp.name} 的 prompt_excerpt 里没有色值（#RRGGBB）——"
-                         "说明这张封面没按本批风格档案的调色板出")
-    if not any(v in excerpt for v in COVER_LAYOUTS):
-        raise ValueError(f"封面凭证的 prompt_excerpt 里没有具名版式"
-                         f"（{'/'.join(COVER_LAYOUTS)}）——封面版式工程没走，见 illustration-spec §2-b")
+    # ④ **按来源分岔**：有提示词的路（AI 生图 / 人工出图）判提示词；HTML 确定性渲染那条路
+    # 压根没有提示词，判模板/调色板/版式三个确定性字段。⛔ 别对 HTML 路要一段不存在的提示词。
+    if source == "render_cover":
+        extra = render_cover_evidence(cover, mp, meta)
+    else:
+        extra = {}
+        excerpt = str(need("prompt_excerpt"))
+        if not re.search(r"#[0-9A-Fa-f]{6}\b", excerpt):
+            raise ValueError(f"封面凭证 {mp.name} 的 prompt_excerpt 里没有色值（#RRGGBB）——"
+                             "说明这张封面没按本批风格档案的调色板出")
+        if not any(v in excerpt for v in COVER_LAYOUTS):
+            raise ValueError(f"封面凭证的 prompt_excerpt 里没有具名版式"
+                             f"（{'/'.join(COVER_LAYOUTS)}）——封面版式工程没走，见 illustration-spec §2-b")
     sp = meta.get("style_profile") or {}
     if not sp.get("套名") or sp.get("version") in (None, ""):
         raise ValueError(f"封面凭证缺 style_profile（套名 + version）——"
@@ -359,7 +452,7 @@ def check_cover_receipt(cover: Path) -> dict:
             "session_id": meta.get("session_id"),
             "cover_only": bool(meta.get("cover_only")),
             "run_pages": str(meta.get("run_pages") or "") or None,   # "1"/"2-8"/"1,3"/"all"
-            "confirmed_by": confirmed_by or None, "ok": True}
+            "confirmed_by": confirmed_by or None, "ok": True, **extra}
 
 
 def confirm_cover_receipt(cover: Path, who: str) -> dict:
