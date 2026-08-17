@@ -232,7 +232,10 @@ python3 {SKILL_DIR}/scripts/render_storyboard.py --workdir <workdir>
 > （`references/narration-spec.md` §九）。超了 **exit 1、不出确认页、不进第 3 步**，并报出哪一镜、
 > 多少字、超了多少。挂在这里是因为本步是第 2 步与第 3 步之间**唯一必经**的脚本环节——
 > 拦在这儿是免费的，拦在 TTS 之后钱已经花了。
-> 处置按第十一律的删除次序：**修辞 → 场景 → 例子**，限定句永远最后一个动，动不了就砍整页。
+> **首选处置＝拆镜**（断成两镜，内容一个字不少）——它拦的是「这一镜念不完」，⛔ 不是「说太多」；
+> **镜数变多是可以的，为了少几镜把话说半截不可以**。拆不动才按第十一律的删除次序：
+> **修辞 → 场景 → 例子**，限定句永远最后一个动，动不了就砍整页（⛔ 别一上来就删场景，
+> §八 要求「道理让场景说」，删光就退回念论点了）。
 > 同时会打十四律软提醒（书面连接词 / 破折号 / 完整引语）——**只报不拦**，人判。
 > 单独跑：`python3 {SKILL_DIR}/scripts/check_narration.py --shots <workdir>/shots.json`
 
@@ -369,7 +372,7 @@ python3 {SKILL_DIR}/scripts/compose_video.py --manifest <workdir>/manifest.json
 
 ### 通用输入（非笔记：任意文本/长文/主题）
 
-没有笔记时跳过第 1 步：按「分镜与旁白写作要点」节把文本浓缩成 6–12 镜，手写 `<workdir>/shots.json`（结构同工作目录契约：`{"video":{"title","ratio":"9:16"},"shots":[{"index":1,"prompt":...,"subtitle":...,"narration_text":...,"image":null,"duration":null},...]}`，index 从 1 起），然后从第 3 步接入，后续完全一致。
+没有笔记时跳过第 1 步：按「分镜与旁白写作要点」节把文本拆成分镜（⚠️ **典型 6–12 镜是观察值不是指标**，镜数由内容定——⛔ 别为凑进区间删论据；一镜念不完就拆两镜，见 `narration-spec.md` §九），手写 `<workdir>/shots.json`（结构同工作目录契约：`{"video":{"title","ratio":"9:16"},"shots":[{"index":1,"prompt":...,"subtitle":...,"narration_text":...,"image":null,"duration":null},...]}`，index 从 1 起），然后从第 3 步接入，后续完全一致。
 
 ### 故事化演绎输入（一句话选题种子 → 虚构故事微电影）
 

@@ -13,7 +13,8 @@
 ## 产线五步
 
 ```
-① 文案（8-10 句、含一个全片情绪焦点句）→
+① 文案（把事说清楚 + 含一个全片情绪焦点句；⚠️ 典型落在 8-10 句，那是**观察值不是指标**，
+   句数由内容定——⛔ 别为了凑进区间而删论据或注水）→
 ② tts_gen --engine minimax --timed 口播+cues（★必须 2026-08-11 后版本：wav 域拼接）→
 ③ （仅 kinetic 模板）extract_word_timings.py 拿 ASR 词级时间戳 →
 ④ 选版式模板（assets/card-templates/）改卡片文案
