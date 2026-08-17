@@ -1,0 +1,18 @@
+<!-- NBDpsy 封面素材库 | 意象：两个气泡：来回沟通、咨询对话
+     来源：Lucide · messages-square | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/messages-square.svg
+     许可证：ISC（Lucide Icons and Contributors）| 需署名：否（商用免署名）
+     下载日期：2026-08-17 | 改造：仅加本注释与 class="nbd-svg-icon"，图形与 currentColor 未改 -->
+<svg class="nbd-svg-icon"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+  <path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
+</svg>

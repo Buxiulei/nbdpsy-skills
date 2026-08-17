@@ -1,0 +1,19 @@
+<!-- NBDpsy 封面素材库 | 意象：手电：主动照见暗处、探索
+     来源：Lucide · flashlight | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/flashlight.svg
+     许可证：ISC（Lucide Icons and Contributors）| 需署名：否（商用免署名）
+     下载日期：2026-08-17 | 改造：仅加本注释与 class="nbd-svg-icon"，图形与 currentColor 未改 -->
+<svg class="nbd-svg-icon"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 13v1" />
+  <path d="M17 2a1 1 0 0 1 1 1v4a3 3 0 0 1-.6 1.8l-.6.8A4 4 0 0 0 16 12v8a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-8a4 4 0 0 0-.8-2.4l-.6-.8A3 3 0 0 1 6 7V3a1 1 0 0 1 1-1z" />
+  <path d="M6 6h12" />
+</svg>

@@ -31,6 +31,19 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [2.1.0] — 2026-08-17
+
+**HTML 封面渲染转为主路径**（老板看完并排对比拍板「HTML 的更好」，AI 生图退为只画陪衬素材）：
+
+- **新增 `scripts/render_cover.py` + `assets/cover-templates/tpl-cover-jinjin.html`**：数据驱动（JSON 传文案）、876×1313、复用 typeset_longimage 的 Playwright 截图范式。**改一句文案＝改一个字段，版式分毫不动、秒出、零出图额度、字绝不写错、同批天然同款**——AI 生图每次重出都会漂移，这是它治不了的病
+- **四级字阶**（hero 赭红 Heavy ≥9% 画面高 / 副题 =hero×0.34 墨蓝加粗 / steps =hero×0.58 灰蓝 / 结论行赭红加粗）；`avatar_ratio` 0.36
+- 🔴 **版式适用范围硬判据**（本轮最贵教训）：「通栏大字压顶」要求 **hero ≤6 字**——876px 画布实测 4 字＝12.4%、6 字＝8.3%、**10 字＝5.0%**。超 6 字只能**拆成 hero+副题**或**换版式**，⛔ 绝不硬压字号（首版就是这么把 hero 压到 5%、冲击力只剩 AI 版 45%）。**不是规格数字错，是文案与版式不匹配**
+- **新增 `assets/svg-library/`**：63 个开源 SVG（Lucide ISC 56 / Tabler MIT 7 / 自绘 2），**全库零署名义务**，`LICENSES.md` 逐文件台账（来源/许可证/需否署名/日期）当免责依据；⛔ CC-BY 与 CC-BY-NC 一个没收；unDraw 因「禁止 redistribute in packs」而不收
+- **四道静默缺口改报红**：ornament 名不在库（曾静默无图）、缺 avatar/identity/footer（曾留 19.3% 空白）、hero 超两行、字体未落位
+- ⚠️ **两个「测了等于没测」的假闸门入规范**：`document.fonts.check()` **对任何字体名都返回 true**（实测 'Totally Fake Font XYZ' 亦然）；`scrollHeight <= clientHeight` 在 overflow:visible 的 flex 容器里**恒等**（首版靠它蒙混，加副题后实际溢出 70.8px 仍报绿）
+- 规格与审查端：illustration-spec 新增 **§2-c**（与 §2-b 分工：一个管怎么排、一个管排什么）；SKILL.md 工序③ 与红线第 16 条；checklist-images 新增 **判据 6-c**（HTML 封面产物七项逐条可核）
+
+
 ## [2.0.0] — 2026-08-17
 
 **三条写作方法论落成必经闸门**（老板令：「吸收进产线，要确保下次写小红书文案时能真的运用，而不是一个死链，永远闲置不被调用」）。⚠️ **Breaking**：所有笔记 frontmatter 新增必填 `读者` 字段，存量稿件不补即拒跑。

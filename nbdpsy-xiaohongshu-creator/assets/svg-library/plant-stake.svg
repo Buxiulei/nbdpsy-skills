@@ -1,0 +1,22 @@
+<!-- NBDpsy 封面素材库 | 意象：植物与支架：有支撑才长得直（支持系统、外部帮助）
+     来源：NBDpsy 自绘原创（Lucide 24×24 网格与 2px 线宽规范对齐，未复制任何上游图形）
+     许可证：NBDpsy 自有版权，无第三方许可证约束 | 需署名：否
+     创建日期：2026-08-17 | 上游缺口：Lucide / Tabler / Heroicons 均无「植物＋支架」图形 -->
+<svg class="nbd-svg-icon"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M3 21h18" />
+  <path d="M16 21V7" />
+  <path d="M10 21c0-4 1.1-7.3 4.2-10.2" />
+  <path d="M11.5 15.5c-2.4 0-4-1.6-4-4 2.4 0 4 1.6 4 4Z" />
+  <path d="M12.8 14.8h3.4" />
+  <path d="M14.4 11.9h1.8" />
+</svg>

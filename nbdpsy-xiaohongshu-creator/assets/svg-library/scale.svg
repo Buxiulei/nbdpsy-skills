@@ -1,0 +1,21 @@
+<!-- NBDpsy 封面素材库 | 意象：天平：权衡、取舍
+     来源：Lucide · scale | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/scale.svg
+     许可证：ISC（Lucide Icons and Contributors）| 需署名：否（商用免署名）
+     下载日期：2026-08-17 | 改造：仅加本注释与 class="nbd-svg-icon"，图形与 currentColor 未改 -->
+<svg class="nbd-svg-icon"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 3v18" />
+  <path d="m19 8 3 8a5 5 0 0 1-6 0zV7" />
+  <path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1" />
+  <path d="m5 8 3 8a5 5 0 0 1-6 0zV7" />
+  <path d="M7 21h10" />
+</svg>

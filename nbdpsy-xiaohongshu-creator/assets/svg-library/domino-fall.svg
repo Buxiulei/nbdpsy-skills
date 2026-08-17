@@ -1,0 +1,20 @@
+<!-- NBDpsy 封面素材库 | 意象：骨牌连锁：一件事推倒下一件（连锁反应、恶性循环）
+     来源：NBDpsy 自绘原创（Lucide 24×24 网格与 2px 线宽规范对齐，未复制任何上游图形）
+     许可证：NBDpsy 自有版权，无第三方许可证约束 | 需署名：否
+     创建日期：2026-08-17 | 上游缺口：Lucide / Tabler / Heroicons 均无 domino 图形 -->
+<svg class="nbd-svg-icon"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M2 21.5h20" />
+  <rect x="2.2" y="13" width="4" height="7" rx=".5" transform="rotate(45 4.2 20)" />
+  <rect x="9.5" y="13" width="4" height="7" rx=".5" transform="rotate(22 11.5 20)" />
+  <rect x="17" y="13" width="4" height="7" rx=".5" />
+</svg>

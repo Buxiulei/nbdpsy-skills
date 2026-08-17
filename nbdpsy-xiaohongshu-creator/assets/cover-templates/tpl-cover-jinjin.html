@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>tpl-cover-jinjin</title>
+<!--
+  「通栏大字压顶 · 递进三行」封面模板（老板 2026-08-16 验收版式的确定性复刻）
+
+  ⛔ 这个文件里不写任何一句文案 —— 全部由 render_cover.py 把 JSON 注入
+     下面那个 <script id="cover-data"> 占位符。改文案 = 改 JSON，版式分毫不动。
+
+  版式自上而下（⛔ 不许自创层次，也⛔ 不许加 01/02/03 装饰序号）：
+    ① 通栏大字压顶（hero，**只放最扎心的那句短句**，1–2 行）
+    ② 副题（subtitle，加粗墨蓝，= hero × 0.34；可空，空了自动退化回三级字阶）
+    ③ 递进三行（前两行小圆点 + 鼠尾草绿虚线相连；第三行赭红箭头 + 加粗 = 结论行）
+    ④ 咨询师真人头像（圆形、鼠尾草绿细描边）+ 身份两行
+    ⑤ 右下陪衬 SVG（≤ 画面宽 20%，不与头像争）
+    ⑥ 底部落款
+
+  四级字阶（2026-08-17 老板拍板「方案 1」后定稿，⛔ 别再退回两级）：
+    hero(1.00·赭红 Heavy) → subtitle(0.34·墨蓝加粗) → steps 前两条(≤subtitle·灰蓝常规)
+    → 第三条结论行(同字号·赭红加粗)。级差一半靠字号、一半靠字重与颜色。
+    0.34 是 illustration-spec §2-b 给 **support/副题** 定的系数——首版没有副题层、
+    把它误套给递进行才导致弃用；现在它有正主了。hero:subtitle ≈ 2.94:1，
+    满足该节「hero:support ≥ 2.5:1」硬下限。
+
+  自适应引擎见文末 <script>：hero 一次线性测量求"恰好撑满版心"的字号，
+  递进行二分求"不溢出的最大字号"，剩余空白由 flex spacer 自动均分。
+-->
+<script id="cover-data" type="application/json">__COVER_DATA__</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    /* —— 画布 —— */
+    --w: 876px;  --h: 1313px;
+    --pad-x: 60px; --pad-top: 114px; --pad-bottom: 76px;
+    --step-indent: 46px;   /* 递进区相对 hero 的缩进 = 层级由位置表达 */
+
+    /* —— 我们自己的调色板（⛔ 不出现表外颜色）—— */
+    --bg:     #E8D8C4;   /* 暖米白纸纹（品牌色本体，⛔ 不许换 hex）*/
+    /* 纸面受光：往暖白 #FFF6E9 兑 40%，把成图底色从 #EADDCC 抬到 ≈#F1E4D3，
+       贴近 AI 版实测的 #F4E5D2。这是**打光**不是换颜料——色相不动、只抬明度，
+       所以仍在品牌色范围内（2026-08-17 老板「比 AI 版暗一档」反馈的处置）。*/
+    --paper-lift: 40%;
+    --accent: #A34B3A;   /* 赭红 = 唯一强调色 */
+    --ink:    #2B3A4A;   /* 墨蓝 */
+    --muted:  #5A6B7B;   /* 正文灰蓝 */
+    --sage:   #C9D6CE;   /* 鼠尾草绿 */
+    --haze:   #A8B5C4;   /* 雾霾蓝灰 */
+
+    /* —— 自适应引擎写回的排印量（初值只是占位）—— */
+    --hero-fs: 70px;
+    --hero-lh: 1.14;
+    --sub-fs:  24px;
+    --sub-lh:  1.42;
+    --step-fs: 30px;
+    --step-lh: 1.62;
+    --name-fs: 44px;
+    --role-fs: 24px;
+    --foot-fs: 22px;
+
+    --avatar-d: 315px;   /* 画面宽 36%（2026-08-14 老板明令「头像放大成主要元素」）*/
+    --orn-w:    140px;   /* 画面宽 16%，硬上限 20% */
+    --gap-min:  22px;
+  }
+
+  html, body { width: var(--w); height: var(--h); }
+  /* 打光后的实际纸色。圆点/marker 要盖住虚线，必须用它而不是 --bg（用 --bg 会露出一块暗斑）*/
+  :root { --paper: color-mix(in srgb, var(--bg) calc(100% - var(--paper-lift)), #FFF6E9); }
+  body {
+    font-family: "Noto Sans SC","Noto Sans CJK SC","Source Han Sans SC",
+                 "PingFang SC","Microsoft YaHei","WenQuanYi Micro Hei",sans-serif;
+    background: var(--paper);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+
+  /* ── 画布 + 纸纹 ─────────────────────────────────────────── */
+  .canvas {
+    position: relative;
+    width: var(--w); height: var(--h);
+    overflow: hidden;
+    background: var(--paper);
+  }
+  /* 柔光：中上偏亮、四角略沉，模拟纸面受光 */
+  .canvas::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 78% at 50% 22%, rgba(255,252,246,.55) 0%, rgba(255,252,246,0) 62%),
+      radial-gradient(140% 100% at 50% 100%, rgba(120,96,70,.055) 0%, rgba(120,96,70,0) 55%);
+  }
+  /* 颗粒：feTurbulence 噪点，低透明度叠乘 —— 纸质肌理靠它，不靠贴图 */
+  .canvas::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    opacity: .085; mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,\
+<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'>\
+<filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/>\
+<feColorMatrix type='saturate' values='0'/></filter>\
+<rect width='220' height='220' filter='url(%23n)'/></svg>");
+    background-size: 220px 220px;
+  }
+
+  .stage {
+    position: absolute; inset: 0; z-index: 2;
+    padding: var(--pad-top) var(--pad-x) var(--pad-bottom);
+    display: flex; flex-direction: column;
+  }
+  .sp { flex: 1 1 var(--gap-min); min-height: var(--gap-min); }
+  .sp-hero  { flex-grow: 1; }
+  .sp-steps { flex-grow: 1; }
+  .sp-foot  { flex-grow: .45; }
+
+  /* ── ① 通栏大字压顶 ───────────────────────────────────────── */
+  .hero { flex: 0 0 auto; }
+  .hero .l {
+    display: block;
+    /* ⚠️ width 必须是 max-content：block 元素默认撑满父宽，
+       getBoundingClientRect() 会返回版心宽而不是这行字的实际宽，
+       自适应就会解出一个大到溢出画布的字号（2026-08-17 首次渲染实测踩到）。*/
+    width: max-content;
+    white-space: nowrap;
+    font-size: var(--hero-fs);
+    line-height: var(--hero-lh);
+    font-weight: 900;
+    color: var(--accent);
+    letter-spacing: 0;
+    /* Noto Sans CJK 只到 Bold，用极细同色描边补出 Heavy 的观感 */
+    -webkit-text-stroke: .021em var(--accent);
+    paint-order: stroke fill;
+  }
+  /* 行首/行尾的直角引号把版心啃出一块空 —— 悬挂出去，大字才真"通栏" */
+  .hero .l.hang-l { margin-left: -.145em; }
+  .hero .l.hang-r { margin-right: -.145em; }
+
+  /* ── ② 副题（可空；空了整个元素不出现，字阶自动退化回三级）───── */
+  .subtitle {
+    flex: 0 0 auto;
+    margin-top: calc(var(--sub-fs) * .62);
+    font-size: var(--sub-fs);
+    line-height: var(--sub-lh);
+    font-weight: 800;            /* 加粗 —— 与 steps 的常规字重拉开一级 */
+    color: var(--ink);           /* 墨蓝 —— 与 hero 的赭红、steps 的灰蓝各占一色 */
+    letter-spacing: .01em;
+    text-wrap: balance;
+  }
+
+  /* ── ③ 递进三行 ───────────────────────────────────────────── */
+  .steps { flex: 0 0 auto; position: relative; padding-left: var(--step-indent); }
+  .rail-line {          /* 前两个圆点之间的鼠尾草绿虚线（被圆点自身背景遮断）*/
+    position: absolute; left: calc(var(--step-indent) + var(--dot) / 2 - 1.5px);
+    top: calc(var(--step-fs) * var(--step-lh) / 2);
+    bottom: calc(var(--step-fs) * var(--step-lh) / 2);
+    width: 3px;
+    background-image: linear-gradient(var(--sage) 56%, transparent 56%);
+    background-size: 3px 17px;
+  }
+  .step {
+    position: relative;
+    display: flex; align-items: flex-start;
+    gap: calc(var(--step-fs) * .74);
+    font-size: var(--step-fs);
+    line-height: var(--step-lh);
+    color: var(--muted);
+  }
+  .step + .step { margin-top: calc(var(--step-fs) * 1.05); }
+  .step .mk {
+    flex: 0 0 var(--dot); width: var(--dot); height: var(--dot);
+    /* marker 永远对齐所在条目的**首行**中线（条目折行也不跑位）*/
+    margin-top: calc((var(--step-fs) * var(--step-lh) - var(--dot)) / 2);
+    display: flex; align-items: center; justify-content: center;
+    background: var(--paper);        /* 盖住穿过来的虚线 */
+    border-radius: 50%;
+    z-index: 1;
+  }
+  .step .mk i {
+    display: block;
+    width: calc(var(--dot) * .62); height: calc(var(--dot) * .62);
+    border-radius: 50%; background: var(--sage);
+  }
+  .step .mk svg { width: 100%; height: 100%; display: block; }
+  .step.concl { color: var(--accent); font-weight: 700; }
+  /* 长条目折行时把各行拉均匀，⛔ 别让第二行只剩三两个字的尾巴（Chromium 117+）*/
+  .step .tx { flex: 1 1 auto; text-wrap: balance; }
+
+  /* ── ④ 头像 + 身份 ────────────────────────────────────────── */
+  .bottom { flex: 0 0 auto; display: flex; align-items: center; }
+  .avatar {
+    flex: 0 0 var(--avatar-d);
+    width: var(--avatar-d); height: var(--avatar-d);
+    border-radius: 50%;
+    border: 4px solid var(--sage);
+    object-fit: cover;
+    background: var(--sage);
+  }
+  .ident { margin-left: calc(var(--avatar-d) * .12); min-width: 0; }
+  .ident .name {
+    font-size: var(--name-fs); font-weight: 800; color: var(--ink);
+    line-height: 1.2; letter-spacing: .04em; white-space: nowrap;
+  }
+  .ident .role {
+    margin-top: calc(var(--role-fs) * .42);
+    font-size: var(--role-fs); font-weight: 400; color: var(--muted);
+    line-height: 1.35; white-space: nowrap;
+  }
+  .ident .role .seg { white-space: nowrap; }   /* 折行只许发生在分隔号处 */
+
+  /* ── ⑤ 右下陪衬 ───────────────────────────────────────────── */
+  .orn {
+    position: absolute; z-index: 2;
+    right: var(--pad-x);
+    bottom: calc(var(--pad-bottom) + var(--foot-fs) * 2.1);
+    width: var(--orn-w);
+  }
+  .orn svg { width: 100%; height: auto; display: block; }
+
+  /* ── ⑥ 落款 ───────────────────────────────────────────────── */
+  .foot {
+    flex: 0 0 auto; text-align: center;
+    font-size: var(--foot-fs); font-weight: 400;
+    color: var(--haze); letter-spacing: .10em;
+  }
+
+  .boom { padding: 60px; font-size: 28px; color: #A34B3A; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="canvas" id="canvas"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   陪衬 SVG 小库（数据里按名字点，⛔ 不与头像争视觉：宽度受 --orn-w 夹住）
+   线条一律走调色板内的鼠尾草绿 / 雾霾蓝灰 / 一点点赭红。
+   ═══════════════════════════════════════════════════════════════════ */
+const ORN = {
+  /* 一株细长的植物 + 一根扶它的支架（「扶持」意象，科普篇默认） */
+  /* ⚠️ 三条硬约束，缺一条就会被读成梯子（2026-08-17 连栽三版后立下）：
+     ① 茎**斜靠**在支架上（下端离支架远、上端并拢），⛔ 不许与支架平行；
+     ② 两处绑扎**不等宽也不同角度**——第三版就是栽在「两对水平等长短线 = 四根横档」；
+     ③ 叶片左右**不对称**（这版左三右二、大小各异），对称排列会重新长出横档节奏。
+     自检办法：把图缩到 140px 宽再看一眼——还像梯子就重画，别自我说服。*/
+  'plant-support': `<svg viewBox="0 0 100 224" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M75 24 68 206" stroke="#A8B5C4" stroke-width="3.8" stroke-linecap="round"/>
+    <path d="M14 208h72" stroke="#C9D6CE" stroke-width="4" stroke-linecap="round"/>
+    <path d="M20 206C26 168 40 132 58 104 66 90 71 60 70 34" stroke="#C9D6CE" stroke-width="3.6" stroke-linecap="round"/>
+    <path d="M30 160 18 156M38 141l13 4M48 121 33 114M66 84l14-3M70 40l-6-9" stroke="#C9D6CE" stroke-width="2.1" stroke-linecap="round"/>
+    <ellipse cx="16" cy="154" rx="13.5" ry="6.2" fill="#C9D6CE" transform="rotate(-24 16 154)"/>
+    <ellipse cx="54" cy="147" rx="9.5" ry="4.6" fill="#C9D6CE" transform="rotate(26 54 147)"/>
+    <ellipse cx="30" cy="111" rx="15" ry="6.6" fill="#C9D6CE" transform="rotate(-19 30 111)"/>
+    <ellipse cx="83" cy="79" rx="11.5" ry="5.2" fill="#C9D6CE" transform="rotate(15 83 79)"/>
+    <ellipse cx="62" cy="25" rx="8.5" ry="4.4" fill="#C9D6CE" transform="rotate(-56 62 25)"/>
+    <path d="M46 133 71 126" stroke="#A8B5C4" stroke-width="2.6" stroke-linecap="round"/>
+    <ellipse cx="58" cy="129.5" rx="4.6" ry="3.4" fill="#A8B5C4" transform="rotate(-16 58 129.5)"/>
+    <path d="M63 68 74 73" stroke="#A8B5C4" stroke-width="2.6" stroke-linecap="round"/>
+    <ellipse cx="68.5" cy="70.5" rx="3.1" ry="2.4" fill="#A8B5C4" transform="rotate(24 68.5 70.5)"/>
+  </svg>`,
+  /* 破土的幼苗 */
+  'sprout': `<svg viewBox="0 0 110 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M55 188V96" stroke="#8FA79A" stroke-width="4.4" stroke-linecap="round"/>
+    <path d="M55 112C36 110 22 96 21 76c20-2 33 12 34 36" fill="#C9D6CE"/>
+    <path d="M57 96c18-4 30-18 30-38-19 0-31 14-30 38" fill="#C9D6CE"/>
+    <path d="M24 190h62" stroke="#A8B5C4" stroke-width="4.4" stroke-linecap="round"/>
+    <path d="M40 168q15-10 30 0" stroke="#A34B3A" stroke-width="3" stroke-linecap="round"/>
+  </svg>`,
+  /* 一只冒热气的杯子（「先歇一会」意象） */
+  'cup': `<svg viewBox="0 0 130 170" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M24 72h72v44c0 20-16 34-36 34S24 136 24 116z" stroke="#8FA79A" stroke-width="4.4" stroke-linejoin="round"/>
+    <path d="M96 84h12c9 0 16 7 16 16s-7 16-16 16h-12" stroke="#A8B5C4" stroke-width="4.4" stroke-linecap="round"/>
+    <path d="M16 162h88" stroke="#C9D6CE" stroke-width="4.4" stroke-linecap="round"/>
+    <path d="M44 50c8-8 8-16 0-24M64 46c8-9 8-18 0-27M84 50c7-8 7-16 0-24" stroke="#A34B3A" stroke-width="3.2" stroke-linecap="round" opacity=".75"/>
+  </svg>`,
+  /* 叠石（「稳住」意象） */
+  'stone': `<svg viewBox="0 0 130 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <ellipse cx="65" cy="150" rx="52" ry="18" fill="#C9D6CE"/>
+    <ellipse cx="63" cy="114" rx="38" ry="16" fill="#A8B5C4" opacity=".85"/>
+    <ellipse cx="67" cy="82" rx="27" ry="13" fill="#C9D6CE"/>
+    <ellipse cx="64" cy="56" rx="17" ry="10" fill="#A8B5C4" opacity=".85"/>
+    <path d="M64 34c0-10 6-16 14-20" stroke="#A34B3A" stroke-width="3.2" stroke-linecap="round"/>
+  </svg>`,
+  'none': ''
+};
+
+const ARROW = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M3.5 12h14" stroke="#A34B3A" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M13.2 6.6 19.8 12l-6.6 5.4z" fill="#A34B3A"/></svg>`;
+
+const OPEN_Q  = ['「','『','“','(','（','《','〈','【','［'];
+const CLOSE_Q = ['」','』','”','.','。','!','！','?','？',')','）','》','〉','】','］','，',',','、'];
+
+/* ═══════════════════════════════════════════════════════════════════
+   建 DOM
+   ═══════════════════════════════════════════════════════════════════ */
+let D, ERR = null, ORN_UNKNOWN = null;
+try {
+  D = JSON.parse(document.getElementById('cover-data').textContent);
+} catch (e) {
+  ERR = e.message;
+}
+
+const cv = document.getElementById('canvas');
+
+if (ERR) {
+  cv.innerHTML = `<div class="boom">封面数据没注入或不是合法 JSON：<br>${ERR}<br><br>
+    这个模板不含任何文案，必须由 render_cover.py --data cover.json 实例化。</div>`;
+} else {
+  const T = D.theme || {};
+  const rs = document.documentElement.style;
+  const setv = (k, v) => { if (v !== undefined && v !== null && v !== '') rs.setProperty(k, v); };
+  setv('--w',  (D.canvas?.w || 876) + 'px');
+  setv('--h',  (D.canvas?.h || 1313) + 'px');
+  setv('--bg', T.bg); setv('--accent', T.accent); setv('--ink', T.ink);
+  setv('--muted', T.muted); setv('--sage', T.sage); setv('--haze', T.haze);
+  setv('--pad-x', T.pad_x); setv('--pad-top', T.pad_top); setv('--pad-bottom', T.pad_bottom);
+
+  const heroLines = (D.hero || []).filter(s => String(s).trim() !== '');
+  const subtitle  = String(D.subtitle ?? '').trim();
+  const steps     = (D.steps || []).filter(s => String(s).trim() !== '');
+  const idn       = D.identity || {};
+  const ornName   = D.ornament || 'none';
+  const ornSvg    = D.ornament_svg_inline || ORN[ornName] || '';
+  /* 名字打错（`plant_support` 写成下划线之类）以前是**静默无图**——一张封面右下角
+     凭空少块东西，量具全绿、没人发现。现在记下来，交给 __fit() 报红。*/
+  ORN_UNKNOWN = (!D.ornament_svg_inline && !(ornName in ORN)) ? ornName : null;
+
+  const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+  const heroHTML = heroLines.map(s => {
+    const t = String(s);
+    const cls = ['l'];
+    if (OPEN_Q.includes(t[0])) cls.push('hang-l');
+    if (CLOSE_Q.includes(t[t.length - 1])) cls.push('hang-r');
+    return `<span class="${cls.join(' ')}">${esc(t)}</span>`;
+  }).join('');
+
+  /* 身份行窄到要折行时，中文可以在任意字之间断——「北大临床/心理硕士」这种断法很难看。
+     把分隔号两侧各包一个 nowrap 段，折行就只会发生在分隔号处。*/
+  const roleHTML = s => String(s).split(/\s*[·・|｜/]\s*/).filter(Boolean)
+    .map(seg => `<span class="seg">${esc(seg)}</span>`).join(' · ');
+
+  const stepsHTML = steps.map((s, i) => {
+    const last = i === steps.length - 1;
+    const mk = last ? ARROW : '<i></i>';
+    return `<div class="step${last ? ' concl' : ''}"><span class="mk">${mk}</span><span class="tx">${esc(s)}</span></div>`;
+  }).join('');
+
+  cv.innerHTML = `
+    <div class="stage" id="stage">
+      <div class="hero" id="hero">${heroHTML}</div>
+      ${subtitle ? `<div class="subtitle" id="sub">${esc(subtitle)}</div>` : ''}
+      <div class="sp sp-hero"></div>
+      <div class="steps" id="stepsBox">${steps.length > 1 ? '<div class="rail-line"></div>' : ''}${stepsHTML}</div>
+      <div class="sp sp-steps"></div>
+      <div class="bottom" id="bottom">
+        ${D.avatar ? `<img class="avatar" id="avatar" src="${D.avatar}" alt="">` : ''}
+        <div class="ident">
+          ${idn.name ? `<div class="name" id="nm">${esc(idn.name)}</div>` : ''}
+          ${idn.line ? `<div class="role" id="rl">${roleHTML(idn.line)}</div>` : ''}
+        </div>
+      </div>
+      <div class="sp sp-foot"></div>
+      <div class="foot" id="foot">${esc(D.footer || '')}</div>
+    </div>
+    ${ornSvg ? `<div class="orn" id="orn">${ornSvg}</div>` : ''}`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   自适应引擎
+   —— 三步：hero 一次线性求解 → 递进行二分 → 仍溢出才回头压 hero。
+      剩余空白交给 flex spacer 自动均分，所以"不留大片空白"不用算。
+   ═══════════════════════════════════════════════════════════════════ */
+window.__fit = function () {
+  if (ERR) return { ok: false, error: ERR };
+
+  const T   = (D.theme || {});
+  const W   = D.canvas?.w || 876;
+  const H   = D.canvas?.h || 1313;
+  const cs  = getComputedStyle(document.documentElement);
+  const padX = parseFloat(cs.getPropertyValue('--pad-x'));
+  const availW = W - padX * 2;
+  const rs = document.documentElement.style;
+
+  /* 档位闸门（可被 theme 覆盖；默认值＝老板已验收那张封面的实测比例） */
+  const HERO_MAX   = +(T.hero_max   ?? Math.round(H * 0.13 / 0.86));  // 字高≈画面高13% → font-size 上限
+  const HERO_MIN   = +(T.hero_min   ?? 56);   // 缩略图 220px 下 ≈14px，可读下限
+  const STEP_MAX   = +(T.step_max   ?? 42);
+  const STEP_FLOOR = +(T.step_floor ?? 22);
+  const ROLE_MIN   = +(T.role_min   ?? 18);
+  const NAME_MIN   = +(T.name_min   ?? 26);
+  /* 递进行 = hero × 0.58 ≈ 老板已验收那张封面的实测比例（hero 70 / 递进行 40）。 */
+  const heroCoef   = +(T.step_coef  ?? 0.58);
+  /* 副题 = hero × 0.34 —— illustration-spec §2-b 给 support/副题 定的系数。
+     ⚠️ 首版没有副题层、把 0.34 误套给递进行导致弃用；这一版它回到正主身上，
+     递进行仍走 0.58，两个系数各归各位（2026-08-17 方案 1）。*/
+  const subCoef    = +(T.sub_coef   ?? 0.34);
+  const GAP_ORN    = 24;   // 身份行与右下陪衬之间必须留的呼吸
+
+  const stage = document.getElementById('stage');
+  const hero  = document.getElementById('hero');
+  const sub   = document.getElementById('sub');
+  const stepsBox = document.getElementById('stepsBox');
+  const orn   = document.getElementById('orn');
+
+  const rectOf = el => el.getBoundingClientRect();
+  /* 文字块的**实际**外接框：.name/.role 是 block，rect.width 恒等于容器宽，
+     拿它判重叠永远判不出来（首版 P0 的一半病根）。Range 量的是字本身。*/
+  const inkRect = el => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect(); };
+  const hit = (a, b) => a.left < b.right - .5 && a.right > b.left + .5 && a.top < b.bottom - .5 && a.bottom > b.top + .5;
+  /* 该元素这一行能用到多右：陪衬在它**同一高度**上时让到陪衬左边，否则吃满版心。 */
+  const rightLimit = r => {
+    if (!orn) return W - padX;
+    const o = rectOf(orn);
+    const vOverlap = r.top < o.bottom && r.bottom > o.top;
+    return vOverlap ? Math.min(W - padX, o.left - GAP_ORN) : (W - padX);
+  };
+  /* 单行不折的文字：同字体下行宽与字号严格线性，量一次即可解出。
+     ⛔ 只夹上限、不把字号抬回下限——抬回去就横向溢出、被陪衬盖掉半句，
+     而所有量具照样报绿（2026-08-17 压力测试实证）。低于下限是**报红**的事，不是夹回去的事。*/
+  const linearFit = (el, ideal, avail) => {
+    const PROBE = 40, keep = el.style.fontSize;
+    el.style.fontSize = PROBE + 'px';
+    const ratio = el.scrollWidth / PROBE;
+    el.style.fontSize = keep;
+    return ratio > 0 ? Math.min(ideal, (avail * 0.99) / ratio) : ideal;
+  };
+
+  /* —— 步骤 1：hero「恰好撑满版心」——
+     同字体下行宽与字号严格线性，探针量一次即可解出，⛔ 不必二分。 */
+  const lines = [...hero.querySelectorAll('.l')];
+  let heroFs = HERO_MAX;
+  if (lines.length) {
+    const PROBE = 100;
+    let ratio = 0;                                   // 每 1px 字号对应的最长行宽
+    lines.forEach(el => { el.style.fontSize = PROBE + 'px'; });
+    lines.forEach(el => { ratio = Math.max(ratio, el.getBoundingClientRect().width / PROBE); });
+    heroFs = Math.min(HERO_MAX, (availW * 0.997) / ratio);   // 0.3% 余量留给描边外扩
+    /* ⛔ 这里绝不能 Math.max(HERO_MIN, …)：把字号抬回下限，字就横向溢出画布、
+       右边被裁掉半句，而所有量具照样报绿（2026-08-17 压力测试实证）。
+       正确处置是**照解出的字号渲染**（不溢出），再把"低于可读下限"这条红报出去。*/
+  }
+  const heroBelowMin = heroFs < HERO_MIN - 0.01;
+  const applyHero = fs => {
+    rs.setProperty('--hero-fs', fs.toFixed(2) + 'px');
+    lines.forEach(el => { el.style.fontSize = ''; });
+  };
+  applyHero(heroFs);
+
+  /* —— 步骤 1.5：副题 = hero × 0.34 ——
+     副题允许折行（长句本来就是从 hero 降下来的），高度进 flex 预算、由步骤 2 兜。*/
+  let subFs = 0;
+  if (sub) {
+    subFs = heroFs * subCoef;
+    rs.setProperty('--sub-fs', subFs.toFixed(2) + 'px');
+  }
+
+  /* 头像 / 姓名 / 落款：跟着 hero 走同一套系数 */
+  const avatarD = Math.round(W * +(T.avatar_ratio ?? 0.36));
+  rs.setProperty('--avatar-d', avatarD + 'px');
+  rs.setProperty('--orn-w', Math.round(W * Math.min(+(T.orn_ratio ?? 0.16), 0.20)) + 'px');
+  rs.setProperty('--name-fs', Math.round(Math.max(30, Math.min(58, heroFs * 0.62))) + 'px');
+  rs.setProperty('--foot-fs', Math.round(Math.max(18, Math.min(28, heroFs * 0.31))) + 'px');
+
+  /* —— 步骤 2：递进行二分求"整幅不溢出的最大字号" ——
+     判定函数直接问 stage 溢没溢，把折行、行距、间隔全算进去，
+     ⛔ 不自己另算一套高度预算（算两遍必然对不上）。 */
+  /* ⚠️ 判据必须是「最后一个元素的底 ≤ 下边距线」，⛔ 不能用 stage.scrollHeight。
+     stage 是 overflow:visible 的 flex 容器，内容溢出时 Chromium 的 scrollHeight
+     **一直等于 clientHeight**（实测 1313 = 1313），于是内容一路吃掉整条 76px 下边距、
+     还越过 3:4 裁切线，量具照样报 overflow_px = 0 —— 首版就是靠这个恒绿闸门混过去的
+     （2026-08-17 加副题层后 70.8px 溢出仍报绿，当场揪出）。
+     用几何量还有一个好处：flex 子元素的 margin（副题的 margin-top）也算得进去。*/
+  const padBottom = parseFloat(cs.getPropertyValue('--pad-bottom'));
+  const bottomLine = () => stage.getBoundingClientRect().bottom - padBottom;
+  const contentBottom = () => {
+    const last = stage.lastElementChild;
+    return last ? last.getBoundingClientRect().bottom : 0;
+  };
+  const fits = () => contentBottom() <= bottomLine() + 0.5;
+  const applyStep = fs => {
+    rs.setProperty('--step-fs', fs.toFixed(2) + 'px');
+    rs.setProperty('--dot', Math.round(fs * 0.72) + 'px');
+  };
+  /* 递进行的上限还得**让副题一档**：字阶是四级，steps 一旦追平副题，
+     hero→副题→steps 三级就塌成两级（hero 小、副题短时最容易发生）。*/
+  const stepCap = () => {
+    let c = Math.min(STEP_MAX, heroFs * heroCoef);
+    if (subFs) c = Math.min(c, subFs * 0.9);
+    return Math.max(STEP_FLOOR, c);
+  };
+  let cap = stepCap();
+  const solveStep = () => {
+    applyStep(cap);
+    if (fits()) return cap;
+    let lo = STEP_FLOOR, hi = cap, best = null;
+    for (let i = 0; i < 22 && hi - lo > 0.25; i++) {
+      const mid = (lo + hi) / 2;
+      applyStep(mid);
+      if (fits()) { best = mid; lo = mid; } else { hi = mid; }
+    }
+    applyStep(best ?? STEP_FLOOR);
+    return best ?? STEP_FLOOR;
+  };
+  let stepFs = solveStep();
+
+  /* —— 步骤 3：踩到 STEP_FLOOR 还塞不下，才回头压 hero ——
+     次序不能反：hero 是缩略图里唯一必读的东西，压它是最后手段。 */
+  let heroSqueezed = false;
+  while (!fits() && heroFs > HERO_MIN) {
+    heroFs = Math.max(HERO_MIN, heroFs - 2);
+    applyHero(heroFs);
+    if (sub) { subFs = heroFs * subCoef; rs.setProperty('--sub-fs', subFs.toFixed(2) + 'px'); }
+    cap = stepCap();
+    stepFs = solveStep();
+    heroSqueezed = true;
+  }
+
+  /* —— 身份两行：单行不折，线性缩到**各自那一行**的可用宽 ——
+     ⚠️ 姓名以前完全没测量（只按 heroFs×0.62 夹在 [30,58]，与可用宽无关），
+     一遇长姓名就直接压到右下陪衬上（2026-08-17 E3 实测，必然非偶发）。
+     两行走同一套写法，且可用宽由陪衬的**实测位置**决定，不是拍脑袋减一个常数。*/
+  const nm = document.getElementById('nm');
+  const rl = document.getElementById('rl');
+  let nameFs = parseFloat(cs.getPropertyValue('--name-fs')) || 44;
+  let roleFs = parseFloat(cs.getPropertyValue('--role-fs')) || 24;
+  const nameIdeal = Math.max(30, Math.min(58, heroFs * 0.62));
+  const fitIdent = () => {
+    if (nm) {
+      const r = inkRect(nm);
+      nameFs = linearFit(nm, nameIdeal, rightLimit(r) - r.left);
+      rs.setProperty('--name-fs', nameFs.toFixed(1) + 'px');
+    }
+    if (rl) {
+      const r = inkRect(rl);
+      const avail = rightLimit(r) - r.left;
+      /* 身份行是 detail 档（§2-b：hero × 0.20–0.22），并且不许追平**实际渲出来的**姓名。
+         ⚠️ 两处坑都踩过：① 旧写法 heroFs × 0.34 —— hero 从 70 涨到 150 后这行解到 51px，
+         比递进行还大；② 一度把目标挂在被挤小的 nameFs 上 —— 姓名一被压窄，
+         身份行的目标跟着塌到下限以下，两行折行那条路直接变成空转（E3/E5 实测）。*/
+      const ideal = Math.max(ROLE_MIN, Math.min(heroFs * 0.22, nameFs * 0.60));
+      rl.style.whiteSpace = 'nowrap'; rl.style.maxWidth = '';
+      roleFs = linearFit(rl, ideal, avail);
+      /* 头像放大到 36% 后身份行的可用宽被挤窄，单行解常常掉到可读下限附近。
+         宁可**折成两行**也不把这行缩小超过 15%（纵向空间由头像撑着，白留着也是留着），
+         ⛔ 别为了「保持单行」把字缩成一条灰线。两行仍够不着下限才报红。*/
+      if (roleFs < Math.max(ROLE_MIN, ideal * 0.85)) {
+        rl.style.whiteSpace = 'normal';
+        rl.style.maxWidth = avail.toFixed(1) + 'px';
+        /* 高度**和**宽度都要判：.seg 是 nowrap，单段撑爆 max-width 时行数不变、
+           只会横向溢出到陪衬上——只判高度就是又一个恒绿闸门。*/
+        const okAt = fs => {
+          rs.setProperty('--role-fs', fs.toFixed(2) + 'px');
+          return rl.getBoundingClientRect().height <= fs * 1.35 * 2 + 1
+              && rl.scrollWidth <= avail + 0.5;
+        };
+        /* ⚠️ 先直接试 ideal 本身，⛔ 别一上来就二分：单行解与 ideal 只差零点几 px 时，
+           二分的 hi-lo 门限直接把循环跳过，折行这条路整个空转（E3/E5 实测卡在 17.8px）。*/
+        if (okAt(ideal)) roleFs = ideal;
+        else {
+          let lo = roleFs, hi = ideal, best = roleFs;
+          for (let i = 0; i < 20 && hi - lo > 0.2; i++) {
+            const mid = (lo + hi) / 2;
+            if (okAt(mid)) { best = mid; lo = mid; } else hi = mid;
+          }
+          roleFs = best;
+        }
+      }
+      rs.setProperty('--role-fs', roleFs.toFixed(1) + 'px');
+    }
+  };
+  fitIdent();
+  fitIdent();   /* 缩完字号行高变了、纵向位置也变了 —— 再按新位置量一次陪衬避让 */
+
+  /* 自检：量**实际**外接框有没有真的压上陪衬。
+     「我按可用宽算过了」不算证据，重叠与否得当场量（2026-08-17 定）。*/
+  let identOrnHit = false;
+  if (orn) {
+    const o = rectOf(orn);
+    identOrnHit = [nm, rl].filter(Boolean).some(el => hit(inkRect(el), o));
+  }
+
+  /* —— 虚线：按 marker 实测中心定位 ——
+     ⚠️ 不能用「容器上下各留半行」的纯 CSS 写法：条目一折行，最后一个 marker
+     还在它的首行，虚线却按容器底算，会越过结论行的箭头继续往下拖一截
+     （2026-08-17 第二版渲染实测踩到）。 */
+  const rail = document.querySelector('.rail-line');
+  if (rail) {
+    const mks = [...stepsBox.querySelectorAll('.step .mk')];
+    if (mks.length > 1) {
+      const box = stepsBox.getBoundingClientRect();
+      const mid = el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2 - box.top; };
+      const a = mid(mks[0]), b = mid(mks[mks.length - 1]);
+      rail.style.top = a.toFixed(1) + 'px';
+      rail.style.height = (b - a).toFixed(1) + 'px';
+      rail.style.bottom = 'auto';
+    } else {
+      rail.style.display = 'none';
+    }
+  }
+
+  /* —— 3:4 裁切安全区自检（信息流按 3:4 展示，上下各切 (H - W*4/3)/2）—— */
+  const cut = Math.max(0, (H - W * 4 / 3) / 2);
+  const boxes = [...document.querySelectorAll('#hero,#sub,#stepsBox,#bottom,#foot,#orn')]
+    .map(el => el.getBoundingClientRect());
+  const outOfSafe = boxes.some(b => b.top < cut - 0.5 || b.bottom > H - cut + 0.5);
+
+  /* —— hero 字高：量**实际墨迹**，不拿 0.86 这个经验常数糊弄 ——
+     canvas TextMetrics 的 actualBoundingBox* 给的是这串字真正占的上下沿。*/
+  const inkH = (() => {
+    const ctx = document.createElement('canvas').getContext('2d');
+    const fam = getComputedStyle(document.body).fontFamily;
+    let mx = 0;
+    lines.forEach(el => {
+      ctx.font = `900 ${heroFs}px ${fam}`;
+      const m = ctx.measureText(el.textContent);
+      mx = Math.max(mx, (m.actualBoundingBoxAscent || 0) + (m.actualBoundingBoxDescent || 0));
+    });
+    return mx;
+  })();
+
+  /* —— 交回验收要看的量具 —— */
+  const thumbW = +(T.thumb_w ?? 220);
+  return {
+    ok: true,
+    hero_fs: +heroFs.toFixed(1),
+    hero_lines: lines.length,
+    hero_thumb_px: +(heroFs * thumbW / W).toFixed(1),
+    hero_glyph_px: +inkH.toFixed(1),
+    hero_glyph_pct_of_h: +(inkH / H * 100).toFixed(2),
+    sub_fs: +subFs.toFixed(1),
+    hero_sub_ratio: subFs ? +(heroFs / subFs).toFixed(2) : null,
+    step_fs: +stepFs.toFixed(1),
+    name_fs: +nameFs.toFixed(1),
+    role_fs: +roleFs.toFixed(1),
+    hero_squeezed: heroSqueezed,
+    hero_below_min: heroBelowMin,
+    hero_min: HERO_MIN,
+    hero_lines_over: lines.length > 2,
+    /* §2-b：hero 字高 = 画面高 9–13%。HERO_MIN(56px) 换算只有 3.7%，
+       光靠它当闸门等于没闸门——字高这条单独判（2026-08-17 方案 1 的核心验收项）。*/
+    hero_glyph_pct_low: (inkH / H * 100) < 9,
+    name_below_min: !!nm && nameFs < NAME_MIN - 0.01,
+    name_min: NAME_MIN,
+    role_below_min: !!rl && roleFs < ROLE_MIN - 0.01,
+    ident_orn_overlap: identOrnHit,
+    sub_ratio_ok: subFs ? (heroFs / subFs) >= 2.5 : null,
+    step_over_sub: subFs ? stepFs > subFs + 0.5 : false,
+    step_at_floor: stepFs <= STEP_FLOOR + 0.3,
+    orn_unknown: ORN_UNKNOWN,
+    orn_known: Object.keys(ORN),
+    overflow_px: +Math.max(0, contentBottom() - bottomLine()).toFixed(1),
+    safe_3x4_ok: !outOfSafe,
+    crop_3x4: { y: Math.round(cut), h: Math.round(H - cut * 2) }
+  };
+};
+</script>
+</body>
+</html>

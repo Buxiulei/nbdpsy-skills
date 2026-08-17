@@ -1,0 +1,21 @@
+<!-- NBDpsy 封面素材库 | 意象：圆镜：自我觉察、看自己
+     来源：Lucide · mirror-round | https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/mirror-round.svg
+     许可证：ISC（Lucide Icons and Contributors）| 需署名：否（商用免署名）
+     下载日期：2026-08-17 | 改造：仅加本注释与 class="nbd-svg-icon"，图形与 currentColor 未改 -->
+<svg class="nbd-svg-icon"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10 6.6 8.6 8" />
+  <path d="M12 18v4" />
+  <path d="M15 7.5 9.5 13" />
+  <path d="M7 22h10" />
+  <circle cx="12" cy="10" r="8" />
+</svg>

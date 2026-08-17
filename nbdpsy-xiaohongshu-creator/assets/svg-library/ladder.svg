@@ -1,0 +1,22 @@
+<!-- NBDpsy 封面素材库 | 意象：梯子：借助工具往上、外部支持
+     来源：Tabler Icons · outline/ladder | https://raw.githubusercontent.com/tabler/tabler-icons/main/icons/outline/ladder.svg
+     许可证：MIT（Paweł Kuna / Tabler Icons）| 需署名：否（商用免署名）
+     下载日期：2026-08-17 | 改造：仅加本注释与 class="nbd-svg-icon"，图形与 currentColor 未改 -->
+<svg class="nbd-svg-icon"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M8 3v18" />
+  <path d="M16 3v18" />
+  <path d="M8 14h8" />
+  <path d="M8 10h8" />
+  <path d="M8 6h8" />
+  <path d="M8 18h8" />
+</svg>
