@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 版式自报家门：render_cover.py 认这一行来决定走哪套校验（⛔ 别靠文件名猜，
+     文件一被复制改名，判据就跟着丢了）。 -->
+<meta name="cover-kind" content="still-life">
+<title>tpl-gzh-stilllife</title>
+<!--
+  「静物式」公众号封面模板（2.35:1 横版 · 图内零文字）
+
+  ⛔ 这个文件里**没有任何文字槽位**，也不许加。理由写在
+     nbdpsy-fuwuhao-operator/references/gzh-illustration-spec.md §2.2：
+     ① 标题由微信自己渲染、压在封面旁边，图里再写一遍就是两份标题打架；
+     ② 信息流里公众号封面缩得很小，图上的字本来就看不清。
+     所以「放不放字」不是参数，是这个版式的定义——想放字请换小红书那套 tpl-cover-jinjin。
+
+  版式（三层，自下而上）：
+    ① 暖米白纸质底（bg，径向渐变 + 48° 极淡斜纹肌理）
+    ② 桌面基线（baseline，一条两端淡出的细线）——让若干件物品**成组**而不是散落
+    ③ 静物图标组（icons，来自 assets/svg-library/，主角最大、依次递减，
+       全部**墨迹底边**压在基线上）
+    ④ 赭红强调（accent）——全图唯一的暖色，只落在**一处**，⛔ 不满图撒
+
+  几何常数是从服务号线手工跑通的那张真封面（emdr-wanzheng-yindao/images/post/cover.jpg，
+  1313×559）反解出来的，⛔ 别凭手感改：
+    · 尺寸阶梯按**墨迹高**（含描边）占画布高的比例，不是按 svg 盒子——
+      不同图标在 24×24 网格里的墨迹占比差很多（headphones 18/24、plant-stake 14/24），
+      按盒子给尺寸会让 plant-stake 视觉上小三成，版式就崩了。
+      INK_LADDER 用参考图反解：208/150/138 三个盒子 → 173.3/131.25/115 px 墨迹高。
+    · 间距按**相邻两件墨迹宽的均值 × GAP_K**。参考图两处间距 109.8 / 81.5 px，
+      反解出的 K 分别是 0.721 / 0.694 —— 取 0.71，复算出的组宽 599.6 与参考图 599.4 只差 0.2px。
+    · 基线 y = 0.7013 × H（参考图 392/559）。
+    · **墨迹底边对齐基线**——参考图是把 svg *盒子*底边压在线上，viewBox 下方留白
+      导致三件物品各自悬空 11.5～17.3px、彼此还差 6px。这里按墨迹对齐是**修那个 bug**，
+      不是另起炉灶（参考图自己的注释写的就是「底边压在这条线上」）。
+
+  自适应引擎见文末 <script>：先按 INK_LADDER 定墨迹高 → getBBox() 量真实墨迹（补上描边宽）
+  → 反解每个 svg 的像素尺寸 → 排间距 → 整组水平居中 → 画基线与强调笔画。
+-->
+<script id="cover-data" type="application/json">__COVER_DATA__</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+
+/* 坑 ①：中文字体必须显式写，否则掉到文泉驿/Droid fallback 上。
+   本模板图内零文字，这行是给**渲染脚本共用的字体落位校验**兜底的
+   （校验探针 #font-probe 在画布外，见下），⛔ 别以为「没字就不用设」。 */
+html,body{
+  font-family:"Noto Sans CJK SC","Noto Sans SC","Source Han Sans SC","PingFang SC",
+              "Microsoft YaHei",sans-serif;
+}
+
+/* 坑 ②：html 与 body **都**要写死目标像素并都铺背景，否则底部一条白边。 */
+html{width:1313px;height:559px;background:#EFE8DB;overflow:hidden}
+body{width:1313px;height:559px;overflow:hidden;position:relative;background:#EFE8DB}
+
+/* 纸质底：径向渐变（中间亮、四角沉）+ 极淡斜纹肌理 */
+body.bg-warm-paper{
+  background:radial-gradient(125% 95% at 50% 40%, #F7F2E9 0%, #F1EADD 56%, #E7DBC7 100%);
+}
+body.bg-warm-paper::after{
+  content:"";position:absolute;inset:0;opacity:.045;pointer-events:none;
+  background:repeating-linear-gradient(48deg,#5A6B7B 0 1px,transparent 1px 5px);
+}
+
+/* 桌面基线：两端淡出，只在中段有颜色 */
+#desk{position:absolute;z-index:1;
+  background:linear-gradient(90deg,transparent 0%,rgba(90,107,123,.24) 16%,
+    rgba(90,107,123,.24) 84%,transparent 100%);}
+
+.item{position:absolute;z-index:2;line-height:0}
+.item svg{display:block;overflow:visible}
+
+#accent-layer{position:absolute;left:0;top:0;z-index:3;pointer-events:none;overflow:visible}
+
+/* 字体落位探针：在画布外（left:-4000px），截图 clip 是 0,0,W,H 所以拍不到它。
+   ⛔ 不能用 document.fonts.check() 当字体闸门——Chromium 里它对任何字体名都返回 true
+   （连 'Totally Fake Font XYZ' 都是 true），是恒绿的假闸门。
+   真判据是 CDP 的 CSS.getPlatformFontsForNode，它报的是真正拿去光栅化的字族，
+   而那需要一个**有中文字形的节点**去问——所以这张零文字的封面也得留这么个探针。 */
+#font-probe{position:absolute;left:-4000px;top:0;font-size:40px;
+  white-space:nowrap;color:#000;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="desk"></div>
+<div id="font-probe" aria-hidden="true">心理咨询封面字体落位探针</div>
+<script>
+/* ────────────────────────────────────────────────────────────────
+   静物式封面排版引擎
+   ──────────────────────────────────────────────────────────────── */
+let ERR = null;
+let D = {};
+try {
+  D = JSON.parse(document.getElementById('cover-data').textContent);
+} catch (e) {
+  ERR = '封面数据不是合法 JSON：' + e.message;
+}
+
+const W = Math.round((D.canvas && D.canvas.w) || 1313);
+const H = Math.round((D.canvas && D.canvas.h) || 559);
+
+/* 坑 ②：html 与 body **都**要写死目标像素。CSS 里那两行是 1313×559 的默认值，
+   画布一换（出图后端会做非整数等比缩小，到手宽度不固定）就对不上了——
+   少了这里的覆写，截图 clip 比 body 大出来的那一圈就是白边。 */
+[document.documentElement, document.body].forEach((el) => {
+  el.style.width = W + 'px';
+  el.style.height = H + 'px';
+});
+
+/* —— 几何常数（全部由参考封面反解，见文件头注释）—— */
+const INK_LADDER = [0.3100, 0.2348, 0.2057, 0.1850, 0.1700, 0.1580];
+const GAP_K      = 0.71;      /* 间距 = GAP_K × 相邻两件墨迹宽均值 */
+const BASE_Y_R   = 0.7013;    /* 基线 y / H */
+const DESK_W_R   = 0.670;     /* 基线最短长度 / W */
+const DESK_PAD_R = 0.070;     /* 基线至少比图标组每侧多出 / W */
+const DESK_W_MAX = 0.920;     /* 基线长度上限 / W */
+const DESK_H_R   = 0.00358;   /* 基线粗细 / H（559 → 2px） */
+
+const PALETTE = ['#4A5563', '#7C8B96', '#8FA394', '#6F7C86', '#9AA894', '#7E8C7F'];
+const ACCENT  = '#A34B3A';    /* 全图唯一暖色 */
+
+/* 耳机线：起点落在主角墨迹框的 (0.638, 0.304)，终点落在下一件的 (0.492, 0.836)，
+   中间控制点是把参考封面那条曲线归一化到「起点(0,0) → 终点(1,1)」的方框里得来的。
+   ny 会超过 1（最深 1.423）＝ 曲线先垂到终点下方再兜回来，那正是「线搭在桌上」的手感。 */
+const CORD_FROM = [0.638, 0.304];
+const CORD_TO   = [0.492, 0.836];
+const CORD_N = [
+  [-0.0085, 0.558,  0.1197, 1.077,  0.3846, 1.269],
+  [ 0.6154, 1.423,  0.8291, 1.288,  1.0000, 1.000]
+];
+const CORD_SW_R = 0.00644;    /* 强调笔画粗细 / H（559 → 3.6px） */
+
+const BG_KNOWN = ['warm-paper'];
+
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+/* 画布内是否有文字：这是「图内零文字」的机器判据。
+   扫三类来源——① 非空白文本节点 ② SVG 的 <text>/<tspan> ③ ::before/::after 的字符串 content。
+   只算**矩形与截图区 [0,0,W,H] 相交**的那些：画布外的字体探针因此被正确排除，
+   而任何真的落进画面的字都会被抓到。 */
+function textInCanvas() {
+  const hits = [];
+  const inCanvas = (r) => r && r.width > 0 && r.height > 0 &&
+        r.right > 0 && r.bottom > 0 && r.left < W && r.top < H;
+
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = (n.nodeValue || '').trim();
+    if (!t) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    if (inCanvas(range.getBoundingClientRect())) {
+      hits.push({ kind: 'text-node', text: t.slice(0, 40) });
+    }
+  }
+  document.querySelectorAll('text,tspan').forEach((el) => {
+    if (inCanvas(el.getBoundingClientRect())) {
+      hits.push({ kind: 'svg-text', text: (el.textContent || '').slice(0, 40) });
+    }
+  });
+  document.querySelectorAll('*').forEach((el) => {
+    ['::before', '::after'].forEach((pseudo) => {
+      const c = getComputedStyle(el, pseudo).content;
+      if (!c || c === 'none' || c === 'normal') return;
+      const m = c.match(/^"([\s\S]*)"$/);
+      if (m && m[1].trim() && inCanvas(el.getBoundingClientRect())) {
+        hits.push({ kind: 'pseudo-content', sel: el.id || el.className || el.tagName, text: m[1].slice(0, 40) });
+      }
+    });
+  });
+  return hits;
+}
+
+/* 量一个 svg 的墨迹框（viewBox 用户单位，**含描边**）。
+   getBBox() 只给路径几何、不含描边——描边是往两边各撑半个 stroke-width 的，
+   漏掉它会让「墨迹底边压基线」偏半个描边（大图标上就是 8～9px）。 */
+function inkBox(svg) {
+  const b = svg.getBBox();
+  const sw = parseFloat(svg.getAttribute('stroke-width') || '2') || 2;
+  return { x: b.x - sw / 2, y: b.y - sw / 2, w: b.width + sw, h: b.height + sw };
+}
+
+window.__fit = function () {
+  if (ERR) return { ok: false, error: ERR };
+
+  const names = Array.isArray(D.icons) ? D.icons.filter((s) => String(s || '').trim()) : [];
+  if (!names.length) return { ok: false, error: 'icons 是空的——静物式封面的主体就是这些图标，没图标就不是这个版式' };
+
+  const lib = D.icons_svg || {};
+  const missing = names.filter((n) => !lib[n]);
+  if (missing.length) return { ok: false, error: '这些图标的 SVG 没被注入：' + missing.join(', ') };
+
+  /* —— 背景 —— */
+  const bg = String(D.bg || 'warm-paper');
+  const bgUnknown = BG_KNOWN.includes(bg) ? null : bg;
+  document.body.className = 'bg-' + (bgUnknown ? 'warm-paper' : bg);
+
+  /* —— 第 1 步：插入 svg，量真实墨迹，反解像素尺寸 —— */
+  const items = names.map((name, i) => {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.dataset.icon = name;
+    div.innerHTML = lib[name];
+    document.body.appendChild(div);
+    const svg = div.querySelector('svg');
+
+    /* 坑 ④：Lucide 原件常写 width="1em"（本库是 "24"，一样要覆盖）——
+       不换成实际像素，尺寸就随字号漂、完全不可控。属性与内联样式都写死。 */
+    const vb = (svg.getAttribute('viewBox') || '0 0 24 24').trim().split(/\s+/).map(Number);
+    const vbW = vb[2] || 24, vbH = vb[3] || 24;
+    svg.setAttribute('width', vbW);
+    svg.setAttribute('height', vbH);
+    svg.style.width = vbW + 'px';
+    svg.style.height = vbH + 'px';
+
+    const ib = inkBox(svg);                                   /* 用户单位 */
+    const inkTargetH = (INK_LADDER[i] ?? INK_LADDER[INK_LADDER.length - 1]) * H;
+    const scale = inkTargetH / ib.h;                          /* 墨迹高 → 像素 */
+
+    svg.setAttribute('width', +(vbW * scale).toFixed(2));
+    svg.setAttribute('height', +(vbH * scale).toFixed(2));
+    svg.style.width = (vbW * scale) + 'px';
+    svg.style.height = (vbH * scale) + 'px';
+
+    return {
+      name, div, svg, scale,
+      inkW: ib.w * scale, inkH: ib.h * scale,
+      offX: ib.x * scale,                                     /* 墨迹左边相对盒子左边 */
+      offBottom: (ib.y + ib.h) * scale                        /* 墨迹底边相对盒子上边 */
+    };
+  });
+
+  /* —— 第 2 步：排间距、整组水平居中 —— */
+  const gaps = [];
+  for (let i = 0; i + 1 < items.length; i++) {
+    gaps.push(GAP_K * (items[i].inkW + items[i + 1].inkW) / 2);
+  }
+  const groupW = items.reduce((s, it) => s + it.inkW, 0) + gaps.reduce((s, g) => s + g, 0);
+  const baseY = BASE_Y_R * H;
+
+  let x = (W - groupW) / 2;
+  items.forEach((it, i) => {
+    it.inkLeft = x;
+    it.inkRight = x + it.inkW;
+    it.inkBottom = baseY;                                     /* 墨迹底边压在基线上 */
+    it.inkTop = baseY - it.inkH;
+    it.div.style.left = (x - it.offX) + 'px';
+    it.div.style.top = (baseY - it.offBottom) + 'px';
+    x = it.inkRight + (gaps[i] || 0);
+  });
+
+  /* —— 第 3 步：上色。accent 指名某件时，那件用赭红 —— */
+  const accent = String(D.accent || '').trim();
+  const accentIsIcon = names.includes(accent);
+  const accentOptions = ['cord'].concat(names);
+  const accentUnknown = (accent && accent !== 'cord' && !accentIsIcon) ? accent : null;
+
+  items.forEach((it, i) => {
+    it.color = (accentIsIcon && it.name === accent) ? ACCENT : PALETTE[i % PALETTE.length];
+    it.svg.style.color = it.color;
+    it.svg.setAttribute('stroke', 'currentColor');
+  });
+
+  /* —— 第 4 步：桌面基线 —— */
+  const deskEl = document.getElementById('desk');
+  let deskW = 0;
+  if (D.baseline === false) {
+    deskEl.style.display = 'none';
+  } else {
+    deskW = Math.min(Math.max(DESK_W_R * W, groupW + 2 * DESK_PAD_R * W), DESK_W_MAX * W);
+    deskEl.style.width = deskW + 'px';
+    deskEl.style.height = Math.max(1, Math.round(DESK_H_R * H)) + 'px';
+    deskEl.style.left = ((W - deskW) / 2) + 'px';
+    deskEl.style.top = baseY + 'px';
+  }
+
+  /* —— 第 5 步：赭红强调笔画（cord 形态）—— */
+  let cord = null;
+  if (accent === 'cord') {
+    if (items.length < 2) {
+      cord = { drawn: false, reason: 'cord 需要至少两件静物（线从主角垂到下一件），现在只有一件' };
+    } else {
+      const a = items[0], b = items[1];
+      const p0 = [a.inkLeft + CORD_FROM[0] * a.inkW, a.inkTop + CORD_FROM[1] * a.inkH];
+      const p2 = [b.inkLeft + CORD_TO[0] * b.inkW,   b.inkTop + CORD_TO[1] * b.inkH];
+      const dx = p2[0] - p0[0], dy = p2[1] - p0[1];
+      const meanInk = (a.inkH + b.inkH) / 2;
+      const degenerate = dy < 0.25 * meanInk;                 /* 落差太小，曲线会摊成一条平线 */
+
+      let d = 'M' + p0[0].toFixed(2) + ',' + p0[1].toFixed(2);
+      CORD_N.forEach((seg) => {
+        const pts = [];
+        for (let k = 0; k < 6; k += 2) {
+          pts.push((p0[0] + seg[k] * dx).toFixed(2) + ',' + (p0[1] + seg[k + 1] * dy).toFixed(2));
+        }
+        d += ' C' + pts.join(' ');
+      });
+
+      const layer = document.createElementNS(SVGNS, 'svg');
+      layer.id = 'accent-layer';
+      layer.setAttribute('width', W);
+      layer.setAttribute('height', H);
+      layer.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      layer.setAttribute('fill', 'none');
+      const path = document.createElementNS(SVGNS, 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('stroke', ACCENT);
+      path.setAttribute('stroke-width', (CORD_SW_R * H).toFixed(2));
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('fill', 'none');
+      path.setAttribute('opacity', '.8');
+      layer.appendChild(path);
+      document.body.appendChild(layer);
+
+      cord = {
+        drawn: true, degenerate,
+        from: items[0].name, to: items[1].name,
+        p0: p0.map((v) => +v.toFixed(1)), p2: p2.map((v) => +v.toFixed(1)),
+        drop_px: +dy.toFixed(1)
+      };
+    }
+  }
+
+  /* —— 交回验收要看的量具 —— */
+  const first = items[0], last = items[items.length - 1];
+  const inkTopMin = Math.min.apply(null, items.map((it) => it.inkTop));
+  const bottomDev = Math.max.apply(null, items.map((it) => Math.abs(it.inkBottom - baseY)));
+
+  /* accent 覆盖面：赭红只准落一处。cord 一笔、或某一件图标，二者不可兼得。 */
+  const accentSpots = (cord && cord.drawn ? 1 : 0) + (accentIsIcon ? 1 : 0);
+
+  return {
+    ok: true,
+    kind: 'still-life',
+    canvas: { w: W, h: H },
+    baseline_y: +baseY.toFixed(1),
+    baseline_drawn: D.baseline !== false,
+    desk_w: +deskW.toFixed(1),
+    bg: bg,
+    bg_unknown: bgUnknown,
+    bg_known: BG_KNOWN,
+    icons: items.map((it) => ({
+      name: it.name, color: it.color,
+      box_px: +(it.svg.getAttribute('width')),
+      ink_w: +it.inkW.toFixed(1), ink_h: +it.inkH.toFixed(1),
+      ink_left: +it.inkLeft.toFixed(1), ink_right: +it.inkRight.toFixed(1),
+      ink_top: +it.inkTop.toFixed(1), ink_bottom: +it.inkBottom.toFixed(1)
+    })),
+    gaps: gaps.map((g) => +g.toFixed(1)),
+    min_gap: gaps.length ? +Math.min.apply(null, gaps).toFixed(1) : null,
+    overlap: gaps.some((g) => g <= 0),
+    group_ink_w: +groupW.toFixed(1),
+    group_ink_left: +first.inkLeft.toFixed(1),
+    group_ink_right: +last.inkRight.toFixed(1),
+    margin_left: +first.inkLeft.toFixed(1),
+    margin_right: +(W - last.inkRight).toFixed(1),
+    margin_asym_px: +Math.abs(first.inkLeft - (W - last.inkRight)).toFixed(1),
+    margin_top: +inkTopMin.toFixed(1),
+    baseline_align_dev_px: +bottomDev.toFixed(2),
+    /* 基线短过图标组 = 两头的静物悬在桌沿外（图标件数太多时会撞到 DESK_W_MAX 上限） */
+    desk_overhang_px: D.baseline === false ? 0 : +Math.max(0, (groupW - deskW) / 2).toFixed(1),
+    out_of_canvas: first.inkLeft < 0 || last.inkRight > W || inkTopMin < 0 || baseY > H,
+    accent: accent,
+    accent_form: accent === 'cord' ? 'cord' : (accentIsIcon ? 'icon' : null),
+    accent_unknown: accentUnknown,
+    accent_options: accentOptions,
+    accent_spots: accentSpots,
+    cord: cord,
+    text_in_canvas: textInCanvas(),
+    font_probe_sel: '#font-probe'
+  };
+};
+</script>
+</body>
+</html>
