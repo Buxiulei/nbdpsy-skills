@@ -17,12 +17,14 @@ GET {base}/api/op/drafts/{session_id}/jobs/{job_id} 到终态 → done 后逐页
 （result.urls 顺序与提交的 prompts 对齐，相对 /uploads/… 公开免鉴权）。
 
 两道闸门写在本脚本里（2026-08-14 起，此前都只是文档里的一句话）：
-  **R4 结构闸门（跑前）**：frontmatter 必须有 `故事线`、每个 `### PN` 块第一行必须有
-  `**论点行**：…`（围栏之外）——缺一即**拒跑**，⛔ 不出图、不烧额度。判据见
-  `references/illustration-spec.md` §1-b（先挑版式再填点＝版式退化成填页容器，这是病根）。
+  **R4 结构闸门（跑前）**：frontmatter 必须有 `读者`（三段式）与 `故事线`、每个 `### PN` 块第一行必须有
+  `**论点行**：…`（围栏之外）；再加三条写作方法论的机器判据——**术语必定义**、**禁卖方视角**
+  ——缺一即**拒跑**，⛔ 不出图、不烧额度。判据见 `references/illustration-spec.md` §1-b
+  （先挑版式再填点＝版式退化成填页容器，这是病根）。
   **闸门 A 生产端（跑后）**：封面页 P1 出成后**自动**落盘同名 `P01.meta.json` 产出凭证
   （job/session 直接来自服务端回执，⛔ 不再手抄），发布脚本逐张校验，无凭证拒发。
-  凭证里的 `style_profile` 取 `00-overview.md` 的风格档案留痕行，也可用 `--style-profile` 显式给。
+  凭证里的 `style_profile` 取 `00-overview.md` 的风格档案留痕行，也可用 `--style-profile` 显式给；
+  `gates` 记这次三条方法论闸门到底走没走（发布端/审查端可核，跳过留名可追责）。
 
 用法：
     python3 gen_images.py --note post-01.md --cover-only            # 只出 P1 封面（风格闸门第一步）
@@ -30,6 +32,7 @@ GET {base}/api/op/drafts/{session_id}/jobs/{job_id} 到终态 → done 后逐页
     python3 gen_images.py --note post-01.md --pages 2-9 --anchor-url <URL>  # 出指定页（批量/失败页重试）
     python3 gen_images.py --note post-01.md --job <id> [--session <id>]     # 复查已入队任务并补下载
         [--images-dir DIR] [--api-base URL] [--no-wait] [--wait-timeout N] [--dry-run]
+        [--skip-term-gate]   # 逃生口，默认关闭；用了凭证里记 term_gate_skipped=true
 
 凭据：复用 NBDPSY_XHS_API_KEY（nbdpsy-server apikey，与小红书发布 / 视频同一把，接入包同一把，无需另发）；
 base 用 NBDPSY_VIDEO_API_BASE（可选，默认 https://mcp.nbdpsy.com，与小红书发布/视频同服务同凭据），
@@ -102,11 +105,39 @@ def _claim_before_fence(block_lines):
     return None
 
 
+def _page_text(block_lines):
+    """取页块里的「页面文字」——**要画进图的字**，也就是读者真会看到的那几行。
+
+    ⛔ 不含绘图提示词围栏（那是喂模型的，读者看不到）；⛔ 不含 `>` 引用块
+    （那是"判断与理由"，按笔记自己的约定写给人看、不入图）。两种写法都认：
+      `**页面文字**` 起一段 `- …` 条目；或单行式 `**页面文字**：主标题「…」；副题「…」`。
+    没有这个块（别的笔记形态）→ 返回空串，术语闸门对该页天然不判（没字给读者看，无从判起）。"""
+    out = []
+    started = False
+    for line in block_lines:
+        s = line.strip()
+        if not started:
+            if s.startswith("**页面文字**"):
+                started = True
+                rest = s[len("**页面文字**"):].lstrip()
+                if rest[:1] in ("：", ":"):      # 单行式：冒号后整行都是页面文字
+                    out.append(rest[1:].strip())
+            continue
+        if s.startswith(("```", "~~~")):          # 进围栏＝页面文字块结束
+            break
+        if s.startswith("**"):                   # 下一个加粗小标题（**绘图提示词** 等）＝结束
+            break
+        if s.startswith(">"):                    # 判断与理由，不是要画进图的字
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
 def extract_pages(md_text):
-    """逐页提取绘图提示词与论点行，判据同后端 extract_slide_prompts。
+    """逐页提取绘图提示词、论点行与页面文字，判据同后端 extract_slide_prompts。
     与后端唯一差异：无围栏的页 prompt=None（不静默丢弃）——后端会静默跳过缺围栏页导致页序错位，
     这里保留下来交给 validate_complete 拦截并列出缺页。
-    返回 [{"page": "P1", "prompt": str|None, "claim": str|None}, ...]。"""
+    返回 [{"page": "P1", "prompt": str|None, "claim": str|None, "page_text": str}, ...]。"""
     if not md_text or not md_text.strip():
         return []
     lines = md_text.splitlines()
@@ -120,7 +151,7 @@ def extract_pages(md_text):
         end = heads[k + 1][1] if k + 1 < len(heads) else len(lines)
         block = lines[start + 1:end]
         pages.append({"page": label, "prompt": _first_fenced_block(block),
-                      "claim": _claim_before_fence(block)})
+                      "claim": _claim_before_fence(block), "page_text": _page_text(block)})
     return pages
 
 
@@ -144,19 +175,291 @@ def validate_complete(all_pages):
             "（后端会静默跳过缺围栏页导致页序错位，故在此拦截；请补全围栏后重试）")
 
 
-def validate_structure(md_text, all_pages):
-    """R4 结构闸门（illustration-spec §1-b，2026-08-14 起写成代码）：
-    **frontmatter 有「故事线」+ 每页有论点行**，缺一即拒跑——这是闸门，不是提醒。
+# ---------------------------------------------------------------- 三条写作方法论 · 机器判据
+# 2026-08-17 老板令：三条方法论必须**被执行**，不是**被写下**——"不要是死链，永远闲置不被调用"。
+# 验收口径＝「如果下一个执行者完全不看规格，他会不会被拦住？」所以三条各自落成一道判据，
+# 挂在 R4 结构闸门（出图必经）上，跟故事线/论点行同一处生效、同一种报错风格（报错给"怎么改"）。
+# ⚠️ 这里**不做通用可读性扫描**：中文只有"字面难度"量表（甲乙丙丁词表），而"六个成分"四个字都简单、
+#    读者照样接不住——问题在**语义脱离处境**，不在字面难度。所以判据一律**窄而准**，只挡三种具体病。
+
+# —— 闸 1（方法论③「下笔前先钉死读者是谁」）——
+_READER_LINE = re.compile(r"^\s*读者\s*[:：]\s*(.+)$", re.M)
+_READER_SPLIT = re.compile(r"[｜|]")
+_READER_SLOTS = ("身份阶段", "痛点", "最容易误解或焦虑的点")
+_READER_MIN_CHARS = 6
+# 空泛词表：这些值当"读者"用等于没定义读者。两道误伤控制，都是被真实句子逼出来的：
+#   ① 只对**第 1 段（身份阶段）**判——「所有人都在评价我」这类话在痛点/焦虑点里是**读者的真实原话**；
+#   ② 只在答案**短**（≤_READER_SPECIFIC_MIN 字）时判——实证：本仓黄金范例首版写
+#      「刚被上级随口批评、还没跟**任何人**说起这事的 28 岁职场女性」被误拦，
+#      而这恰恰是全仓最具体的一个读者定义。空泛词出现在一句长描述**里面**是正常中文，
+#      只有当它**本身就是那个答案**（短到只剩这个词）时才是"没定义读者"。
+_READER_VAGUE = ("所有人", "任何人", "每个人", "人人", "大众", "公众", "普通人", "广大网友",
+                 "对心理感兴趣", "心理爱好者", "关注心理健康的人", "所有读者", "泛人群",
+                 "通用人群", "男女老少", "不限")
+_READER_SPECIFIC_MIN = 14   # 超过这个长度的身份描述，已经具体到不可能是"给谁看都行"
+
+# —— 闸 2（方法论①「术语只能定义或删除，不许悬空」）——
+# 窄而准：只放**读者不查就不懂**的真专业黑话。可增补，但每加一个都要过这一条判据；
+# ⛔ 别把"情绪""焦虑""压力"这类读者自己天天说的词塞进来——那不是术语，是废话检测器误伤。
+DOMAIN_TERMS = ("解离", "内感受", "述情障碍", "认知重构", "暴露疗法", "心理弹性", "共情疲劳",
+                "边缘型", "双相", "躯体化", "闪回", "过度警觉", "依恋回避", "情绪粒度",
+                "元认知", "接纳承诺", "图式", "投射性认同")
+_DEF_PHRASES = ("就是", "指的是", "说白了", "也就是", "换句话说", "意思是")
+# 术语出现在文献名/数据出处里不算"拿黑话砸读者"（那是引用，不是叙述）
+_CITATION_HINTS = ("数据来源", "参考文献", "文献", "出处", "数据口径")
+_DEF_WINDOW = 60          # 定义句式要紧跟术语，不能"这页某处有个冒号"就算数
+
+# —— 闸 3（方法论②「不要从卖方/知识体系视角写」）——
+_SELLER_PHRASES = ("我们提供", "我们的服务", "我们的课程", "我们的方法", "我们的咨询师",
+                   "我们专注于", "我们致力于", "本文将介绍", "本篇将介绍", "本篇带你",
+                   "本文带你", "这篇带你", "带你了解")
+# 2026-08-17 干跑实证：纯词表挡不住同义替换（「本机构擅长处理这类困扰」「NBDpsy 的咨询师可以
+# 陪你走一段」「专业心理咨询在这件事上是有用的」全部过闸）。改成**主语判据**：句子的主语是不是
+# 我方——我方词 + 能力/供给动词同现即命中。判据来自方法论②：读者不关心你提供什么。
+_WE_SUBJECTS = ("我们", "本机构", "本中心", "本工作室", "本平台", "NBDpsy", "nbdpsy",
+                "咨询师", "心理咨询", "专业帮助", "专业支持", "本篇", "本文", "这篇")
+_SUPPLY_VERBS = ("提供", "擅长", "专注", "致力", "帮你", "帮您", "能帮", "可以帮", "陪你",
+                 "陪您", "介绍", "带你", "教你", "让你学会", "解决你", "为你", "替你解决",
+                 "是有用的", "有帮助", "能处理", "可处理", "能改善", "服务")
+# 「教你」「让你学会」前面带否定时是**读者的处境**（"没人教你怎么…"），不是卖方腔——不拦
+_SELLER_GUARDED = ("教你", "让你学会")
+_SELLER_NEGATION = ("没", "谁", "未", "无人", "从来", "不曾")
+
+
+def extract_reader(md_text):
+    """取 frontmatter 里的「读者」字段原值（三段式）。没有 → None。
+    尾部 YAML 注释（`   # …`）剥掉——本仓 frontmatter 普遍在行尾挂注释，留着会被当成第三段的答案。"""
+    m = re.match(r"^---\n(.*?)\n---", md_text or "", re.S)
+    if not m:
+        return None
+    mm = _READER_LINE.search(m.group(1))
+    if not mm:
+        return None
+    return re.split(r"\s#", mm.group(1).strip(), maxsplit=1)[0].strip().strip('"').strip("'")
+
+
+def _reader_answer(seg):
+    """取一段里的**答案**：`身份阶段（…）` 取括号内，没括号就去掉标签前缀取剩下的。
+    （标签本身不算答案——`身份阶段（他）` 整段 6 字、答案只有 1 字，那就是没答。）"""
+    m = re.search(r"[（(]([^）)]*)[）)]\s*$", seg)
+    if m:
+        return m.group(1).strip()
+    return re.sub(r"^\s*(身份阶段|身份／阶段|身份/阶段|身份|阶段|痛点|"
+                  r"最容易误解或焦虑的点|误解或焦虑的点|误解点|焦虑点)\s*[:：]?\s*", "", seg).strip()
+
+
+def check_reader(md_text):
+    """闸 1（方法论③）：`读者` 三段式必填——**收到写作请求不许立刻动笔**，先答三个问题。
+    返回问题列表（空＝过）。"""
+    tmpl = "\n      读者: 身份阶段（…）｜痛点（…）｜最容易误解或焦虑的点（…）"
+    raw = extract_reader(md_text)
+    if not raw:
+        return ["frontmatter 缺 `读者` 字段——⛔ 收到写作请求不许立刻动笔，先答三个问题："
+                "**谁会看到这篇（身份/阶段）？他最痛的是什么？他最容易误解、忽略或焦虑的点是什么？**"
+                "答完抄进 frontmatter（三段用 `｜` 分隔）：" + tmpl
+                + "\n      例：读者: 身份阶段（刚被上级批评、还没把这事跟任何人说的 28 岁职场女性）"
+                  "｜痛点（一句话就僵住、事后反复回放，骂自己玻璃心）"
+                  "｜最容易误解或焦虑的点（以为这是性格缺陷，怕被说矫情所以更晚开口）"]
+    segs = [s.strip() for s in _READER_SPLIT.split(raw) if s.strip()]
+    if len(segs) != 3:
+        return [f"`读者` 只切出 {len(segs)} 段，须**三段**（用 `｜` 分隔）——"
+                "少一段就是少答了一个决定这篇怎么写的问题：不知道他的痛点，写出来的是知识；"
+                "不知道他最容易误解的点，写出来的话会被他按自己的旧解释接住。" + tmpl
+                + f"\n      现有值：{raw}"]
+    problems = []
+    for i, seg in enumerate(segs):
+        slot = _READER_SLOTS[i]
+        ans = _reader_answer(seg)
+        n = len(re.sub(r"\s", "", ans))
+        if n < _READER_MIN_CHARS:
+            problems.append(
+                f"`读者` 第 {i + 1} 段（{slot}）只答了 {n} 字（须 ≥{_READER_MIN_CHARS} 字）："
+                "写到能在脑子里看见一个具体的人——他在什么处境里、走到哪一步、卡在什么地方。"
+                f"\n      现有值：{seg}")
+            continue
+        # 空泛值只判身份阶段那一段、且只在答案短到"整个答案就是这个词"时判，见 _READER_VAGUE 上方注释
+        if i == 0 and n <= _READER_SPECIFIC_MIN:
+            vague = [v for v in _READER_VAGUE if v in ans]
+            if vague:
+                problems.append(
+                    f"`读者` 第 1 段（身份阶段）是空泛值「{vague[0]}」——**空泛值＝没定义读者**："
+                    "读者是「所有人」，就等于你不知道谁会看到这篇，"
+                    "也就无从判断哪一句会被他误解、哪一句能戳中他，写出来的必然是给谁看都行、"
+                    "给谁看都不疼的通稿。"
+                    "\n      改法：写清**身份 + 阶段**（他是谁 + 走到哪一步，写到能想象出一个具体的人），"
+                    "例：身份阶段（刚查出 CPTSD、还没决定要不要咨询的 28 岁职场女性）。"
+                    f"\n      现有值：{seg}")
+    return problems
+
+
+def _defined_at(text, end):
+    """术语在 text[:end] 处结束，看它**后面紧跟的**有没有定义。四种句式都认：
+    紧跟 `（…）` 括号解释 / 紧跟 `：…` 冒号解释 / 窗口内出现「就是·指的是·说白了·也就是·换句话说·意思是」。
+    ⚠️ 窗口只有 _DEF_WINDOW 字：不许"这一页某处有个冒号"就算定义过了——那样闸门恒真＝等于没有。"""
+    tail = text[end:end + _DEF_WINDOW]
+    if re.match(r"^\s*[（(][^）)]{4,}[）)]", tail):
+        return True
+    if re.match(r"^\s*[：:]\s*\S{4,}", tail):
+        return True
+    return any(k in tail for k in _DEF_PHRASES)
+
+
+def _checkable_page_text(page_text):
+    """去掉《文献名》与出处行——术语出现在文献名/数据来源里不算悬空（误伤控制）。"""
+    text = re.sub(r"《[^》]*》", " ", page_text or "")
+    return "\n".join(l for l in text.splitlines()
+                     if not any(h in l for h in _CITATION_HINTS))
+
+
+def _prompt_visible_text(prompt):
+    """从绘图提示词里取**会被画进图的那些字**——即「」/『』/引号内的内容。
+
+    2026-08-17 干跑实证：术语闸原本只扫「页面文字」块，于是把术语全塞进围栏里
+    （`标题「解离的神经机制」`）就能过闸——**但围栏里引号内的字正是图上实际出现的字**，
+    读者照样要面对未定义的黑话。提示词的其余部分（画风、构图、配色）是喂模型的，不扫。"""
+    if not prompt:
+        return ""
+    return "\n".join(re.findall(r"[「『\"“]([^」』\"”]{1,60})[」』\"”]", prompt))
+
+
+def find_undefined_terms(all_pages):
+    """闸 2（方法论①）：扫每页**页面文字 + 绘图提示词里引号内的图内文字**，只判**首次出现**那一页。
+    返回 [(页, 术语), …]（空＝过）。⛔ 提示词里的画风/构图/配色描述不扫（那是喂模型的）。"""
+    hits, seen = [], set()
+    for pg in all_pages:
+        text = _checkable_page_text(pg.get("page_text"))
+        in_img = _checkable_page_text(_prompt_visible_text(pg.get("prompt")))
+        text = (text + "\n" + in_img).strip() if in_img else text
+        if not text:
+            continue
+        for term in DOMAIN_TERMS:
+            if term in seen:
+                continue
+            spots = [m.start() for m in re.finditer(re.escape(term), text)]
+            if not spots:
+                continue
+            seen.add(term)      # 只判首次出现那一页，后面几页照常用不再拦
+            if not any(_defined_at(text, s + len(term)) for s in spots):
+                hits.append((pg["page"], term))
+    return hits
+
+
+def find_seller_voice(all_pages):
+    """闸 3（方法论②）：扫**论点行**与 **P1 封面文字（hero 所在块）**里的卖方腔。
+    返回 [(页, 位置, 命中词), …]（空＝过）。"""
+    hits = []
+    for pg in all_pages:
+        spots = [("论点行", pg.get("claim") or "")]
+        if pg["page"] == "P1":
+            spots.append(("封面页面文字（hero 所在块）", pg.get("page_text") or ""))
+        for where, text in spots:
+            for phrase in _SELLER_PHRASES:
+                if phrase in text:
+                    hits.append((pg["page"], where, phrase))
+            for phrase in _SELLER_GUARDED:
+                for m in re.finditer(re.escape(phrase), text):
+                    lead = text[max(0, m.start() - 8):m.start()]
+                    if not any(n in lead for n in _SELLER_NEGATION):
+                        hits.append((pg["page"], where, phrase))
+                        break
+            # 主语判据（挡同义替换）：我方词 + 供给/能力动词在同一句里同现＝卖方视角。
+            # 按句切分再判，避免跨句误伤（"你以为咨询师会…" 与 "我们提供…" 不是一回事）。
+            for sent in re.split(r"[。！？；\n]", text):
+                if any(w in sent for w in _WE_SUBJECTS) and any(v in sent for v in _SUPPLY_VERBS):
+                    if any(n in sent for n in _SELLER_NEGATION):
+                        continue        # "没人教你…" "谁替你解决" ＝ 读者处境，不拦
+                    pair = next((f"{w}…{v}" for w in _WE_SUBJECTS if w in sent
+                                 for v in _SUPPLY_VERBS if v in sent), "我方主语+供给动词")
+                    if not any(h[0] == pg["page"] and h[1] == where for h in hits):
+                        hits.append((pg["page"], where, pair))
+                    break
+    return hits
+
+
+def gates_report(md_text, all_pages, skip_term_gate=False):
+    """跑三条方法论闸门，返回 (gates, problems)——**不抛**。
+    gates 是可证伪的凭据：reader / term / seller_view 三个布尔，进封面产出凭证，
+    发布端与审查端据此核「这次到底走没走」。术语闸被 --skip-term-gate 跳过 → term=False + 记原因
+    （**可追责，不是静默绕过**）。"""
+    problems = []
+
+    reader_problems = check_reader(md_text)
+    problems += reader_problems
+
+    if skip_term_gate:
+        undefined = []
+    else:
+        undefined = find_undefined_terms(all_pages)
+        if undefined:
+            problems.append(
+                "以下术语在页面文字里**首次出现却没给定义**："
+                + "、".join(f"{p}「{t}」" for p, t in undefined)
+                + "——判断句：『删掉这句，读者会少一个事实还是少一个论据？都不是，那它就是废话』。"
+                  "术语只能**定义或删除**，不许悬空。两条路选一条："
+                  "\n      ① **在同页加一句人话定义**：术语后面紧跟 `（…）` 或 `：…`，"
+                  "或用「就是 / 指的是 / 说白了 / 换句话说」把它讲开；"
+                  "\n      ② **换成读者自己会说的词**：他不会说「解离」，他会说「像是从自己身体里飘出去了」。"
+                  "\n      ⛔ 逃生口 `--skip-term-gate` 默认关闭；用了会在封面凭证里记 "
+                  "`term_gate_skipped=true`（可追责，不是静默绕过）。")
+
+    seller = find_seller_voice(all_pages)
+    if seller:
+        problems.append(
+            "以下位置是**卖方视角**："
+            + "、".join(f"{p} {w}「{ph}」" for p, w, ph in seller)
+            + "——用户不关心你提供什么，用户关心**我的问题有没有被看见**。"
+              "论点行与封面 hero 要写**读者的处境或困惑**（他此刻正在经历什么、卡在哪里），"
+              "不是我们的供给、也不是知识体系的目录。"
+              "\n      改法：把「我们/本篇 + 动词」翻成读者的第一人称处境——"
+              "「本篇带你了解复杂性创伤」→「一句『方案再改改』就在工位上僵住，那不是玻璃心」。")
+
+    gates = {"reader": not reader_problems,
+             "term": not (skip_term_gate or undefined),
+             "seller_view": not seller}
+    if skip_term_gate:
+        gates["term_gate_skipped"] = True
+        gates["term_gate_skip_reason"] = "--skip-term-gate（人工声明本篇术语已在别处交代或属常识）"
+    return gates, problems
+
+
+def gates_for_note(note, skip_term_gate=False):
+    """`--job` 复查路径用：按当前稿件重跑三闸**只取结论、不拦人**（图已经出完了，拦也没用），
+    结论照实写进补写的凭证。拿不到稿件 → None（凭证里 gates=null＝**没跑过**，⛔ 不等于通过）。"""
+    if not note:
+        return None
+    try:
+        md = Path(note).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return gates_report(md, extract_pages(md), skip_term_gate)[0]
+
+
+def validate_structure(md_text, all_pages, skip_term_gate=False):
+    """R4 结构闸门（illustration-spec §1-b，2026-08-14 起写成代码；2026-08-17 并入三条写作方法论）：
+    **frontmatter 有「读者」「故事线」+ 每页有论点行 + 术语必定义 + 禁卖方视角**，
+    缺一即拒跑——这是闸门，不是提醒。跑过返回 gates（进封面凭证）。
 
     为什么拦在出图之前：先挑版式再填点，版式就从"表达论点的手段"退化成"填页容器"，
     图越满越云里雾里。论点行写不出＝这页不该存在，出了图也是废图（还烧额度）。
+    三条方法论同理——写给"所有人"看的稿、悬空的黑话、卖方腔的 hero，出成图也是废图。
     """
     problems = []
-    if not extract_storyline(md_text):
+    storyline = extract_storyline(md_text)
+    if not storyline:
         problems.append(
             "frontmatter 缺 `故事线` 字段——一句话写清这一篇 6–9 页在论证什么"
             "（现象→机制→纠错→怎么办 这类推进），与 `版式序列` 并排写："
-            "\n      故事线: 现象（…）→ 机制（…）→ 纠错（…）→ 怎么办（…）")
+            "\n      故事线: 现象（…）→ 机制（…）→ 纠错（…）→ 怎么办（…）"
+            "\n      不写会怎样：没有推进的一组图＝把几页并列的知识摞在一起，"
+            "读者看完记不住任何一条（老板 2026-08-14 原话「云里雾里」就是这么来的）。")
+    elif storyline.count("→") < 2 and len([x for x in re.split(r"[；;]", storyline) if x.strip()]) < 2:
+        # 2026-08-17 干跑实证：只查字段在不在时，「故事线: 讲清楚解离」照样过闸——
+        # 那不是故事线，是主题。**推进**至少要看得出两步（→ 或 分号分段）。
+        problems.append(
+            f"`故事线` 不成推进：现值「{storyline[:40]}」只是主题不是论证路径。"
+            "\n      判据：至少两步推进（用 → 连接，或用分号分段），"
+            "让人看得出这 6–9 页**从哪走到哪**："
+            "\n      故事线: 现象（打翻常识）→ 机制（身体在干嘛）→ 纠错（错在哪）→ 怎么办（今天能做的）")
     no_claim = [p["page"] for p in all_pages if not p["claim"]]
     if no_claim:
         problems.append(
@@ -165,10 +468,48 @@ def validate_structure(md_text, all_pages):
             "\n      判据：一句能独立成立的话（有主语有谓语有主张）；"
             "页标题、版式名、名词短语都不算（illustration-spec §1-b① 有三条反例）；"
             "\n      ⛔ 写不出来的页直接毙掉，不许先占位后面再想。")
+    # 2026-08-17 干跑实证：只查"有没有写"时，「解离」「机制」「aaa。」「待补」全部过闸——
+    # 而上面这段报错自己写着"页标题、版式名、名词短语都不算"。判据没兑现＝那三行是空话。
+    # 这里只做**机器判得准**的最低门槛（成色仍归审查端）：够长 + 不是纯名词短语 + 不是占位词。
+    _CLAIM_MIN = 8
+    _PLACEHOLDERS = ("待补", "待定", "TODO", "todo", "占位", "xxx", "XXX", "aaa", "AAA", "同上")
+    # ⚠️ 中文谓语没法用词表穷举（实测「没人教你怎么跟这种情绪相处，你只好骂自己」被误伤）。
+    # 改成**反向判据**：只挡"明确像纯名词短语"的——无句内标点、无虚词、且短。三者其一不满足就放行。
+    # 宁可放过也不误伤：成色本来就归审查端，闸门只负责挡住"根本没在写句子"的那几种。
+    _FUNCTION_WORDS = ("是", "不", "了", "在", "会", "就", "都", "也", "还", "被", "把", "让",
+                       "没", "有", "要", "能", "可以", "却", "才", "并", "而", "从", "给", "对",
+                       "你", "我", "他", "她", "它", "谁", "怎么", "为什么", "多少")
+    thin = []
+    for p_ in all_pages:
+        c = (p_.get("claim") or "").strip()
+        if not c:
+            continue                      # 缺失已在上面报过，不重复
+        if any(ph in c for ph in _PLACEHOLDERS):
+            thin.append((p_["page"], c, "是占位词，不是论点"))
+        elif len(re.sub(r"[\s，。！？、：；「」（）()]", "", c)) < _CLAIM_MIN:
+            thin.append((p_["page"], c, f"太短（实字 <{_CLAIM_MIN}），像标题或名词短语不像一句话"))
+        elif (not re.search(r"[，。！？、；：]", c)
+              and not any(w in c for w in _FUNCTION_WORDS)
+              and len(c) <= 10):   # 只在**极短**时才敢判名词短语：12 字的动宾短语
+                                    # （「画出解离那一刻的身体感受」）不能误伤，宁放勿伤
+            thin.append((p_["page"], c, "整句无标点、无虚词且短——是名词短语不是一句话"))
+    if thin:
+        problems.append(
+            "以下页的论点行不是「一句话」：\n      "
+            + "\n      ".join(f"{pg}「{c}」——{why}" for pg, c, why in thin)
+            + "\n      判据（报错里一直写着，2026-08-17 起真查）：论点行是**这张图要让读者带走的那句话**，"
+            "要有主张、能独立成立；⛔ 页标题、版式名、名词短语、占位词都不算。"
+            "\n      ⭕ 对照：「深呼吸是在帮倒忙」「呼吸乱掉是结果不是原因」；"
+            "⛔ 反例：「解离」「解离的神经机制」「待补」。"
+            "\n      ⚠️ 机器只能判到这一层（够不够长、有没有谓语）；"
+            "**这句话是不是真的值得读者带走，归审查端人工判**。")
+    gates, gate_problems = gates_report(md_text, all_pages, skip_term_gate)
+    problems += gate_problems
     if problems:
         raise ValueError(
             "R4 结构闸门未过（缺失即拒跑，⛔ 不是提醒）：\n  - " + "\n  - ".join(problems)
-            + "\n  填写顺序是硬顺序：①故事线 → ②逐页论点行 → ③版式序列 → ④按版式填点。")
+            + "\n  填写顺序是硬顺序：①读者 → ②故事线 → ③逐页论点行 → ④版式序列 → ⑤按版式填点。")
+    return gates
 
 
 def parse_page_spec(spec, max_page=None):
@@ -521,7 +862,7 @@ def cover_prompt_excerpt(prompt, limit=600):
 
 
 def write_cover_receipt(cover_path, prompt, sid, jid, anchor, style_profile,
-                        cover_only=False, run_pages="all"):
+                        cover_only=False, run_pages="all", gates=None):
     """封面页出图成功后**自动**落盘同名 `.meta.json`（闸门 A 的生产端）。
 
     为什么必须是脚本写、不是人抄：手抄的凭证只证明"有人抄了一遍"，抄错抄漏都发现不了；
@@ -547,6 +888,12 @@ def write_cover_receipt(cover_path, prompt, sid, jid, anchor, style_profile,
             "发布时闸门 A 会拒——要么 `gen_images.py --note <稿件> --cover-only` 重新单出，"
             "要么看过图后 `publish_note.py --confirm-cover <封面图路径> --confirmed-by \"<姓名>\"` "
             "补确认戳")
+    if gates and not all(gates.get(k) for k in ("reader", "term", "seller_view")):
+        off = [k for k in ("reader", "term", "seller_view") if not gates.get(k)]
+        warns.append(f"三条方法论闸门有未通过项（{'/'.join(off)}）已如实记进凭证 gates："
+                     + ("术语闸被 --skip-term-gate 跳过，凭证记 term_gate_skipped=true（可追责）"
+                        if gates.get("term_gate_skipped") else
+                        "这份稿件现在过不了闸门（可能是出图后又改了稿），发布前先修稿再重出"))
     meta = {
         "cover_file": cover_path.name,
         "source": "gen_images",
@@ -558,6 +905,9 @@ def write_cover_receipt(cover_path, prompt, sid, jid, anchor, style_profile,
         # 于是被覆盖掉的已确认封面照样能发。故把这次出图的实况一起记进凭证，交闸门 A 判。
         "cover_only": bool(cover_only),
         "run_pages": str(run_pages or "all"),   # 这一跑实际请求的页："1" / "2-8" / "1,3" / "all"
+        # 三条写作方法论闸门这次到底走没走（2026-08-17）：三个布尔进凭证，发布端/审查端可核。
+        # ⚠️ null ＝ **本次没跑过**（--job 复查拿不到稿件时），⛔ 不等于通过。
+        "gates": gates,
         "style_profile": style_profile or {},
         "prompt_excerpt": excerpt,
         "generated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
@@ -588,7 +938,7 @@ def is_cover_single(cover_only_flag, run_pages):
 
 
 def maybe_write_cover_receipt(pages_out, note, sid, jid, anchor, style_override,
-                              cover_only=False, run_pages="all"):
+                              cover_only=False, run_pages="all", gates=None):
     """本次出图里若包含 **P1（封面页）** 且落盘成功 → 写凭证。返回 (凭证路径|None, [告警…])。
     复查路径（--job）没给 --note 时拿不到提示词 → 不写，如实告警，别写一份没有 prompt_excerpt 的空凭证。
     cover_only/run_pages 记「这张封面是单出的还是批量顺带的」，交发布时的闸门 A 判（裁决 B）。"""
@@ -604,7 +954,7 @@ def maybe_write_cover_receipt(pages_out, note, sid, jid, anchor, style_override,
     return write_cover_receipt(Path(p1["path"]), prompt, sid, jid, anchor,
                                resolve_style_profile(note, style_override),
                                cover_only=is_cover_single(cover_only, run_pages),
-                               run_pages=run_pages)
+                               run_pages=run_pages, gates=gates)
 
 
 def resolve_images_dir(note, images_dir):
@@ -646,7 +996,8 @@ def run_dry(args, note, images_dir, api_base):
     all_pages = extract_pages(md_text)
     try:
         validate_complete(all_pages)
-        validate_structure(md_text, all_pages)     # R4 结构闸门：干跑也走，先在这里现形
+        # R4 结构闸门（含三条写作方法论）：干跑也走，先在这里现形，别等真跑才拒
+        gates = validate_structure(md_text, all_pages, skip_term_gate=args.skip_term_gate)
         selected = select_pages(all_pages, args.cover_only, args.pages)
         warnings = build_warnings(selected, args.cover_only, args.anchor_url)
     except ValueError as e:
@@ -665,6 +1016,8 @@ def run_dry(args, note, images_dir, api_base):
         "selected_pages": [p["page"] for p in selected],
         "images_dir": str(images_dir) if images_dir else None,
         "storyline": extract_storyline(md_text),
+        "reader": extract_reader(md_text),
+        "gates": gates,
         "claims": {p["page"]: p["claim"] for p in all_pages},
         "style_profile": resolve_style_profile(note, args.style_profile),
         "payload_preview": payload,
@@ -689,6 +1042,9 @@ def main():
     ap.add_argument("--session", help="--job 复查用的 session_id（缺省则从状态文件恢复）")
     ap.add_argument("--style-profile", metavar='"套名 vN"',
                     help="本批风格档案（写进封面产出凭证）；不传则读 00-overview.md 的风格档案留痕行")
+    ap.add_argument("--skip-term-gate", action="store_true",
+                    help="跳过「术语必定义」闸门（默认关闭）；用了会在封面凭证记 "
+                         "term_gate_skipped=true，可追责")
     args = ap.parse_args()
 
     note = args.note
@@ -737,7 +1093,9 @@ def main():
             receipt, rwarns = maybe_write_cover_receipt(
                 pages_out, note, sid, jid, anchor, args.style_profile,
                 cover_only=False,                                    # ⛔ 不认命令行 --cover-only
-                run_pages=run_pages_spec(False, None, page_labels))  # 只认状态文件里那一跑的页集
+                run_pages=run_pages_spec(False, None, page_labels),  # 只认状态文件里那一跑的页集
+                # 复查路径按当前稿件重跑三闸取结论（只记录不拦人）；拿不到稿件就记 null＝没跑过
+                gates=gates_for_note(note, args.skip_term_gate))
             for w in rwarns:
                 print(f"⚠ {w}", file=sys.stderr)
             emit_result(pages_out, sid, jid, cover_only, anchor, rwarns, receipt)
@@ -748,7 +1106,8 @@ def main():
         md_text = note.read_text(encoding="utf-8")
         all_pages = extract_pages(md_text)
         validate_complete(all_pages)
-        validate_structure(md_text, all_pages)   # R4 结构闸门：缺故事线/论点行 → 拒跑，⛔ 不出图不烧额度
+        # R4 结构闸门：缺读者/故事线/论点行、术语悬空、卖方腔 → 拒跑，⛔ 不出图不烧额度
+        gates = validate_structure(md_text, all_pages, skip_term_gate=args.skip_term_gate)
         selected = select_pages(all_pages, args.cover_only, args.pages)
         cover_only = args.cover_only
         anchor = args.anchor_url
@@ -786,7 +1145,8 @@ def main():
         receipt, rwarns = maybe_write_cover_receipt(
             pages_out, note, sid, jid, anchor, args.style_profile,
             cover_only=cover_only,
-            run_pages=run_pages_spec(cover_only, args.pages))
+            run_pages=run_pages_spec(cover_only, args.pages),
+            gates=gates)
         for w in rwarns:
             print(f"⚠ {w}", file=sys.stderr)
         emit_result(pages_out, sid, jid, cover_only, anchor, warnings + rwarns, receipt)

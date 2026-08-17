@@ -384,6 +384,39 @@ def test_is_cover_single_derives_from_requested_pages():
     assert gi.is_cover_single(False, "all") is False
 
 
+def test_receipt_records_gates(tmp_path):
+    """三闸结论进凭证，发布端/审查端据此核「这次到底走没走」（⛔ 别只能看到"出过图"）。"""
+    cover = tmp_path / "P01.png"
+    cover.write_bytes(b"\x89PNG fake")
+    gates = {"reader": True, "term": True, "seller_view": True}
+    mp, warns = gi.write_cover_receipt(
+        cover, COVER_PROMPT, "s1", 1, None, {"套名": "图文", "version": 3},
+        cover_only=True, run_pages="1", gates=gates)
+    meta = json.loads(mp.read_text(encoding="utf-8"))
+    assert meta["gates"] == gates
+    assert not [w for w in warns if "方法论闸门" in w]
+
+
+def test_receipt_records_term_gate_skip_and_warns(tmp_path):
+    """逃生口不是静默绕过：term=false + term_gate_skipped=true 落进凭证，并当场告警。"""
+    cover = tmp_path / "P01.png"
+    cover.write_bytes(b"\x89PNG fake")
+    gates = {"reader": True, "term": False, "seller_view": True,
+             "term_gate_skipped": True, "term_gate_skip_reason": "--skip-term-gate（…）"}
+    mp, warns = gi.write_cover_receipt(
+        cover, COVER_PROMPT, "s1", 1, None, {"套名": "图文", "version": 3},
+        cover_only=True, run_pages="1", gates=gates)
+    meta = json.loads(mp.read_text(encoding="utf-8"))
+    assert meta["gates"]["term"] is False and meta["gates"]["term_gate_skipped"] is True
+    assert any("term_gate_skipped" in w and "可追责" in w for w in warns)
+
+
+def test_receipt_gates_null_means_not_run(tmp_path):
+    """`--job` 复查拿不到稿件时 gates=null ＝**本次没跑过**，⛔ 不等于通过。"""
+    _c, _mp, meta, _w = _receipt(tmp_path, True, "1")
+    assert meta["gates"] is None
+
+
 def test_maybe_write_cover_receipt_passes_run_pages(tmp_path):
     note = tmp_path / "post-01.md"
     note.write_text(
@@ -398,3 +431,281 @@ def test_maybe_write_cover_receipt_passes_run_pages(tmp_path):
         pages_out, note, "s1", 7, None, None, cover_only=False, run_pages="1,2")
     meta = json.loads(Path(mp).read_text(encoding="utf-8"))
     assert meta["cover_only"] is False and meta["run_pages"] == "1,2"
+
+
+# ================= 三条写作方法论闸门（2026-08-17）=================
+# 老板令：三条方法论必须**被执行**不是**被写下**。验收口径＝「下一个执行者完全不看规格，
+# 会不会被拦住？」——所以每闸两类测试都要有：**拒跑**（真拦得住）+ **合规不误伤**（不乱拦）。
+
+READER_OK = ("身份阶段（刚被上级随口批评、还没跟任何人说起这事的 28 岁职场女性）"
+             "｜痛点（一句话就在工位上僵住、事后反复回放，骂自己玻璃心）"
+             "｜最容易误解或焦虑的点（以为这是性格缺陷、怕被说矫情所以更晚开口）")
+DEFAULT_PAGES = [("P1", "一句方案再改改就在工位上僵住，那不是玻璃心", "- [hero] 不是玻璃心")]
+
+
+def _note(reader=READER_OK, storyline="现象 → 机制 → 纠错 → 怎么办", pages=None):
+    """拼一份最小的、只在被测那一点上有问题的稿件；pages=[(页, 论点行, 页面文字块)]。"""
+    fm = ["---"]
+    if reader is not None:
+        fm.append(f"读者: {reader}")
+    if storyline is not None:
+        fm.append(f"故事线: {storyline}")
+    fm.append("---")
+    body = ["", "## 配图轮播", ""]
+    for label, claim, page_text in (pages if pages is not None else DEFAULT_PAGES):
+        body += [f"### {label} · 页", f"**论点行**：{claim}", ""]
+        if page_text:
+            body += ["**页面文字**", page_text, ""]
+        body += ["**绘图提示词**", "```", "喂给模型的提示词，读者看不到", "```", ""]
+    return "\n".join(fm + body)
+
+
+def _gate(md, **kw):
+    """跑 R4 结构闸门，返回 gates；不过则抛 ValueError（＝拒跑）。"""
+    return gi.validate_structure(md, gi.extract_pages(md), **kw)
+
+
+# ---- 闸 1 · 读者必填（方法论③：下笔前先钉死读者是谁）----
+
+def test_reader_gate_rejects_missing_field():
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(reader=None))
+    msg = str(exc.value)
+    assert "读者" in msg and "不许立刻动笔" in msg
+    assert "身份阶段（…）｜痛点（…）｜最容易误解或焦虑的点（…）" in msg   # 报错要给「怎么改」
+
+
+def test_reader_gate_rejects_two_segments():
+    """三段少一段＝少答了一个决定这篇怎么写的问题。"""
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(reader="身份阶段（28 岁职场女性，刚被批评）｜痛点（一句话就僵住、反复回放）"))
+    assert "三段" in str(exc.value)
+
+
+def test_reader_gate_rejects_too_short_answer():
+    """标签不算答案：`身份阶段（女性）` 整段够长、答案只有两个字。"""
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(reader="身份阶段（女性）｜痛点（一句话就僵住、反复回放停不下来）"
+                           "｜最容易误解或焦虑的点（以为是性格缺陷不敢开口）"))
+    msg = str(exc.value)
+    assert "第 1 段（身份阶段）" in msg and "≥6 字" in msg
+
+
+def test_reader_gate_rejects_vague_identity():
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(reader="身份阶段（对心理感兴趣的人）｜痛点（一句话就僵住、反复回放停不下来）"
+                           "｜最容易误解或焦虑的点（以为是性格缺陷不敢开口）"))
+    msg = str(exc.value)
+    assert "空泛值" in msg and "没定义读者" in msg
+
+
+def test_reader_gate_passes_concrete_reader():
+    assert _gate(_note())["reader"] is True
+
+
+def test_reader_gate_not_fooled_by_vague_word_inside_specific_identity():
+    """误伤控制（实证：黄金范例首版就栽在这）——「还没跟**任何人**说起这事的 28 岁职场女性」
+    是全仓最具体的读者定义之一，空泛词出现在长描述**里面**是正常中文，不该拦。"""
+    assert _gate(_note())["reader"] is True
+    assert "任何人" in READER_OK          # 确认这条测试真的踩在空泛词上，不是空跑
+
+
+def test_reader_gate_ignores_trailing_yaml_comment():
+    """本仓 frontmatter 普遍行尾挂 `# 注释`，剥不掉会被当成第三段的答案（假绿）。"""
+    reader = "身份阶段（女）｜痛点（一句话就僵住、反复回放停不下来）｜最容易误解或焦虑的点（怕被说矫情）"
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(reader=reader + "   # R4 硬顺序第①步"))
+    assert "第 1 段（身份阶段）" in str(exc.value)
+
+
+# ---- 闸 2 · 术语必定义（方法论①：术语只能定义或删除，不许悬空）----
+
+def _term_pages(page_text, label="P1"):
+    return [(label, "一句能独立成立的主张，读者带得走", page_text)]
+
+
+def test_term_gate_rejects_undefined_term():
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(pages=_term_pages("- 大标题：僵住的那一刻，其实是解离\n- 副标题：身体先替你踩了刹车")))
+    msg = str(exc.value)
+    assert "P1「解离」" in msg
+    assert "删掉这句，读者会少一个事实还是少一个论据" in msg     # 方法论①的判断句原话
+    assert "在同页加一句人话定义" in msg and "换成读者自己会说的词" in msg   # 两条路都给
+
+
+@pytest.mark.parametrize("line", [
+    "- 大标题：僵住的那一刻其实是解离（像是从自己身体里飘出去了）",     # 括号内解释
+    "- 大标题：解离：像是从自己身体里飘出去了",                       # 冒号后紧跟解释
+    "- 大标题：所谓解离，说白了就是像从自己身体里飘出去",             # 定义句式
+])
+def test_term_gate_accepts_in_page_definition(line):
+    assert _gate(_note(pages=_term_pages(line)))["term"] is True
+
+
+def test_term_gate_only_judges_first_occurrence_page():
+    """只判首次出现那一页：P1 已经讲开了，P2 再用不必每页重讲一遍（否则页页返工）。"""
+    pages = [("P1", "身体先替你踩了刹车", "- 大标题：解离（像是从自己身体里飘出去了）"),
+             ("P2", "它不是你想控制就能控制的", "- 大标题：解离发生时，讲道理是关不掉的")]
+    assert _gate(_note(pages=pages))["term"] is True
+
+
+def test_term_gate_ignores_prompt_fence_and_claim_line():
+    """围栏里的术语是**喂模型的**、论点行是写给自己的，读者都看不到 → 不判（误伤控制）。"""
+    md = _note(pages=[("P1", "画出解离那一刻的身体感受", None)])
+    assert "解离" in md                      # 术语确实在稿子里（论点行 + 围栏外没有页面文字）
+    assert _gate(md)["term"] is True
+
+
+def test_term_gate_ignores_citation_and_book_title():
+    """出现在文献名/数据出处里不算拿黑话砸读者（误伤控制）。"""
+    pages = _term_pages("- 底部小字：数据来源：《躯体化障碍研究综述》（2019）\n- 大标题：你不是想太多")
+    assert _gate(_note(pages=pages))["term"] is True
+
+
+def test_term_gate_skip_flag_records_but_does_not_block():
+    """逃生口默认关闭；用了不拦人，但凭证里记 term_gate_skipped=true（可追责，不是静默绕过）。"""
+    md = _note(pages=_term_pages("- 大标题：僵住的那一刻，其实是解离"))
+    with pytest.raises(ValueError):
+        _gate(md)                                  # 默认：拒跑
+    gates = _gate(md, skip_term_gate=True)         # 显式跳过：放行
+    assert gates["term"] is False and gates["term_gate_skipped"] is True
+    assert "--skip-term-gate" in gates["term_gate_skip_reason"]
+
+
+# ---- 闸 3 · 禁卖方视角（方法论②：用户关心我的问题有没有被看见）----
+
+def test_seller_gate_rejects_claim_line():
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(pages=[("P1", "本篇带你了解复杂性创伤的三个特征", "- [hero] 三个特征")]))
+    msg = str(exc.value)
+    assert "P1 论点行「本篇带你」" in msg and "P1 论点行「带你了解」" in msg   # 命中词点名
+    assert "用户不关心你提供什么" in msg and "读者的处境或困惑" in msg
+
+
+def test_seller_gate_rejects_cover_page_text():
+    """封面 hero 就在页面文字块里——卖方腔写在 hero 上，比写在论点行上更致命。"""
+    with pytest.raises(ValueError) as exc:
+        _gate(_note(pages=[("P1", "一句方案再改改就僵住，那不是玻璃心",
+                            "- [hero] 我们的咨询师带你走出创伤")]))
+    assert "封面页面文字" in str(exc.value)
+
+
+def test_seller_gate_allows_negated_teaching():
+    """「没人教你怎么跟情绪相处」是**读者的处境**，不是卖方腔——误伤控制。"""
+    assert _gate(_note(pages=[("P1", "没人教你怎么跟这种情绪相处，你只好骂自己", "- [hero] 没人教过你")])
+                 )["seller_view"] is True
+
+
+def test_seller_gate_passes_reader_perspective():
+    assert _gate(_note())["seller_view"] is True
+
+
+# ---- 页面文字提取（两闸都建在它上面）----
+
+def test_page_text_two_shapes_and_exclusions():
+    md = _note(pages=[("P1", "论点", "- [hero] 不是玻璃心\n> 判断与理由：这句才是 hero")])
+    p1 = gi.extract_pages(md)[0]
+    assert "不是玻璃心" in p1["page_text"]
+    assert "判断与理由" not in p1["page_text"]          # `>` 是写给人看的，不入图
+    assert "喂给模型" not in p1["page_text"]            # 围栏内是喂模型的
+    inline = ("---\n读者: x\n故事线: y\n---\n\n### P1 · 页\n**论点行**：论点\n"
+              "**页面文字**：主标题「先松的是这一环」；副题「六个成分不是齐步走」\n"
+              "**绘图提示词**\n```\n提示词\n```\n")
+    assert "先松的是这一环" in gi.extract_pages(inline)[0]["page_text"]   # 单行式也认
+
+
+# ---- CLI 契约：闸门挂在**出图必经**的入口上（不是只挂在函数上）----
+
+def test_cli_dry_run_reports_gates():
+    p = subprocess.run(
+        [sys.executable, str(SCRIPT), "--note", str(EXAMPLE_NOTE), "--dry-run"],
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "NBDPSY_SECRETS": "/tmp/none.env"})
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert out["gates"] == {"reader": True, "term": True, "seller_view": True}
+    assert out["reader"].startswith("身份阶段（")
+
+
+def test_cli_rejects_note_without_reader(tmp_path):
+    """下一个执行者完全不看规格、直接跑出图 → 在这里被拦住，且拿到「怎么改」。"""
+    note = tmp_path / "post-01.md"
+    note.write_text(_note(reader=None), encoding="utf-8")
+    p = subprocess.run(
+        [sys.executable, str(SCRIPT), "--note", str(note), "--dry-run"],
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "NBDPSY_SECRETS": "/tmp/none.env"})
+    assert p.returncode == 1
+    out = json.loads(p.stdout)
+    assert out["outcome"] == "failed" and "缺 `读者` 字段" in out["error"]
+
+
+# ---- 2026-08-17 干跑报告四条缝的修补（「拦住有没有做」→「拦住做得对不对」） ----
+
+def test_卖方腔同义替换也拦得住_主语判据():
+    """缝①：纯词表挡不住同义替换。干跑实测这四句全部溜过，现在必须全拦。"""
+    for claim in ["本机构擅长处理这类困扰",
+                  "NBDpsy 的咨询师可以陪你走一段",
+                  "咨询师能帮你把它整合回来",
+                  "专业心理咨询在这件事上是有用的"]:
+        pages = [{"page": "P1", "claim": claim, "page_text": "", "prompt": "x"}]
+        assert gi.find_seller_voice(pages), f"漏网：{claim}"
+
+
+def test_读者处境句不被主语判据误伤():
+    """反向守卫：句里带否定＝读者的处境，不是卖方腔（误伤会逼人把好句改坏）。"""
+    for claim in ["没人教你怎么跟这种情绪相处，你只好骂自己",
+                  "谁也没帮你把这件事解释清楚"]:
+        pages = [{"page": "P1", "claim": claim, "page_text": "", "prompt": "x"}]
+        assert not gi.find_seller_voice(pages), f"误伤：{claim}"
+
+
+def _reader_ok_md(claim, storyline="现象 → 机制 → 纠错"):
+    return ("---\n读者: 身份阶段（刚被上级随口批评的 28 岁职场女性）｜"
+            "痛点（一句话就在工位上僵住、事后反复回放）｜"
+            f"最容易误解或焦虑的点（以为这是性格缺陷、怕被说矫情）\n故事线: {storyline}\n---\n")
+
+
+def test_论点行是名词短语或占位词时拒跑():
+    """缝②：报错文案一直写着「名词短语不算」，2026-08-17 起真查。"""
+    for bad in ["解离", "机制", "解离的神经机制", "待补", "aaa。"]:
+        pages = [{"page": "P1", "claim": bad, "page_text": "", "prompt": "x"}]
+        with pytest.raises(ValueError, match="论点行不是「一句话」"):
+            gi.validate_structure(_reader_ok_md(bad), pages)
+
+
+def test_好论点行一律不误伤():
+    """反向守卫：真实笔记里的好论点行（含动宾短语）必须全过——宁放勿伤。"""
+    for good in ["没人教你怎么跟这种情绪相处，你只好骂自己", "深呼吸是在帮倒忙",
+                 "呼吸乱掉是结果不是原因", "画出解离那一刻的身体感受"]:
+        pages = [{"page": "P1", "claim": good, "page_text": "", "prompt": "x"}]
+        gi.validate_structure(_reader_ok_md(good), pages)   # 不抛即通过
+
+
+def test_围栏内引号文字里的术语也要定义():
+    """缝③：把术语全塞进绘图提示词的引号里＝图上照样出现未定义黑话。"""
+    pages = [{"page": "P1", "claim": "身体先替你按了静音键，你才发现自己不在场",
+              "page_text": "- 大标题：那一刻你不在场",
+              "prompt": '暖米白底，标题「解离的神经机制」居中，柔和扁平插画'}]
+    assert ("P1", "解离") in gi.find_undefined_terms(pages)
+
+
+def test_围栏里的画风描述不算图内文字():
+    """反向守卫：提示词里的画风/构图/配色是喂模型的，读者看不到，⛔ 不许扫。"""
+    pages = [{"page": "P1", "claim": "身体先替你按了静音键，你才发现自己不在场",
+              "page_text": "- 大标题：那一刻你不在场",
+              "prompt": "画出解离那一刻的身体感受，暖米白底，柔和扁平插画"}]
+    assert not gi.find_undefined_terms(pages)
+
+
+def test_故事线只写主题不成推进时拒跑():
+    """缝④：「故事线: 讲清楚解离」照过闸＝那不是故事线是主题。"""
+    pages = [{"page": "P1", "claim": "深呼吸其实是在帮倒忙", "page_text": "", "prompt": "x"}]
+    with pytest.raises(ValueError, match="不成推进"):
+        gi.validate_structure(_reader_ok_md("x", storyline="讲清楚解离"), pages)
+
+
+def test_两步以上推进的故事线放行():
+    pages = [{"page": "P1", "claim": "深呼吸其实是在帮倒忙", "page_text": "", "prompt": "x"}]
+    gi.validate_structure(_reader_ok_md("x", storyline="现象 → 机制 → 怎么办"), pages)
+    gi.validate_structure(_reader_ok_md("x", storyline="先打翻常识；再讲机制；最后给做法"), pages)
