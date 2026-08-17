@@ -54,10 +54,19 @@ gzh-cover.json（still-life 版式；⛔ 没有任何文字字段）:
     （gen_gzh_images.py 把喂进来的数据写在 cover.jpg ↔ cover.json），写那儿等于覆盖别人的输入。
 
 出图后的机器校验（比例 ±1% + 四角白边）是**默认行为**，⛔ 没有关掉它的开关。
+still-life 还多两道闸，都在读者真正看到的 220px 信息流尺寸上判（见 measure_feed_thumb）：
+    ① 缩略图存活闸——赭红 accent 缩到信息流尺寸后还得看得见（量后果）。
+       几何闸门对 cord 全绿而缩略图上赭红是 0 个，这道闸就是补那个洞。
+       判据是**占画面的百分比**，⛔ 不是绝对像素数：缩略图定宽 220、高随画幅走，
+       绝对数在高画幅上会自动变松。阈值只在 16:9～3:1 之间标定过，出界会显式报 ⚠️。
+    ② cord 语义闸——accent=cord 时，线得从一件本来就带线的物件上垂下来（量形式，
+       靠 CORD_CAPABLE_ICONS 白名单，**素材库扩张时要人来补表**）。
+主体墨迹占比与外接框比例同样在这个尺寸上量，但**只报不拦**（stdout 的 feed_thumb.ink）。
 
 退出码（三态，⛔ 别只判 0/非 0 就完事）:
     0  成功，且校验全过
-    1  **图产出来了，但不合格**——比例超差、四角有白边、图标缺失、画面里有文字等，
+    1  **图产出来了，但不合格**——比例超差、四角有白边、图标缺失、画面里有文字、
+       赭红在缩略图上没活下来、cord 挂在不带线的物件上等，
        成图与凭证都在盘上，可以直接看图定位问题
     2  参数/环境错误，**压根没出图**——模板不存在、JSON 解析失败、没装 playwright、
        图标名不在素材库、--canvas 写法不认识
@@ -115,22 +124,42 @@ def data_uri(path: pathlib.Path) -> str:
 EXPECTED_FONTS = ('Noto Sans SC', 'Noto Sans CJK SC', 'Source Han Sans SC', 'PingFang SC')
 
 
-def check_fields(data: dict):
-    """缺字段以前是静默留白（首版实测缺头像空出 19.3% 版面，零警告）——一律报红。"""
-    red = []
+# 横版豁免的理由，**跟着豁免一起打进 stdout 与凭证**。⛔ 别只打一个字段名列表：
+# 光看到 `exempted: ["avatar","identity"]` 的人无从判断这是有意放行还是闸门坏了。
+EXEMPT_WHY = ('横版（w > h）用作视频封面：四层版式的第 ④ 层头像层是**为竖版定义**的，'
+              '横版下这一层压根不存在，⛔ 不是「缺了」。竖版一个字都没放松。')
+
+
+def check_fields(data: dict, landscape: bool = False):
+    """缺字段以前是静默留白（首版实测缺头像空出 19.3% 版面，零警告）——一律报红。
+
+    返回 (红字列表, 被豁免的判据名列表)。
+
+    ⚠️ **横版豁免头像层**：这套四层版式（hero/递进/头像/落款）本来就是为**竖版**定的，
+    那条红字自己说的是「右下角空一大片」——那是竖版布局的说法。横版（视频封面）下第 ④ 层
+    压根不存在，⛔ 不是「缺了」。判据取**画布方向**而不是新加一个 flag：方向本身就是
+    这套版式适不适用的分界，加 flag 等于让调用方自己声明「我不要这条闸」。
+
+    ⛔ 豁免必须说出来（调用方把 exempted 打进 stdout 与凭证）：**静默豁免与静默失效
+    只差一个方向**。⛔ 竖版一个字都不许放松——竖版缺头像是真缺陷（首版实测空掉 19.3% 版面）。
+    """
+    red, exempted = [], []
     hero = [s for s in (data.get('hero') or []) if str(s).strip()]
     if len(hero) > 2:
         red.append(f'🔴 hero 有 {len(hero)} 行——这个版式规定两行封顶，'
                    f'长句请降到 subtitle 副题层（方案 1），别硬塞进 hero')
-    if not str(data.get('avatar') or '').strip():
-        red.append('🔴 缺 avatar：头像是这个版式的第 ④ 层，缺了右下角空一大片（首版实测 19.3% 版面）')
-    idn = data.get('identity') or {}
-    for k, what in (('name', '姓名'), ('line', '身份行')):
-        if not str(idn.get(k) or '').strip():
-            red.append(f'🔴 缺 identity.{k}（{what}）：头像旁会只剩半边，封面认不出作者是谁')
+    if landscape:
+        exempted = ['avatar', 'identity']
+    else:
+        if not str(data.get('avatar') or '').strip():
+            red.append('🔴 缺 avatar：头像是这个版式的第 ④ 层，缺了右下角空一大片（首版实测 19.3% 版面）')
+        idn = data.get('identity') or {}
+        for k, what in (('name', '姓名'), ('line', '身份行')):
+            if not str(idn.get(k) or '').strip():
+                red.append(f'🔴 缺 identity.{k}（{what}）：头像旁会只剩半边，封面认不出作者是谁')
     if not str(data.get('footer') or '').strip():
         red.append('🔴 缺 footer：底部落款是品牌位，缺了这版式就不成立')
-    return red
+    return red, exempted
 
 
 def platform_fonts(page, selector: str):
@@ -314,6 +343,163 @@ def make_thumb(src: pathlib.Path, width: int, fmt: str) -> str:
     return str(out)
 
 
+# ── 缩略图存活闸的判据常数 ──────────────────────────────────────────
+# 为什么有这道闸（2026-08-17 实测）：几何闸门对 cord 全绿（drawn=true、
+# degenerate=false、两端落差 99.1px），可**读者真正看到的 220px 信息流缩略图上，
+# 赭红像素是 0 个**。机制是 cord 只有 3.6px 粗，缩到 1/6 落在亚像素上被重采样抹平；
+# 「指名某件图标整体着色」是面，缩完还是面。**线会消失，面不会**，而任何量形式的
+# 闸门（画没画、退化没退化）都照不出这个后果。所以这道闸量的是后果不是形式。
+FEED_THUMB_W = 220        # 读者在公众号信息流里实际看到的封面宽度
+INK_LUMA_MAX = 200        # 亮度低于此值算「墨迹」；纸底最暗处约 220，留 20 档余量
+# r−g 与 r−b **同时** ≥ 这个数才算赭红。50 不是随手取的：赭红 #A34B3A 的 r−g=88、
+# 纸底 r−g≈5，所以「r−g ≥ 50」＝「这个像素至少 54% 是赭红」。缩小后活下来的 cord 像素
+# 全是 30～45% 的稀释混色（看上去就是一抹脏，不成其为红），而面着色的图标笔画芯部是
+# 接近纯色的赭红——**这个 delta 分的正是「糊成一片」与「真的有一笔」**。实测（见下表）：
+# delta 从 26 抬到 50，cord 侧 52→0，最弱合法样本才 97→68，两侧同时抬但速度差 10 倍。
+ACCENT_HUE_DELTA = 50
+# 赭红在信息流缩略图上的存活下限，单位是**占画面的百分比，⛔ 不是绝对像素数**。
+# 为什么必须是比例：缩略图**定宽 220、高随画幅走**，2.35:1 是 220×94（20680 px）、
+# 16:9 是 220×124（27280 px）。同一个绝对像素数放到更高的画幅上占比自动变小＝闸门自动变松；
+# 而「读者看不看得见」取决于占视野的比例，与画面总共多少像素无关。
+#
+# 🔴 **这里栽过一次，记牢**：第一版写着「cord 侧的 0 是结构性的：CORD_SW_R 与画布同比例，
+# 无论出图多大 cord 恒为 ~0.6px」——**错**。同比例的是**画布**，可缩略图是定宽变高的，
+# 比例关系在那儿断了。真实关系是：
+#       缩略图上的 cord 线宽 = CORD_SW_R × 220 ÷ 宽高比
+# 只随**宽高比**变，与画布绝对大小无关。所以 2.35:1 上 0.60px（被抹平＝0 个像素），
+# 16:9 上 0.80px 就能活下 26 个像素——同一份数据换个画幅换个结论，当场假绿。
+# ⚠️ 教训不在「少测了一档」，在**推理链里换了一次坐标系而没察觉**。
+#
+# 标定实测（走 measure_feed_thumb 本身，d=50，LANCZOS 缩到 220，⛔ 不经 JPEG 再编码）。
+# 两侧都取**实测出来的极值**，⛔ 不是随手挑几个样本：
+#     宽高比    缩略图     cord 最强(失败侧)      6 件组末位 stairs(合法侧最弱)
+#     3:1      220×73       0px  0.000%              32px  0.199%
+#     2.6:1    220×85       0px  0.000%              48px  0.257%
+#     2.35:1   220×94       0px  0.000%              54px  0.261%   ← 合法侧全局最低
+#     2:1      220×110      2px  0.008%              6 件组已放不下，退回 3 件组 ≈0.9%
+#     16:9     220×124     28px  0.103%   ← 失败侧带内最高
+#     4:3      220×165     80px  0.220%              6 件组放不下
+# 带内（16:9 ～ 3:1）失败侧最高 0.103%、合法侧最低 0.199%，取几何中点 0.16%：
+# 距失败侧 1.55 倍、距合法侧 1.24～1.63 倍。**两侧margin都只有 1.5 倍上下，很窄**——
+# 窄是事实不是选择：合法侧的最弱样本（6 件组的最小一件）与失败侧的最强样本（cord 在高画幅上）
+# 本来就挨得近。⛔ 别为了「看起来安全」把阈值往任一侧挪，那只会把一侧的漏判换成另一侧的误报。
+ACCENT_MIN_PCT_FEED = 0.16
+# 上面这套数只在这个宽高比区间里验过。⛔ 出了区间**红绿都不作数**，必须显式说出来，
+# ⛔ 不许静默沿用——这正是上一版「结构性恒 0」翻车的形状（拿一档的结论推广到所有画幅）。
+# 实测越界会怎样：4:3（比例 1.333）上 cord 冒到 0.220% > 0.16%，**假绿**。
+ACCENT_CALIBRATED_RATIO = (16 / 9, 3.0)
+
+
+def count_accent_pixels(im, delta: int = ACCENT_HUE_DELTA) -> int:
+    """数画面上还剩多少个赭红像素。**判据是色相，⛔ 不是到 #A34B3A 的 RGB 距离。**
+
+    距离判据实测会把整组静物数成赭红：石板灰 #4A5563 到赭红 #A34B3A 的欧氏距离只有
+    98.5，所以 `dist≤100` 在一张**赭红为零**的封面（cover-01 缩略图）上数出 279 个像素，
+    那是个恒绿的假闸门。色相判据没这毛病——模板调色板六色全是 r < g（r−g 在 −11～−20），
+    纸底 r−g 最多 12，只有赭红 r−g=88 / r−b=105，两头各留着几倍余量。
+
+    ⚠️ delta 同时也是**纯度**闸：见 ACCENT_HUE_DELTA 的注释，抬高 delta 等于只数
+    "足够纯"的赭红像素，稀释成一抹脏的那些自然掉出去。
+    """
+    n = 0
+    for r, g, b in im.convert('RGB').getdata():
+        if r - g >= delta and r - b >= delta:
+            n += 1
+    return n
+
+
+def ink_metrics(im, luma_max: int = INK_LUMA_MAX) -> dict:
+    """主体墨迹占了多少画面、外接框有多大。**只报数，⛔ 不设闸门。**
+
+    「主体该多大」是审美与风格档案的事，由持量具的排版方自己解，闸门不替他拍板。
+    这里只保证他手上有数：占比 = 墨迹像素 / 全画面；外接框 = 所有墨迹像素的包围盒。
+    """
+    im = im.convert('RGB')
+    w, h = im.size
+    xs, ys, n = [], [], 0
+    for i, (r, g, b) in enumerate(im.getdata()):
+        if 0.299 * r + 0.587 * g + 0.114 * b < luma_max:
+            n += 1
+            xs.append(i % w)
+            ys.append(i // w)
+    if not n:
+        return {'ink_px': 0, 'ink_pct': 0.0, 'bbox_w_pct': 0.0, 'bbox_h_pct': 0.0, 'bbox': None}
+    bw, bh = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+    return {
+        'ink_px': n,
+        'ink_pct': round(100.0 * n / (w * h), 2),
+        'bbox_w_pct': round(100.0 * bw / w, 1),
+        'bbox_h_pct': round(100.0 * bh / h, 1),
+        'bbox': {'x': min(xs), 'y': min(ys), 'w': bw, 'h': bh},
+    }
+
+
+def measure_feed_thumb(src: pathlib.Path, width: int = FEED_THUMB_W) -> dict:
+    """把成图缩到信息流宽度再量——**读者看到的是这个尺寸，闸门就得在这个尺寸上判**。
+
+    ⚠️ 这里自己缩一张（内存里，不落盘），⛔ 不复用 --thumb 产的那个文件：--thumb 可以
+    被调成 0 或别的宽度，判据跟着漂就等于这道闸可以被参数关掉。判据宽度恒为 FEED_THUMB_W。
+    PIL 缺席时**报红**而不是跳过——量不出来的绿是假绿。
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return {'ran': False, 'reason': '没装 Pillow，缩略图上的赭红存活与墨迹占比都量不出来'
+                                        '（pip install Pillow）'}
+    im = Image.open(src)
+    small = flatten_for_jpeg(im.resize((width, max(1, round(im.height * width / im.width))),
+                                       Image.LANCZOS))
+    accent_px = count_accent_pixels(small)
+    # ⚠️ 阈值、实测值、**以及量它的那块画布多大**，三个必须一起写进凭证：
+    # 只看到「26」和「下限 20」，看不出这是"刚好过"还是"稳过"——而这次的坑恰恰藏在
+    # 缩略图高度里（220×94 与 220×124 是两套完全不同的分母）。
+    return {
+        'ran': True, 'width': width, 'size': f'{small.width}x{small.height}',
+        'thumb_w': small.width, 'thumb_h': small.height,
+        'thumb_px': small.width * small.height,
+        'accent_px': accent_px,
+        'accent_pct': round(100.0 * accent_px / (small.width * small.height), 3),
+        'accent_min_pct': ACCENT_MIN_PCT_FEED, 'hue_delta': ACCENT_HUE_DELTA,
+        'ink': ink_metrics(small),
+    }
+
+
+# ── cord 语义闸的白名单 ────────────────────────────────────────────
+# accent=cord 会从**第一件**静物垂一根赭红曲线到第二件。判据：那第一件在现实里
+# 得本来就拖着一根线/绳，红线才读得成「它自己的线」；否则就是一条无来由的红曲线
+# （cover-03 把线画在 door-open 上，起笔处还紧挨门把手小圆点，第一眼像画错了）。
+#
+# ⚠️ **这张表随图标库扩张需要人来补，⛔ 它不会自己长。** 素材库正在从 66 枚扩到几万枚，
+# 新进来的带线物件（电话、充电器、熨斗、水壶、吊灯、点滴……）不补进来就会被误判成红。
+# 补表判据：这件东西在现实里本来就拖着一根线/绳/管，且那根线是它的显著特征。
+# ⛔ 表放在这里而不是 svg 文件头里，是因为素材库由别的线维护，本闸门不往那边写字段。
+CORD_CAPABLE_ICONS = frozenset({
+    'headphones',   # 耳机线——参考封面用的就是它
+    'lamp',         # 台灯电源线
+    'anchor',       # 锚链
+    'life-buoy',    # 救生圈牵引绳
+})
+
+
+def cord_semantic_problem(cord, names):
+    """accent=cord 时，线得从一件**本来就带线**的物件上垂下来。不满足就返回红字。"""
+    if not cord or not cord.get('drawn'):
+        return None                       # 线压根没画，另有闸门管（cord.drawn）
+    origin = cord.get('from')
+    if origin in CORD_CAPABLE_ICONS:
+        return None
+    movable = [n for n in names if n in CORD_CAPABLE_ICONS]
+    if movable:
+        fix = (f'把 `{movable[0]}` 挪到 icons 第一位——线是从第一件垂到第二件的')
+    else:
+        fix = (f'这组静物里没有一件带线的（本表认得的：{sorted(CORD_CAPABLE_ICONS)}），'
+               f'换一件带线物件当主角，或把 accent 改成指名某个 icon 整体着色')
+    return (f'🔴 accent=cord 的线挂在 `{origin}` 上，可这东西本来不带线——'
+            f'画出来就是一条不属于任何物件的红曲线。{fix}。'
+            f'（若 `{origin}` 确实是带线物件，那是 render_cover.py 的 '
+            f'CORD_CAPABLE_ICONS 该补了，⛔ 这张表不会自己跟上素材库扩张）')
+
+
 def write_receipt(path: pathlib.Path, payload: dict):
     """产出凭证：出问题时能**不重跑就定位**。
 
@@ -325,13 +511,14 @@ def write_receipt(path: pathlib.Path, payload: dict):
     return str(path)
 
 
-def report_still_life(fit, check, landed, warnings, out, thumb, html_path,
+def report_still_life(fit, check, feed, landed, warnings, out, thumb, html_path,
                       receipt, receipt_path, W, H):
     """静物式封面的闸门与量具。
 
     红灯 → **退出码 1**（图产出来了但不合格），⛔ 别让 ok=true 混过验收。
     与「退出码 2＝压根没出图」分开，是为了让调用方一眼分清「去看图」还是「去改参数」。
     """
+    receipt['feed_thumb'] = feed          # 信息流尺寸的实测，只有这个版式量（见 main()）
     if landed and landed[0] not in EXPECTED_FONTS:
         warnings.append(f"🔴 字体没落在预期字族上：实际拿去光栅化的是 {landed[0]}（全部命中：{landed}），"
                         f"预期 {list(EXPECTED_FONTS)} 之一。本版式图内虽零文字，但渲染脚本与小红书那套共用，"
@@ -352,6 +539,31 @@ def report_still_life(fit, check, landed, warnings, out, thumb, html_path,
     if fit['cord'] and fit['cord'].get('degenerate'):
         warnings.append(f"🔴 耳机线两端落差只有 {fit['cord']['drop_px']}px，曲线会摊成一条平线——"
                         f"把主角换成明显更大的那件，或改用「accent 指名某件图标」的形态")
+    # ② cord 语义闸：线得从一件本来就带线的物件上垂下来（量形式，随素材库扩张要补表）
+    cord_sem = cord_semantic_problem(fit['cord'], [i['name'] for i in fit['icons']])
+    if cord_sem:
+        warnings.append(cord_sem)
+    # ① 缩略图存活闸：赭红在读者真正看到的 220px 上还剩几个像素（量后果，不随素材库变化）
+    if not feed['ran']:
+        warnings.append(f"🔴 缩略图存活闸没跑起来：{feed['reason']}——量不出来的绿是假绿，⛔ 别当验收通过")
+    elif fit['accent_spots'] == 1 and feed['accent_pct'] < ACCENT_MIN_PCT_FEED:
+        warnings.append(f"🔴 赭红在 {feed['size']} 的信息流缩略图上只占 {feed['accent_pct']}%"
+                        f"（{feed['accent_px']}/{feed['thumb_px']} px，下限 {ACCENT_MIN_PCT_FEED}%）——"
+                        f"accent 是画面里唯一讲故事的那一处，读者那个尺寸上等于不存在。"
+                        f"当前形态 `{fit['accent_form']}`：细线缩到信息流尺寸会落在亚像素上被重采样抹平"
+                        f"（缩略图上的线宽 = CORD_SW_R×220÷宽高比，这张是 "
+                        f"{0.00644 * 220 / (W / H):.2f}px），"
+                        f"改用「accent 指名某个 icon 整体着色」——面缩完还是面")
+    # ⚠️ 比容差：画布高是 round() 出来的整数，`--canvas 16:9` 实际落成 1313×739＝1.7767，
+    # 比名义上的 1.7778 低一丝。拿严格不等号比会把**正好在端点上的那一档**判成越界
+    # （实测就是 16:9 自己被喊了狼来了）。±1% 与出图比例校验同一个容差口径。
+    lo, hi = ACCENT_CALIBRATED_RATIO
+    if feed['ran'] and not (lo * 0.99 <= W / H <= hi * 1.01):
+        warnings.append(f"⚠️ 画布宽高比 {W / H:.3f} 落在存活闸的标定区间 "
+                        f"[{lo:.3f}, {hi:.3f}] 之外——阈值 {ACCENT_MIN_PCT_FEED}% 只在那个区间里实测过，"
+                        f"**这张图的红绿都不作数**。机制：缩略图定宽 220、高随画幅走，画幅越高 cord "
+                        f"在缩略图上越粗（实测 4:3 上 cord 能冒到 0.220% 而假绿）。"
+                        f"要在这个比例上用这道闸，得先按 ACCENT_MIN_PCT_FEED 的注释重标一遍")
     if fit['overlap']:
         warnings.append(f"🔴 静物之间有重叠（最小间距 {fit['min_gap']}px）——图标太多或画布太窄")
     if fit['out_of_canvas']:
@@ -393,6 +605,9 @@ def report_still_life(fit, check, landed, warnings, out, thumb, html_path,
         'baseline_align_dev_px': fit['baseline_align_dev_px'],
         'desk_w': fit['desk_w'], 'desk_overhang_px': fit['desk_overhang_px'],
         'accent': fit['accent'], 'accent_form': fit['accent_form'], 'cord': fit['cord'],
+        # 信息流缩略图上的实测：accent_px 是闸门判据；ink 那三个数**只报不拦**——
+        # 「主体该多大」是审美与风格档案的事，做决定的人要看数，闸门不替他拍板。
+        'feed_thumb': feed,
         'text_in_canvas': fit['text_in_canvas'],
         'zero_text_criterion': '模板无文字槽位 + 渲染后扫画布内文本节点/SVG <text>/伪元素 content，'
                                '三类全空才算零文字（字体探针在画布外、不计入）',
@@ -410,7 +625,9 @@ def main():
                     help=f'模板：别名 {"/".join(TEMPLATES)} 或模板 HTML 路径。'
                          f'不给时认数据里的 template 字段，再没有才回落 tpl-cover-jinjin.html')
     ap.add_argument('--canvas', help='画布：`1313x559` 绝对像素，或 `2.35:1` 比例（比例时高按 round(宽/比例) 算）')
-    ap.add_argument('--thumb', type=int, default=220, help='顺带产的缩略图宽度（0=不产），默认 220')
+    ap.add_argument('--thumb', type=int, default=220,
+                    help='顺带产的缩略图**文件**宽度（0=不产），默认 220。'
+                         '⚠️ 缩略图存活闸不吃这个值——它恒在 220px 上判，改这里关不掉它')
     ap.add_argument('--html-only', action='store_true', help='只产 HTML 不截图（没装 playwright 时降级）')
     args = ap.parse_args()
 
@@ -454,7 +671,6 @@ def main():
     else:
         if not data.get('hero'):
             return die('hero 是空的——这个版式的第一层就是通栏大字，没大字就不是这个版式')
-        warnings = check_fields(data) + resolve_assets(data, dpath.parent)
 
     dw, dh = KIND_CANVAS[kind]
     canvas = data.get('canvas') or {}
@@ -467,6 +683,14 @@ def main():
             return die(str(e))
     data['canvas'] = {'w': W, 'h': H}
     target_ratio = ratio_spec if ratio_spec else W / H
+
+    # ⚠️ 字段体检**必须排在画布定下来之后**：豁免哪几条判据取决于画布是横是竖，
+    # 而画布可能被 --canvas 覆盖（`--canvas 16:9` 时数据里根本没有 canvas 字段）。
+    # 排在前面就只能拿数据里的名义画布判，`--canvas` 一给就判反。
+    exempted = []
+    if kind != 'still-life':
+        red_fields, exempted = check_fields(data, landscape=W > H)
+        warnings = red_fields + resolve_assets(data, dpath.parent)
 
     out_png = pathlib.Path(args.out).resolve() if args.out else dpath.with_suffix('.png')
     # 扩展名必须给且必须认识。⚠️ 不给扩展名**从来就没能用过**（playwright 自己会抛
@@ -489,6 +713,10 @@ def main():
         print(json.dumps({
             'ok': True, 'html_only': True, 'html': str(html_path),
             'warnings': warnings,
+            # 这条路也要报豁免：⛔ 别让「换个参数就看不见豁免了」成为一条暗路
+            'landscape': W > H,
+            'exempted': exempted,
+            'exempted_why': EXEMPT_WHY if exempted else None,
             'note': '--html-only 不出图也不跑自适应量具，⛔ 不能拿它的 ok=true 当封面验收依据',
         }, ensure_ascii=False))
         return 0
@@ -532,6 +760,10 @@ def main():
 
     thumb = make_thumb(out_png, args.thumb, fmt) if args.thumb else ''
     check = verify_image(out_png, target_ratio)
+    # 信息流尺寸上的实测（自己缩，不吃 --thumb）：赭红存活是闸门，墨迹两数只报不拦。
+    # ⛔ 只给 still-life 量：jinjin 没有 accent 这个概念，往它的凭证里塞个 accent_px
+    # 只会让人以为那是个有意义的数——小红书线要不要这几个量具，是它自己的口径。
+    feed = measure_feed_thumb(out_png) if kind == 'still-life' else None
 
     # —— 出图后的机器校验（默认跑，⛔ 不做可选）——
     if not check['ran']:
@@ -571,7 +803,7 @@ def main():
     }
 
     if kind == 'still-life':
-        return report_still_life(fit, check, landed, warnings, out_png, thumb, html_path,
+        return report_still_life(fit, check, feed, landed, warnings, out_png, thumb, html_path,
                                  receipt, receipt_path, W, H)
 
     # —— 闸门：能量出来的坏消息一律显式报，⛔ 不让它静默混过验收 ——
@@ -589,7 +821,10 @@ def main():
     if fit.get('hero_glyph_pct_high'):
         warnings.append(f"⚠️ hero 字高 {fit['hero_glyph_pct_of_h']}% 冲破 §2-b 上限 13%——"
                         f"hero 太短（4 字以内），撑满版心必然超标。这里两条规格天然打架："
-                        f"「通栏撑满」与「字高 ≤13%」不可兼得，要么给 hero 加字、要么右侧留白，须人工拍板")
+                        f"「通栏撑满」与「字高 ≤13%」不可兼得。**排版 agent 自行处置**："
+                        f"从原金句里多留两个字、让字号自然落回甜区（首选）／保持字数、右侧留白不撑满通栏／"
+                        f"换版式。⛔ 不必上报人工"
+                        f"（⚠️ 方向别搞反：这条是 hero **太短**导致字被撑大，加字才降字高，截字只会更超）")
     if fit.get('sub_seg_overflow'):
         warnings.append("副题里有**一整段没有标点**且比版心还宽，已退回自由折行——"
                         "断行会落在词中间。想让它断得好看，在金句里加个逗号")
@@ -627,10 +862,23 @@ def main():
     red = [w for w in warnings if w.startswith('🔴')]
     receipt['gates_ok'] = not red
     receipt['warnings'] = warnings
+    # ⛔ 豁免必须**看得见**：静默豁免和静默失效只差一个方向——两者都是「闸门没响」，
+    # 一个是有意的、一个是坏了，凭证里不写就分不出是哪个。所以豁免了什么、凭什么豁免，
+    # 一起打进 stdout 与凭证。空列表也照常出字段，⛔ 别只在非空时才出现（那样竖版的
+    # 「一条都没豁免」就成了看不见的默认值，读的人无从确认闸门确实全开着）。
+    receipt['exempted'] = exempted
+    receipt['exempted_why'] = EXEMPT_WHY if exempted else None
     receipt['exit_code'] = 0
     print(json.dumps({
         'ok': True,
         'gates_ok': not red,
+        'landscape': W > H,
+        'exempted': exempted,
+        'exempted_why': EXEMPT_WHY if exempted else None,
+        # 版面上是否真把第 ④ 层收起来了（从 DOM 量来，⛔ 不是这里假定的）。
+        # 与 exempted 分开报：一个说「闸门放了行」，一个说「版面真收了」，⛔ 别拿一个当另一个。
+        'landscape_layer4_hidden': fit.get('landscape_layer4_hidden'),
+        'content_center_pct': fit.get('content_center_pct'),
         'png': str(out_png), 'thumb': thumb, 'html': str(html_path),
         'receipt': write_receipt(receipt_path, receipt),
         'canvas': f'{W}x{H}',

@@ -112,6 +112,11 @@
   .sp-steps { flex-grow: 1; }
   .sp-foot  { flex-grow: .45; }
 
+  /* 正文列宽上限。**竖版不设 --content-max，回落 none＝与从前分毫不差**；
+     横版（w > h）才由脚本设成画布宽的 78%——1920 宽的画布上一行拉满 1800px
+     行长过长，金句会一路贴到右边缘。⛔ 这不是"顺手优化竖版"，竖版一个像素都不动。 */
+  .hero, .subtitle, .steps, .bottom { max-width: var(--content-max, none); }
+
   /* ── ① 通栏大字压顶 ───────────────────────────────────────── */
   .hero { flex: 0 0 auto; }
   .hero .l {
@@ -314,6 +319,18 @@ if (ERR) {
   setv('--bg', T.bg); setv('--accent', T.accent); setv('--ink', T.ink);
   setv('--muted', T.muted); setv('--sage', T.sage); setv('--haze', T.haze);
   setv('--pad-x', T.pad_x); setv('--pad-top', T.pad_top); setv('--pad-bottom', T.pad_bottom);
+
+  /* ── 横版（w > h）的版面重定 ───────────────────────────────────────
+     这套四层版式（hero/递进/头像/落款）是**为竖版定义**的：左右留白 60px 在 876 宽上
+     占 6.8%，搬到 1920 宽上就只剩 3.1%，字几乎贴边。横版把它按比例还原回 6.5%，
+     并给正文列一个宽度上限。⛔ 只在横版生效；theme 里显式给了 pad_x 就以 theme 为准。 */
+  {
+    const cw = D.canvas?.w || 876, ch = D.canvas?.h || 1313;
+    if (cw > ch) {
+      if (T.pad_x === undefined) setv('--pad-x', Math.round(cw * 0.065) + 'px');
+      setv('--content-max', Math.round(cw * (+T.content_max_ratio || 0.78)) + 'px');
+    }
+  }
 
   const heroLines = (D.hero || []).filter(s => String(s).trim() !== '');
   const subtitle  = String(D.subtitle ?? '').trim();
@@ -613,6 +630,66 @@ window.__fit = function () {
     }
   }
 
+  /* ══ 横版（w > h）：把内容整组垂直居中 ═══════════════════════════════════
+     ⚠️ **只在横版跑，竖版一个像素都不动**（判据 W > H，竖版直接跳过整段）。
+
+     为什么要有这段：四层版式的第③递进层、第④头像层本来占着下半部；横版做视频封面时
+     头像层不适用（render_cover.check_fields 对横版豁免了 avatar/identity），
+     那两层一空，弹簧就把内容全顶到上边——实测内容中心落在画面 24.4% 处、下半 60% 全空。
+     老板 2026-08-17 打回视频封面的原话是「我要的是封面，不是几个元素的凑数」，
+     再交一张下半大片空白的必然二次打回。
+
+     ⛔ 放在这里（**所有字号求解之后**）是有意的：hero 字号那套线性求解是老板验收过的，
+     这段只**搬位置**、不参与求解——求解仍在原来的弹簧布局下完成，解出的字号分毫不变。 */
+  const LANDSCAPE = W > H;
+  const LAND_CENTER_R = +(T.land_center ?? 0.45);   /* 视觉中心略高于几何中心，符合阅读习惯 */
+  let landCenterPct = null;
+  let landHid4 = false;
+  if (LANDSCAPE) {
+    const alive = (el) => el && el.getBoundingClientRect().height > 0.5;
+    /* ⓪ 第 ④ 层（头像 + 姓名/身份行）整层不出现。
+       ⚠️ 这是**跟着豁免必须一起做的那一半**：check_fields 对横版豁免 avatar/identity 的
+       理由是「横版下第 ④ 层压根不存在」——那就得真的不存在。只豁免闸门却照旧渲染，
+       会得到一个**半拉子第 ④ 层**：头像位空着，姓名却仍按「头像右侧」缩进 37.8px，
+       读起来就是一行没来由的悬空小字（实测 1920×1080：`NBDpsy`/`心理科普` 缩在左下角，
+       且与底部落款「NBDpsy 心理科普」内容重复）。老板打回的原话正是
+       「我要的是封面，不是几个元素的凑数」——这一层就是那个「凑数元素」。
+       ⛔ 不是静默丢数据：横版下 identity 被吃掉这件事，由 render_cover.py 打进
+       stdout 与凭证的 exempted / landscape_layer4_hidden 说明。 */
+    const bottomEl = document.getElementById('bottom');
+    if (bottomEl) { bottomEl.style.display = 'none'; landHid4 = true; }
+    /* ① 落款脱离流、钉在底边——它是品牌位，⛔ 不跟着内容组一起居中 */
+    const footEl = document.getElementById('foot');
+    if (footEl) {
+      footEl.style.position = 'absolute';
+      footEl.style.left = 'var(--pad-x)';
+      footEl.style.right = 'var(--pad-x)';
+      footEl.style.bottom = 'var(--pad-bottom)';
+    }
+    /* ② 弹簧不再抢空间：只在**两侧都有东西**时留一个 gap-min，否则收成 0。
+       ⛔ 不能一律留——空块两侧的弹簧会把死空间算进内容组，居中就偏了。 */
+    const gapMin = parseFloat(cs.getPropertyValue('--gap-min')) || 22;
+    [...stage.querySelectorAll('.sp')].forEach((sp) => {
+      const keep = alive(sp.previousElementSibling) && alive(sp.nextElementSibling);
+      sp.style.flex = '0 0 auto';
+      sp.style.minHeight = '0';
+      sp.style.height = keep ? gapMin + 'px' : '0px';
+    });
+    /* ③ 量**真实存在**的那几块，整组平移到视觉中心。弹簧已固定、块高已定，
+       所以改 padding-top 就是 1:1 平移，⛔ 不会被弹簧吃掉一部分。 */
+    const live = [hero, sub, stepsBox, document.getElementById('bottom')].filter(alive);
+    if (live.length) {
+      const rects = live.map((el) => el.getBoundingClientRect());
+      const top = Math.min(...rects.map((r) => r.top));
+      const bot = Math.max(...rects.map((r) => r.bottom));
+      const padTop = parseFloat(cs.getPropertyValue('--pad-top'));
+      stage.style.paddingTop = (padTop + (LAND_CENTER_R * H - (top + bot) / 2)) + 'px';
+      const after = live.map((el) => el.getBoundingClientRect());
+      landCenterPct = +(((Math.min(...after.map((r) => r.top)) +
+                          Math.max(...after.map((r) => r.bottom))) / 2) / H * 100).toFixed(1);
+    }
+  }
+
   /* —— 3:4 裁切安全区自检（信息流按 3:4 展示，上下各切 (H - W*4/3)/2）—— */
   const cut = Math.max(0, (H - W * 4 / 3) / 2);
   const boxes = [...document.querySelectorAll('#hero,#sub,#stepsBox,#bottom,#foot,#orn')]
@@ -637,6 +714,13 @@ window.__fit = function () {
   const thumbW = +(T.thumb_w ?? 220);
   return {
     ok: true,
+    /* 横版才有值：内容组的实际视觉中心占画面高的百分比（竖版为 null）。
+       版面是目视判断，但「顶在上边」这件事是量得出来的——留个数好复查。 */
+    landscape: LANDSCAPE,
+    content_center_pct: landCenterPct,
+    /* 横版是否真的把第 ④ 层收起来了。⛔ 这个数得从 DOM 出来、⛔ 不许由调用方假定：
+       「豁免了闸门」与「版面上真收起来了」是两件事，只有后者是读者看得见的那件。 */
+    landscape_layer4_hidden: landHid4,
     hero_fs: +heroFs.toFixed(1),
     hero_lines: lines.length,
     hero_thumb_px: +(heroFs * thumbW / W).toFixed(1),
