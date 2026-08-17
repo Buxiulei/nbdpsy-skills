@@ -766,7 +766,8 @@ _ERR_ROUTES = (
     (("insufficient_quota", "credit_balance_exhausted", "no credits", "billing"),
      "🔴 **账号出图额度耗尽，需充值**——⛔ 调提示词无用、重跑只会再撞一次。"
      "充值入口 https://platform.openai.com/settings/organization/billing"
-     "；等额度期间可改走即梦（有参考图要锚定的单张场景，见 project_wechat/即梦线）"),
+     "。**封面改走 HTML 产线**（`scripts/render_cover.py`，零额度、改文案秒重出——2026-08-17 起是默认出图路径）"
+     "；需要 AI 插画且有参考图可锚定的单张场景，可改走即梦"),
     (("rate_limit", "too many requests", "429 - {'error': {'message': 'Rate limit"),
      "⏳ **触发限流（不是额度用尽）**——等几分钟原样重跑即可，⛔ 别改提示词、⛔ 别拆小批次绕"),
     (("content_policy", "safety", "moderation", "rejected your request"),
