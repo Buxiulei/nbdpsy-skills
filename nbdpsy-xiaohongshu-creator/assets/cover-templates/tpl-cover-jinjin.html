@@ -145,6 +145,8 @@
     letter-spacing: .01em;
     text-wrap: balance;
   }
+  .subtitle .seg { white-space: nowrap; }              /* 折行只落在标点处 */
+  .subtitle.free-wrap .seg { white-space: normal; }    /* 单段过宽时的退路 */
 
   /* ── ③ 递进三行 ───────────────────────────────────────────── */
   .steps { flex: 0 0 auto; position: relative; padding-left: var(--step-indent); }
@@ -338,6 +340,14 @@ if (ERR) {
   const roleHTML = s => String(s).split(/\s*[·・|｜/]\s*/).filter(Boolean)
     .map(seg => `<span class="seg">${esc(seg)}</span>`).join(' · ');
 
+  /* 副题（＝金句本体）按标点切成 nowrap 段，折行只发生在标点处。
+     中文可以在任意两字之间断，`text-wrap: balance` 只顾把两行拉等长、不管语义，
+     实测断出「一句／话没说」「夸／自己」「不是／你想太多」这种读起来卡壳的行
+     （2026-08-17 四篇实测三篇中招）。标点收在前一段末尾，行尾才落得住。
+     ⚠️ 单段宽过版心时这会横向溢出——__fit() 量到就摘掉 nowrap 退回自由折行。*/
+  const subHTML = s => String(s).split(/(?<=[，。、！？；：,.!?;:])/).filter(Boolean)
+    .map(seg => `<span class="seg">${esc(seg)}</span>`).join('');
+
   const stepsHTML = steps.map((s, i) => {
     const last = i === steps.length - 1;
     const mk = last ? ARROW : '<i></i>';
@@ -347,7 +357,7 @@ if (ERR) {
   cv.innerHTML = `
     <div class="stage" id="stage">
       <div class="hero" id="hero">${heroHTML}</div>
-      ${subtitle ? `<div class="subtitle" id="sub">${esc(subtitle)}</div>` : ''}
+      ${subtitle ? `<div class="subtitle" id="sub">${subHTML(subtitle)}</div>` : ''}
       <div class="sp sp-hero"></div>
       <div class="steps" id="stepsBox">${steps.length > 1 ? '<div class="rail-line"></div>' : ''}${stepsHTML}</div>
       <div class="sp sp-steps"></div>
@@ -447,10 +457,16 @@ window.__fit = function () {
 
   /* —— 步骤 1.5：副题 = hero × 0.34 ——
      副题允许折行（长句本来就是从 hero 降下来的），高度进 flex 预算、由步骤 2 兜。*/
-  let subFs = 0;
+  let subFs = 0, subSegOverflow = false;
   if (sub) {
     subFs = heroFs * subCoef;
     rs.setProperty('--sub-fs', subFs.toFixed(2) + 'px');
+    /* 标点分段是 nowrap 的：某一段本身就比版心宽时，它会直接横向溢出画布
+       （又一个"渲得出来但错了"的形态）。量到就摘掉 nowrap 退回自由折行——
+       断行位置难看，总好过半句话被切在画布外。*/
+    const segs = [...sub.querySelectorAll('.seg')];
+    subSegOverflow = segs.some(el => el.getBoundingClientRect().width > availW + 0.5);
+    if (subSegOverflow) sub.classList.add('free-wrap');
   }
 
   /* 头像 / 姓名 / 落款：跟着 hero 走同一套系数 */
@@ -636,13 +652,18 @@ window.__fit = function () {
     hero_min: HERO_MIN,
     hero_lines_over: lines.length > 2,
     /* §2-b：hero 字高 = 画面高 9–13%。HERO_MIN(56px) 换算只有 3.7%，
-       光靠它当闸门等于没闸门——字高这条单独判（2026-08-17 方案 1 的核心验收项）。*/
+       光靠它当闸门等于没闸门——字高这条单独判（2026-08-17 方案 1 的核心验收项）。
+       ⚠️ 上限也要判：HERO_MAX 是拿 0.86 这个经验常数反推的字号上限，而这里量的是**真实墨迹**
+       （实测约 0.96 倍字号），两者对不上——4 字以内的 hero 撑满版心就会冲破 13%，
+       只判下限的话它会静默超标（2026-08-17 C 篇 13.79% 实测撞出来）。*/
     hero_glyph_pct_low: (inkH / H * 100) < 9,
+    hero_glyph_pct_high: (inkH / H * 100) > 13,
     name_below_min: !!nm && nameFs < NAME_MIN - 0.01,
     name_min: NAME_MIN,
     role_below_min: !!rl && roleFs < ROLE_MIN - 0.01,
     ident_orn_overlap: identOrnHit,
     sub_ratio_ok: subFs ? (heroFs / subFs) >= 2.5 : null,
+    sub_seg_overflow: subSegOverflow,
     step_over_sub: subFs ? stepFs > subFs + 0.5 : false,
     step_at_floor: stepFs <= STEP_FLOOR + 0.3,
     orn_unknown: ORN_UNKNOWN,

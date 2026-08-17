@@ -215,6 +215,13 @@ def main():
         warnings.append(f"🔴 hero 字高只占画面高 {fit['hero_glyph_pct_of_h']}%，低于 §2-b 的 9–13%——"
                         f"hero 太长撑不起来。处置＝把 hero 砍成最扎心的那个短句、"
                         f"剩下的降到 subtitle 副题层（方案 1），⛔ 不是调参数")
+    if fit.get('hero_glyph_pct_high'):
+        warnings.append(f"⚠️ hero 字高 {fit['hero_glyph_pct_of_h']}% 冲破 §2-b 上限 13%——"
+                        f"hero 太短（4 字以内），撑满版心必然超标。这里两条规格天然打架："
+                        f"「通栏撑满」与「字高 ≤13%」不可兼得，要么给 hero 加字、要么右侧留白，须人工拍板")
+    if fit.get('sub_seg_overflow'):
+        warnings.append("副题里有**一整段没有标点**且比版心还宽，已退回自由折行——"
+                        "断行会落在词中间。想让它断得好看，在金句里加个逗号")
     if fit.get('ident_orn_overlap'):
         warnings.append("🔴 姓名/身份行仍与右下陪衬重叠——避让算完还是压上了，"
                         "换更窄的陪衬（orn_ratio 调小）或把姓名写短")
