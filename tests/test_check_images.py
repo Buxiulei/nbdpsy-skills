@@ -136,3 +136,63 @@ def test_stdout_is_pure_json(tmp_path):
     _make_png(tmp_path / "P01.png", 1080, 1440)
     r, _ = _run(tmp_path, 1)
     json.loads(r.stdout.strip())  # stdout 只有 JSON，无杂质
+
+
+# ── 横版画布（公众号）回归用例（2026-08-17 补）──────────────────────
+# 来源：check_images.py --canvas landscape。补此组的直接动因是一个**假红**风险：
+# gzh-illustration-spec.md 字面写「正文插图 16:9」，但 2026-08-17 实测在产 31 张
+# 正文插图比例**全是 1.4989（3:2）、零例外**——照文档写 16:9 会让每一张都判红。
+# 所以下面既锁「3:2 放行」，也锁「16:9 不放行」，防有人日后照文档"修正"回去。
+def _run_canvas(img_dir, canvas: str, pages: int | None = None):
+    cmd = [sys.executable, str(SCRIPT), "--dir", str(img_dir), "--canvas", canvas]
+    if pages is not None:
+        cmd += ["--pages", str(pages)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    return r, json.loads(r.stdout)
+
+
+@pytest.mark.parametrize("w,h,aspect,why", [
+    (1313, 559, "2.35:1", "封面实测尺寸，居中裁后"),
+    (1313, 876, "3:2", "正文插图与 cover-raw 实测尺寸 —— 文档写 16:9，实际是它"),
+    (1536, 1024, "3:2", "出图标称尺寸，未经去水印缩小；1536/1024 本身就是 3:2"),
+])
+def test_landscape_allowed(tmp_path, w, h, aspect, why):
+    _make_png(tmp_path / "cover.png", w, h)
+
+    r, report = _run_canvas(tmp_path, "landscape")
+    assert r.returncode == 0, f"{w}×{h}（{why}）应通过：" + r.stdout + r.stderr
+    assert report["ok"] is True
+    assert report["sizes"][0]["aspect"] == aspect
+
+
+@pytest.mark.parametrize("w,h,why", [
+    (1920, 1080, "真 16:9（1.778）—— 规格文档字面那个比例，本产线从未产出过，⛔ 不放行"),
+    (1024, 1536, "竖版 2:3 混进公众号目录"),
+    (800, 340, "2.35:1 命中但长边 800 < 1200，糊"),
+])
+def test_landscape_rejected(tmp_path, w, h, why):
+    _make_png(tmp_path / "cover.png", w, h)
+
+    r, report = _run_canvas(tmp_path, "landscape")
+    assert r.returncode == 1, f"{w}×{h}（{why}）应不合格：" + r.stdout + r.stderr
+    assert [x["file"] for x in report["wrong_size"]] == ["cover.png"]
+
+
+def test_landscape_image_still_fails_portrait(tmp_path):
+    """两套白名单必须互斥：横图混进竖版轮播是这个检查最该抓的错，⛔ 不许合并成一张大表。"""
+    _make_png(tmp_path / "P01.png", 1313, 559)
+
+    r, report = _run_canvas(tmp_path, "portrait", pages=1)
+    assert r.returncode == 1 and report["ok"] is False
+    assert report["wrong_size"][0]["aspect"] is None
+
+
+def test_pages_optional_skips_page_check(tmp_path):
+    """省略 --pages 即不校验页数：公众号是 cover.jpg / illus-01.jpg，无 P 页号可数。"""
+    _make_png(tmp_path / "cover.png", 1313, 559)
+    _make_png(tmp_path / "illus-01.png", 1313, 876)
+
+    r, report = _run_canvas(tmp_path, "landscape")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert report["missing"] == [] and report["expected"] is None
+    assert report["found"] == 2
