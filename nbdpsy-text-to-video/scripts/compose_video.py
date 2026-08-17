@@ -3,7 +3,11 @@
 
 把即梦生成的若干片段拼成一条成片：
   归一化(统一分辨率/帧率) → 烧中文字幕(Noto Sans CJK SC, ASS 描边) →
-  逐段音轨(旁白/原生音/静音) → 拼接 → 叠 AI 生成合规角标 → 可选 BGM 混音。
+  逐段音轨(旁白/原生音/静音) → 拼接 → 叠 AI 生成合规角标 → 可选 BGM 混音 → **母带响度归一**。
+
+⚠️ 声音口径的唯一真源是 `references/audio-checklist.md`，代码落法在同目录 `audio_master.py`。
+   母带归一（绝对量，−16 LUFS）与 BGM 压低（相对量，−12~−18 LU）是**两件事**，缺一把尺子
+   就会出现「每项都按规范做了、合起来是一条手机外放听不清的片子」（2026-08-16 实听事故）。
 
 输入是一份 manifest JSON：
 {
@@ -15,9 +19,10 @@
   "fade_out": 1.5,              # 可选；片尾音画同步淡出秒数，防收尾戛然而止
   "cover": "cover.png",         # 可选；封面图插到片头当首帧(默认0.1s)，部分平台自动抓首帧当封面
   "cover_duration": 0.1,        # 可选；封面停留秒数
-  "bgm": "bgm.mp3",             # 可选；自动按相对响度垫底(比旁白低 bgm_gap_db)
-  "bgm_volume": 0.15,           # 可选，0-1；仅响度探测失败时的回退系数
-  "bgm_gap_db": 12,             # 可选；BGM 比旁白低多少 dB(默认12，越大越轻)
+  "bgm": "bgm.mp3",             # 可选；自动按相对响度垫底(比旁白低 bgm_gap_db LU)
+  "bgm_gap_db": 14,             # 可选；BGM 比旁白低多少 **LU**(默认14，越大越轻；范围12~18)
+                                #   ⛔ 14 是老板 2026-08-16 实听调定的，改它要重新实听
+  "master_lufs": -16,           # 可选；成片母带整体响度目标(默认−16，平台常态−14~−16)
   "segments": [
     # narration 若有同名 .cues.json(tts_gen --timed 产物)，字幕按实测时间轴真同步；
     # 否则用 narration_text 按句估算；都没有则用 subtitle 固定整段。
@@ -43,6 +48,9 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import audio_master  # noqa: E402  母带响度归一/BGM 压低的**唯一真源**（⛔ 别在本文件另抄一份）
 
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 FFPROBE = shutil.which("ffprobe") or "ffprobe"
@@ -141,14 +149,6 @@ def _has_audio(path: str) -> bool:
     rc, out, _ = _run([FFPROBE, "-v", "error", "-select_streams", "a", "-show_entries",
                        "stream=index", "-of", "csv=p=0", path], timeout=60)
     return bool(out.strip())
-
-
-def _mean_volume_db(path: str, pre_filter: str = "") -> Optional[float]:
-    """volumedetect 测 mean_volume(dB)；pre_filter 可先过滤(如调音量)再测。输出在 stderr。"""
-    af = f"{pre_filter},volumedetect" if pre_filter else "volumedetect"
-    _, _, serr = _run([FFMPEG, "-i", path, "-af", af, "-f", "null", "-"], timeout=120)
-    m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?) dB", serr)
-    return float(m.group(1)) if m else None
 
 
 def _ass_escape(text: str) -> str:
@@ -459,18 +459,39 @@ def concat_segments(paths: list[str], out: str, workdir: str) -> bool:
 
 
 def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
-             bgm_volume: float, width: int, height: int, bgm_gap_db: float = 12.0,
+             width: int, height: int, bgm_gap_db: float = audio_master.BGM_DUCK_LU,
              logo: Optional[str] = None, fade_out: float = 0.0,
-             cover: Optional[str] = None, cover_duration: float = 0.1) -> bool:
+             cover: Optional[str] = None, cover_duration: float = 0.1,
+             workdir: Optional[str] = None,
+             master_lufs: float = audio_master.MASTER_LUFS) -> bool:
     """叠 AI 生成合规角标(右上) + 可选封面首帧(cover 前 N 秒 overlay，音频零改动，
     避免微型音频段 concat 时间戳错乱) + 可选品牌 logo(右下) + 可选 BGM 混音 +
-    可选片尾音画淡出(fade_out 秒) → 最终成片(+faststart)。"""
+    可选片尾音画淡出(fade_out 秒) → 预母带片(音轨走 PCM，交给 master_pass 归一)。
+
+    ⚠️ 本函数**不再是最后一步**：音轨出 PCM（`-c:a pcm_s24le`，容器 mkv），
+    由 `compose()` 紧接着调 `audio_master.master_video` 做母带归一并编成 AAC。
+    这样全片只编码一次音频（⛔ 别改回 AAC，否则母带那一遍就成了二次编码）。"""
     fontsize = max(20, int(height * 0.030))
     pad = int(height * 0.012)
     cmd = [FFMPEG, "-y", "-i", src]
     has_bgm = bool(bgm and Path(bgm).exists())
     if has_bgm:
-        cmd += ["-stream_loop", "-1", "-i", bgm]  # BGM 循环铺满
+        # 🩸 BGM 相对响度改用 **LUFS**（2026-08-17），不再用 volumedetect 的 mean_volume。
+        # 同一条片子两把尺子结论方向相反：RMS 说「BGM 才低 7 dB，压得不够」，
+        # LUFS 说「已经低 18 LU，基本听不见」——差在 K 计权 + 门控（见 audio-checklist.md）。
+        # prepare_bgm 会把 BGM 预归一到「口播 − bgm_gap_db」并回读实测，超差 1 LU 直接抛。
+        narr_lufs = audio_master.loudness(src)
+        if narr_lufs <= audio_master.SILENCE_FLOOR:
+            # 纯气氛片（全片无旁白）：BGM 就是**全部**音轨，没有「压到旁白之下」这回事。
+            # ⚠️ 不特判会拿 −70 去减 duck 算出 −82，超出 loudnorm 的 I 取值范围 [−70,−5]，
+            # ffmpeg 直接拒参数，报出来的是一句看不懂的 "Numerical result out of range"。
+            _err("[finalize] ⚠️ 旁白轨近乎全静音，按纯气氛片处理："
+                 "BGM 不做相对压低，直接铺到母带目标")
+            narr_lufs, bgm_gap_db = master_lufs, 0.0
+        ready, _ = audio_master.prepare_bgm(
+            bgm, ffprobe_duration(src), Path(workdir or tempfile.gettempdir()),
+            narration_lufs=narr_lufs, duck_db=bgm_gap_db)
+        cmd += ["-i", str(ready)]   # 已按成片长度铺满并淡入淡出，不用再 -stream_loop
     has_logo = bool(logo and Path(logo).exists())
     if logo and not has_logo:
         _err(f"[finalize] logo 文件不存在，跳过：{logo}")
@@ -525,22 +546,11 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
     need_vchain = has_cover or has_logo or vfade
 
     if has_bgm:
-        # BGM 相对响度：测旁白 mean 与 BGM mean，把 BGM 压到比旁白低 bgm_gap_db(默认12dB)。
-        # 自动适配任意 BGM 源响度，杜绝"固定系数被淹没/盖过旁白"(实测踩坑)。
-        voice_db = _mean_volume_db(src)
-        bgm_db = _mean_volume_db(bgm)
-        if voice_db is not None and bgm_db is not None:
-            gain = (voice_db - bgm_gap_db) - bgm_db
-            bgm_vol_expr = f"volume={gain:.1f}dB"
-            _err(f"[finalize] BGM 相对响度: 旁白{voice_db:.1f}dB, 目标{voice_db - bgm_gap_db:.1f}dB, 增益{gain:+.1f}dB")
-        else:
-            bgm_vol_expr = f"volume={max(0.0, bgm_volume)}"
-            _err("[finalize] 响度探测失败, 回退固定 bgm_volume")
+        # BGM 已由 prepare_bgm 归一到「口播 − bgm_gap_db」并铺满/淡化，这里直接混，不再调音量。
         # normalize=0 关键：否则 amix 会把旁白+BGM 各压低 ~6dB(实测旁白变小声的 bug)
         amix_tail = f",{afade}" if afade else ""
         fc = (";".join(parts) + ";"
-              f"[1:a]{bgm_vol_expr}[bg];"
-              f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0{amix_tail}[a]")
+              f"[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0{amix_tail}[a]")
         cmd += ["-filter_complex", fc, "-map", f"[{cur}]", "-map", "[a]"]
     elif need_vchain:
         fc = ";".join(parts)
@@ -552,8 +562,9 @@ def finalize(src: str, out: str, *, ai_label: str, bgm: Optional[str],
     else:
         cmd += ["-vf", vfilter, "-map", "0:v:0", "-map", "0:a:0?"]
 
+    # 音轨出 PCM 交给母带那一遍编 AAC（只编一次）；容器用 mkv 因为 mp4 不收 pcm_s24le。
     cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out]
+            "-c:a", "pcm_s24le", "-ar", str(audio_master.SR), "-shortest", out]
     rc, _, serr = _run(cmd, timeout=900)
     if rc != 0:
         _err(f"[finalize] 失败：\n{serr[-800:]}")
@@ -588,19 +599,47 @@ def compose(manifest: dict, output_override: Optional[str] = None) -> dict:
         if not concat_segments(norm, merged, workdir):
             return {"success": False, "error": "拼接失败", "stage": "concat"}
 
-        _err("[compose] 叠合规标识 / 混 BGM / 导出 …")
-        ok = finalize(merged, output, ai_label=manifest.get("ai_label", ""),
-                      bgm=manifest.get("bgm"), bgm_volume=float(manifest.get("bgm_volume", 0.15)),
-                      width=width, height=height, bgm_gap_db=float(manifest.get("bgm_gap_db", 12.0)),
-                      logo=manifest.get("logo"), fade_out=float(manifest.get("fade_out", 0.0)),
-                      cover=manifest.get("cover"),
-                      cover_duration=float(manifest.get("cover_duration", 0.1)))
+        _err("[compose] 叠合规标识 / 混 BGM / 导出预母带片 …")
+        pre_master = str(Path(workdir) / "pre_master.mkv")
+        target = float(manifest.get("master_lufs", audio_master.FORM_TARGETS["microfilm"]))
+        try:
+            ok = finalize(merged, pre_master, ai_label=manifest.get("ai_label", ""),
+                          bgm=manifest.get("bgm"),
+                          width=width, height=height,
+                          bgm_gap_db=float(manifest.get("bgm_gap_db",
+                                                        audio_master.BGM_DUCK_LU)),
+                          logo=manifest.get("logo"), fade_out=float(manifest.get("fade_out", 0.0)),
+                          cover=manifest.get("cover"),
+                          cover_duration=float(manifest.get("cover_duration", 0.1)),
+                          workdir=workdir, master_lufs=target)
+        except RuntimeError as e:      # prepare_bgm 回读超差等，原样报出别吞
+            return {"success": False, "error": str(e), "stage": "bgm"}
         if not ok:
             return {"success": False, "error": "导出失败", "stage": "finalize"}
 
+        # 🩸 母带归一（2026-08-17 补）：此前本脚本**全程没有绝对响度这一环**，
+        # 成片响度跟着 TTS 原始电平走（−31 LUFS 量级）＝手机外放听不清。
+        # 老板 2026-08-16 实听投诉的就是这个，当时只修了 slideshow 线。
+        _err("[compose] 母带响度归一 …")
+        try:
+            master = audio_master.master_video(pre_master, output, target=target)
+            verify = audio_master.verify_master(output, target=target)
+        except RuntimeError as e:
+            return {"success": False, "error": str(e), "stage": "master"}
+        for label, passed, why in verify["checks"]:
+            _err(f"  {'✅' if passed else '❌'} {label}" + ("" if passed else f" —— {why}"))
+        if not verify["passed"] and not master.get("skipped"):
+            # ⛔ 报绿必须是被验证过的绿：归一没打准就别把片子当成品交出去
+            return {"success": False, "error": "母带响度自检不过（见上方 ❌ 行）",
+                    "stage": "master", "audio": {"master": master, "verify": verify}}
+
         return {"success": True, "output": os.path.abspath(output),
                 "duration": round(ffprobe_duration(output), 2),
-                "resolution": f"{width}x{height}", "fps": fps, "segments": len(segments)}
+                "resolution": f"{width}x{height}", "fps": fps, "segments": len(segments),
+                # 响度凭证：改任何音频参数后都要回来核这一段（audio-checklist.md 最后一条）
+                "audio": {"master": master, "final_lufs": verify["measured_lufs"],
+                          "final_tp_dbtp": verify["measured_tp"],
+                          "final_lra": verify["measured_lra"], "target_lufs": target}}
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

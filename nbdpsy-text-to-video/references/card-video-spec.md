@@ -151,6 +151,11 @@ cd 工作目录 && python3 render_card.py card-oneline.html out.mp4
 - 主时间轴 `gsap.timeline({paused:true})`；暴露 `window.TOTAL` 与 `window.SEEK = t => tl.seek(t,false)`；
 - **确定性**：⛔ Math.random/Date.now——一切"随机"用写死数组（重渲染必须逐帧一致）；
 - 混音源优先 `narration.mp3.wav` sidecar（render_card.py 自动选）。
+- **混音时做母带响度归一到 −16 LUFS**（口径见 `audio-checklist.md`），实现在 `scripts/audio_master.py`。
+  ⚠️ 本脚本按契约是**被拷进工作目录**跑的，`audio_master.py` 不会跟着拷。它会按序找
+  「同目录 → 往上找 skill 真源 → `~/.claude|.agents|.codex/skills/nbdpsy-text-to-video/scripts`」，
+  **全找不到就拒绝出片**（⛔ 不静默跳过——静默跳过等于把「整片小声」那个 bug 放回来）。
+  报错时按提示把 `audio_master.py` 拷到 `render_card.py` 同目录即可。
 
 ## 🩸 音画同步双层根因（2026-08-11 实战，全产线最重要的知识）
 

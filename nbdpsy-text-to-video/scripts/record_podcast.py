@@ -27,7 +27,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import audio_master  # noqa: E402  母带响度归一的**唯一真源**（⛔ 别在本文件另抄一份）
 import tts_gen  # noqa: E402  复用 ffprobe_duration，不重复造轮子
+import video_style  # noqa: E402  风格档案（kind=video / form=podcast）→ 命令行默认值
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "assets" / "podcast_player.html"
 WIDTH, HEIGHT = 720, 1280
@@ -237,12 +239,18 @@ def find_sync_cut(webm: Path, max_scan: float = 8.0) -> float | None:
 
 def mux(webm: Path, audio: Path, out: Path, *, lead_in: float,
         cover: str | None, fade_out: float, audio_duration: float) -> None:
-    """录屏画面 + 原始音轨 → 成片。
+    """录屏画面 + 原始音轨 → 成片（含**母带响度归一**）。
 
     时间对齐：lead_in 由 find_sync_cut 帧级标记给出（误差一帧）；标记缺失时
     回退「webm 实测时长 − 音频时长 − 尾巴」估算（误差几百毫秒，仅兜底）。
     录屏帧率与音频还会有几百毫秒漂移：**一律以音频为准**——
-    视频先 tpad 定格补长（宁可多几帧定格画面），再靠 -shortest 按音轨长度切齐。"""
+    视频先 tpad 定格补长（宁可多几帧定格画面），再靠 -shortest 按音轨长度切齐。
+
+    🩸 母带归一 2026-08-17 补：`podcast_gen` 的逐行 mean_volume −22 dB 是**说话人之间的
+    相对对齐**（男女声差 7.5 dB），它替代不了整片的绝对响度。此前这条线出的片子响度就是
+    TTS 原始电平，与 2026-08-16 老板实听投诉的是同一个病。目标 −16 LUFS（**不按时长分档**：
+    Apple Podcasts 官方播客指标本身也是 −16，且这条片子是以 MP4 投视频平台的）。
+    归一在这一次编码里做完（两遍法），⛔ 别改成先编 AAC 再补一遍（等于二次编码）。"""
     inputs = ["-ss", f"{lead_in:.3f}", "-i", str(webm), "-i", str(audio)]
     cover_idx = None
     if cover:
@@ -260,21 +268,35 @@ def mux(webm: Path, audio: Path, out: Path, *, lead_in: float,
                      f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[cvr]")
         parts.append(f"[{cur}][cvr]overlay=0:0:enable='lte(t,0.100)'[vc]")
         cur = "vc"
+    # 母带归一放在**淡出之前**：loudnorm 是线性增益，先归一后淡出，淡出形状才不被改。
+    target = audio_master.FORM_TARGETS["podcast"]
+    pre = audio_master.loudness_stats(audio, target=target)
+    _err(f"[master] 口播 {pre['i']:.2f} LUFS / 真峰 {pre['tp']:.2f} dBTP "
+         f"→ 归一到 {target:g} LUFS（提 {target - pre['i']:+.1f} dB）")
+    achain = audio_master.loudnorm_filter(pre, target=target)
     if fade_out > 0:
         st = max(0.0, audio_duration - fade_out)
         parts.append(f"[{cur}]fade=t=out:st={st:.2f}:d={fade_out:.2f}[vf]")
-        parts.append(f"[1:a]afade=t=out:st={st:.2f}:d={fade_out:.2f}[a]")
-        cur, amap = "vf", "[a]"
-    else:
-        amap = "1:a:0"
+        achain += f",afade=t=out:st={st:.2f}:d={fade_out:.2f}"
+        cur = "vf"
+    parts.append(f"[1:a]{achain}[a]")
 
     cmd = ["ffmpeg", "-y"] + inputs + [
-        "-filter_complex", ";".join(parts), "-map", f"[{cur}]", "-map", amap,
+        "-filter_complex", ";".join(parts), "-map", f"[{cur}]", "-map", "[a]",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", str(out)]
+        # -ar/-ac 必须显式给：loudnorm 内部按 192kHz 工作，不指定会把音轨留在 192k（A3 口径 48k/双声道）
+        "-ar", str(audio_master.SR), "-ac", "2",
+        "-c:a", "aac", "-b:a", audio_master.BITRATE,
+        "-movflags", "+faststart", "-shortest", str(out)]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg 混轨失败：{r.stderr[-800:]}")
+
+    v = audio_master.verify_master(out, target=target)
+    for label, passed, why in v["checks"]:
+        _err(f"  {'✅' if passed else '❌'} {label}" + ("" if passed else f" —— {why}"))
+    if not v["passed"]:
+        raise RuntimeError("母带响度自检不过（见上方 ❌ 行）——⛔ 这条片子别发，先查归一链路。")
 
 
 def run(podcast_path: str, *, workdir: str | None = None, audio: str | None = None,
@@ -336,7 +358,8 @@ def main() -> None:
     p.add_argument("--fade-out", type=float, default=0.0, help="片尾音画同步淡出秒数，如 1.5")
     p.add_argument("--theme", choices=THEMES, default="shenye",
                    help="播放器主题：shenye 深夜电台（默认）/ zhishang 纸上对谈")
-    a = p.parse_args()
+    # 风格档案（kind=video / form=podcast）：只改**没写在命令行上**的那些参数的默认值
+    a = video_style.apply(p, "podcast")
     try:
         res = run(a.podcast, workdir=a.workdir, audio=a.audio, cues=a.cues, out=a.out,
                   cover=a.cover, fade_out=a.fade_out, theme=a.theme)

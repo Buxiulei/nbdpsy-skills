@@ -99,6 +99,79 @@ check_env 报某项凭据缺失时，按下表**主动引导用户提供**，拿
 
 ---
 
+## 风格档案（视频那一类 · `kind=video`，2026-08-17 上线）
+
+每个运营可以给**每条视频产线各存一套调性**（微电影一套、播客一套……），真源是
+`../nbdpsy-xiaohongshu-creator/scripts/style_profile.py`（与图文 / 文字版同一套档案系统、同一把
+`NBDPSY_XHS_API_KEY`）。四条产线的旋钮完全不同，所以 **`kind=video` 下再分四个子形态**：
+`slideshow` 放映 / `card` 字卡 / `microfilm` 微电影 / `podcast` 播客，**一个子形态一套**。
+
+```bash
+SP=../nbdpsy-xiaohongshu-creator/scripts/style_profile.py
+python3 $SP --get --form podcast > style.json      # 取「播客」那套（没有 → profile:null，照常用默认值）
+python3 $SP --new-profile "我的播客" --kind video --form podcast   # 建一套（拿该产线的旋钮骨架）
+python3 $SP --get --last                            # 「按上次」：这台机器上次实际用的那一套
+```
+
+⛔ **跟运营说话只说「放映 / 字卡 / 微电影 / 播客那套」**，别说 video/slideshow/podcast。
+`--get` 三层降级（本人档案 / 默认配置 / 内置兜底）、留痕行、`--put --base-version` 那套规矩
+与图文完全一致，见 style_profile.py 的模块 docstring。
+
+### 字段 → 谁读它（**这张表是唯一真源**）
+
+> ⛔ **指不到消费者的字段一律不加**（老板 2026-08-16：「而不是一个死链，永远闲置不被调用」）。
+> 加字段时同步改这张表 + `video_style.FIELD_MAP` 或 `tests/test_style_profile_video.py` 的
+> `工序消费` 白名单——两处都没登记，`test_每个骨架字段都指得到一个消费者` 会直接红。
+
+**放映（slideshow）** — 入口脚本 `slideshow_video.py`，**`--style` 直读**，一条命令收口：
+
+| 档案字段 | 落到哪个参数 |
+|---|---|
+| `canvas` | `--canvas` |
+| `narration.engine` / `.voice` / `.speed` / `.model` / `.sentence_gap` | `--engine` / `--voice` / `--speed` / `--model` / `--sentence-gap` |
+| `bgm.source` / `bgm.duck_db` | `--bgm` / `--bgm-duck` |
+| `pace.head` / `.page_gap` / `.tail` | `--head` / `--page-gap` / `--tail` |
+| `motion.kenburns` / `.xfade` | `--kenburns` / `--xfade` |
+
+```bash
+python3 {SKILL_DIR}/scripts/slideshow_video.py --images-dir imgs/ --script-file narration.md \
+    --out slideshow.mp4 --style style.json
+```
+
+**播客（podcast）** — 两个入口脚本各读各的一半，都是 **`--style` 直读**：
+
+| 档案字段 | 落到哪个参数 |
+|---|---|
+| `narration.voice_f` / `.voice_m` / `.model` | `podcast_gen.py synth --voice-f` / `--voice-m` / `--model` |
+| `player.theme` / `player.fade_out` | `record_podcast.py --theme` / `--fade-out` |
+
+**字卡（card）** — `oneline` 段 **`--style` 直读**，其余两项由工序读：
+
+| 档案字段 | 谁读它 |
+|---|---|
+| `oneline.bg` / `.canvas` / `.max_line_chars` | `build_oneline.py --bg` / `--canvas` / `--max-line-chars`（**`--style` 直读**） |
+| `template` | 产线第④步「选版式模板」（`references/card-video-spec.md` 五版式表）——照它挑 `assets/card-templates/` 里的 HTML |
+| `narration.voice` / `.speed` | 产线第②步 `tts_gen.py --voice` / `--speed` |
+
+⚠️ `oneline` 段**只有 `tpl-oneline` 版式读得到**，别的版式带着它就是摆设（`--put` 时会提醒）。
+
+**微电影（microfilm）** — 它没有「一条命令收口」的入口脚本（旁白/画面/合成分三步），
+所以**没有 `--style`**，字段由下面这几道**必经工序**读：
+
+| 档案字段 | 谁读它 |
+|---|---|
+| `look`（暖雾 / 沉静 / 晨光） | 第 2 步：写进 `<workdir>/direction.md` 第一行 `子风格：X`（`references/cinematic-direction.md` §一之三；⛔ 没写＝按暖雾判，审查端按这一行核色板与转场） |
+| `ratio` | 第 2 步：`shots.json` 的 `video.ratio` → `build_manifest.py` 定分辨率 |
+| `ai_label` | 第 2 步：`shots.json` 的 `video.ai_label` → `build_manifest.py` 写进 manifest |
+| `narration.engine` / `.voice` / `.speed` | 第 3 步：`tts_gen.py --engine/--voice/--speed` |
+| `bgm.mood` | 第 7 步：`gen_bgm.py --mood` |
+
+⚠️ **档案里没有的旋钮就是脚本默认**：`--style` 只改**没写在命令行上**的那些参数，
+命令行显式传的永远优先。拿错子形态的档案（如拿播客那套跑放映）**直接报错退出**，
+⛔ 不静默回落——那会出一条「档案完全没生效」的片子，只有听到不对劲才发现，钱已经花了。
+
+---
+
 ## 产线流程（笔记→成片，十步 + 2.5 分镜确认页）
 
 ### 工作目录契约
@@ -154,6 +227,14 @@ python3 {SKILL_DIR}/scripts/render_storyboard.py --workdir <workdir>
 # 产出 <workdir>/{workdir目录名}-storyboard.html（按内容命名，绝不重名）
 # 每镜一卡：旁白脚本、字幕、生图提示词（一键复制，优先 image_prompt 去文字版）、参考图回传状态
 ```
+
+> 🩸 **本步内置口播硬闸门**（2026-08-17）：出页之前先查每镜 `narration_text` 的**汉字数 ≤100**
+> （`references/narration-spec.md` §九）。超了 **exit 1、不出确认页、不进第 3 步**，并报出哪一镜、
+> 多少字、超了多少。挂在这里是因为本步是第 2 步与第 3 步之间**唯一必经**的脚本环节——
+> 拦在这儿是免费的，拦在 TTS 之后钱已经花了。
+> 处置按第十一律的删除次序：**修辞 → 场景 → 例子**，限定句永远最后一个动，动不了就砍整页。
+> 同时会打十四律软提醒（书面连接词 / 破折号 / 完整引语）——**只报不拦**，人判。
+> 单独跑：`python3 {SKILL_DIR}/scripts/check_narration.py --shots <workdir>/shots.json`
 
 无论哪种模式都生成这一页并把**绝对路径**给运营——这是运营查看每一镜脚本的入口。然后按模式分流：
 
@@ -266,6 +347,7 @@ python3 {SKILL_DIR}/scripts/build_manifest.py --workdir <workdir>
 ```
 
 - 按 shots.json 逐镜配齐 `shot-NN.mp4 / narr-NN.mp3 / cues`，缺件 **exit 1 报明细且不写 manifest** → 补齐再跑。
+- **口播字数闸门在这里再查一遍**（兜底；主闸在第 2.5 步）：shots.json 在 storyboard 之后还会被改，而本步是进 compose 前必经的最后一道。超字数同样 exit 1 且不写 manifest。
 - 自动带上 `bgm.mp3`（若存在）、按 ratio 定分辨率，并**默认写入 `"ai_label": "AI 生成"`**（合规默认安全；确需关闭，手动把 manifest.json 的 ai_label 置空）。
 
 **9. 合成成片**
@@ -340,8 +422,14 @@ What-If/How-to-Tell 双路概念 → 结构选型 → 剧本 → 内部自检硬
 
 ### 旁白与字幕文案
 
-**逐字稿规范（写稿六律 / DeepSeek 三轮本土化审校 / TTS 引语坑 / 表演标记纪律）见
+**逐字稿规范（写稿十四律 / 结构骨架 / 长度闸门 / TTS 引语坑 / 表演标记纪律）见
 `references/narration-spec.md`——口播稿定稿前必须走完该文档的审校流程。**
+其中**能机器判的那部分已经落成闸门**，不再靠自觉（2026-08-17）：
+`scripts/check_narration.py` 硬卡 ≤100 汉字/镜（超了 exit 1），并对十四律里可枚举的三条
+（第三律书面连接词 / 第五律破折号 / 第八律完整引语）出 **warn 不拦**；
+它挂在第 2.5 步 `render_storyboard.py`（主闸）、第 8 步 `build_manifest.py`（兜底）、
+以及轮播线调 TTS 之前。⚠️ **软的那三条别改成硬的**——存在合理例外（「该」作动词、
+「因此」口语里也说），硬拦会变成恒红闸门，人就开始绕过去。
 **屏显文字排版铁律（2026-08-13 老板令，全形态）见同文档 §七**：逗号=换行、句号/问号/
 省略号=翻页、每句独立成页禁多句连排；任何文字渲染路径必须过同一排版规则。
 口语化、共情、**忠于原文不编造**；不下诊断、不承诺疗效。`subtitle` 是无旁白镜的兜底固定字幕（每镜 1–2 行、每行 ≤ ~16 字）；有旁白+cues 时字幕逐句真同步、无需手写。shots.json 里的 `narration_text`/`subtitle` 由 TTS 与合成清单消费，`jimeng_gen` 生成画面时会忽略它们（只吃 operation/prompt/duration/ratio/model/image）。
@@ -397,7 +485,10 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py gen --operation text2video \
   - 经典 BV 系列(BV001/BV700)未授权会报 `code=3001 resource not granted`。edge 引擎：`zh-CN-XiaoxiaoNeural`(温柔女)/`zh-CN-YunxiNeural`(沉稳男)，语速 `--rate "-10%"`。
 - **连贯关键（旁白驱动 duration）**：先出旁白、由第 4 步把每镜 `duration` 定为旁白时长+0.3s（clamp 4–15s），画面与旁白等长正常速度，最连贯。兜底：画面短于旁白时 compose 匀速放慢填满（不卡顿），旁白绝不被截。⚠️ 换音色会变语速→旁白时长变→**必须重跑第 3–4 步**（温柔淑女较慢，多镜会触发兜底放慢，可接受）。
 - **背景音乐（轻音乐·自动生成）**：`gen_bgm.py` 算法合成舒缓钢琴/竖琴拨弦琶音轻音乐（和弦进行+ADSR包络+混响+低通+头尾淡入淡出），零版权零等待，比手搓正弦 pad 有旋律有层次。也可自备无版权音乐（Pixabay/Suno），放 `<workdir>/bgm.mp3` 即被 build_manifest 拾取。
-- **BGM 响度自动相对化（别用固定系数）**：合成时实测旁白与 BGM 的响度、把 BGM 压到比旁白低 `bgm_gap_db`（默认 12dB）。实测教训：自合成 pad 用固定 `volume=0.16` 会被**完全淹没**（mean −54dB），真实音乐又可能盖过旁白——相对响度才稳。`amix` 内部已加 `normalize=0`，否则旁白会被压低 ~6dB。
+- **声音口径的唯一真源是 `references/audio-checklist.md`**，代码落法在 `scripts/audio_master.py`（四条合成出口共用，⛔ 别再抄第二份）。两把尺子缺一不可：
+  - **绝对量·母带归一**：成片整体 **−16 ±1 LUFS**、真峰 ≤ −1.5 dBTP，合成末尾自动做（两遍法 loudnorm），成片上回读实测，不达标 **拒交**。🩸 2026-08-16 老板实听「背景音太小」的真根因就是这一环整条链路都没有——TTS 原始电平只有 −31 LUFS，比平台常态低 15 dB。
+  - **相对量·BGM 压低**：把 BGM 压到比旁白低 `bgm_gap_db`（**默认 14 LU**，范围 12–18；12=音乐要被听见，18=纯气氛垫底）。🩸 **14 是老板 2026-08-16 对着成片实听调出来的，⛔ 改它要重新实听**——四个形态共用 `audio_master.BGM_DUCK_LU` 这一个常量，别在各自脚本里另写默认值（2026-08-17 前轮播用 14、微电影用 12，同一个人会听到一响一不响的两个形态）。⚠️ 量的是 **LUFS 不是 RMS**——同一条片子两把尺子结论方向相反（RMS 说「才低 7 dB」，LUFS 说「低 18 LU 基本听不见」）。`amix` 内部已加 `normalize=0`，否则旁白会被压低 ~6dB。
+  - ⛔ **调 duck 改不动「整片都小声」**，那是母带的事；反过来母带也救不了「BGM 被淹没」。判错一次就会去拧错的旋钮。
 
 ---
 
@@ -419,7 +510,7 @@ python3 {SKILL_DIR}/scripts/jimeng_gen.py gen --operation text2video \
 ```
 
 - **字幕优先级**：`cues`（真同步）> `narration_text`（按句估算）> `subtitle`（固定整段）。
-- 可选全局字段：`fps`（默认 30）、`bgm_gap_db`（默认 12，越大 BGM 越轻）、`bgm_volume`（仅响度探测失败时的回退系数）。
+- 可选全局字段：`fps`（默认 30）、`bgm_gap_db`（默认 **14**，**LU**，越大 BGM 越轻；实听调定值，改前先实听）、`master_lufs`（默认 −16，成片母带响度目标）。
 - 合成层自动：统一分辨率/帧率 → 烧中文字幕（Noto Sans CJK SC，白字黑描边底部居中；有 cues 则按 TTS 实测时间轴逐句真同步）→ TTS 旁白 + BGM 混音（**画面与旁白等长**：画面短则匀速放慢填满、不卡顿，旁白绝不被截；**BGM 自动相对响度**）→ h264/aac/+faststart。
 - **AI 角标**：`compose_video.py` 自身默认 `ai_label=""`（不叠）；但 **driver 产线经 build_manifest 默认写入「AI 生成」角标**。要关闭须手动改 manifest.json——投放合规见终审清单。
 - 手动微调（如覆盖输出路径）：`python3 {SKILL_DIR}/scripts/compose_video.py --manifest <m> --output <o>`。

@@ -62,6 +62,11 @@ import tempfile
 import wave
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import audio_master  # noqa: E402  母带响度归一/BGM 压低的**唯一真源**（⛔ 别在本文件另抄一份）
+import check_narration  # noqa: E402  口播字数硬闸门 + 十四律软提醒（narration-spec 的代码落法）
+import video_style  # noqa: E402  风格档案（kind=video / form=slideshow）→ 命令行默认值
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac"}
 # 口播主时钟采样率：全部素材统一重采样到这里，再按样本数拼接。
@@ -411,93 +416,13 @@ def xfade_segments(segs: list[Path], dst: Path, *, offsets: list[float],
 
 # ---------- BGM ----------
 
-def _loudness_stats(path: Path, *, target: float = -16.0) -> dict:
-    """loudnorm 第一遍（分析口）：拿 integrated LUFS / true peak / LRA / 门限 / 偏移。
-
-    ⚠️ 认 LUFS 不认 RMS：LUFS 带 K 计权 + 门控（跳过字间静音），RMS 两样都没有，
-    同一条片子两把尺子能差出 7 dB，拿 RMS 判「BGM 压够没有」必然误判（见 audio-checklist.md）。
-    """
-    p = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
-         "-af", f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
-        capture_output=True, text=True, timeout=900)
-    m = re.findall(r"\{[^{}]*\"input_i\"[^{}]*\}", p.stderr or "", re.S)
-    if not m:
-        raise RuntimeError(f"读不到 {path} 的响度（loudnorm 分析没出 JSON）："
-                           f"{(p.stderr or '')[-500:]}")
-    raw = json.loads(m[-1])
-
-    def num(key: str, fallback: float) -> float:
-        """-inf / nan（全静音、超短素材）不能回传给第二遍 loudnorm，会让 ffmpeg 拒参数。"""
-        try:
-            v = float(raw.get(key))
-        except (TypeError, ValueError):
-            return fallback
-        return v if v == v and abs(v) != float("inf") else fallback
-
-    return {
-        "i": num("input_i", -70.0),
-        "tp": num("input_tp", -99.0),
-        "lra": num("input_lra", 0.0),
-        "thresh": num("input_thresh", -80.0),
-        "offset": num("target_offset", 0.0),
-    }
-
-
-def _loudness(path: Path) -> float:
-    return _loudness_stats(path)["i"]
-
-
-def prepare_bgm(bgm: str, total: float, tmp: Path, *, narration_lufs: float,
-                duck_db: float) -> tuple[Path, float]:
-    """BGM 归一化 + 压到口播之下 duck_db。
-
-    `--bgm auto` 走同目录 gen_bgm.py **纯合成**（无版权风险、无外部素材）。
-    ⛔ 绝不下载来路不明的音乐：一条商用短视频背一首侵权 BGM，赔的钱比整条产线省的多。
-
-    注意这里定的是**相对差**（口播 − duck_db），绝对响度由 `mix_audio` 的母带归一统一负责。
-    duck 调不动「整片都小声」——那是母带的事，别在这里加补偿增益（会连口播一起顶到削波）。
-    """
-    if bgm == "auto":
-        src = tmp / "bgm_auto.mp3"
-        _run([sys.executable, str(Path(__file__).resolve().parent / "gen_bgm.py"),
-              "--duration", f"{total:.2f}", "--out", str(src)], timeout=1800)
-    else:
-        src = Path(bgm)
-        if not src.is_file():
-            raise RuntimeError(f"BGM 文件不存在：{src}")
-    target = narration_lufs - duck_db
-    out = tmp / "bgm_ready.wav"
-    # 🩸 **先下混到单声道，再分析、再归一**——分析域必须等于输出域。
-    # 2026-08-16 实测：在立体声源上分析、输出时才 `-ac 1`，成品比目标**低 3 dB**
-    # （目标 −45.9，实测 −48.9）。宽立体声下混 (L+R)/2 时不相关成分相消，能量掉 ~3 dB，
-    # 而口播本来就是单声道、没有这一刀 ⇒ duck 写 14 实际压了 17，BGM 白白又轻 3 dB。
-    # 这类偏差不会报错、成片能播，只有回读实测才抓得到（所以下面一定要回读）。
-    mono = tmp / "bgm_mono.wav"
-    # -stream_loop 兜 BGM 短于成片的情况；-t 截到成片长度。
-    _run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-i", str(src),
-          "-t", f"{total:.3f}", "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", str(mono)])
-    # 两遍法：单遍 loudnorm 是流式自适应的，开头还没测准就在改增益。
-    pre = _loudness_stats(mono, target=target)
-    fade_out = max(0.0, total - 1.5)   # 两端 1.5s 淡入淡出，在归一之后做
-    _run(["ffmpeg", "-y", "-v", "error", "-i", str(mono),
-          "-af", f"loudnorm=I={target:.2f}:TP=-2.0:LRA=11:"
-                 f"measured_I={pre['i']:.2f}:measured_TP={pre['tp']:.2f}:"
-                 f"measured_LRA={pre['lra']:.2f}:measured_thresh={pre['thresh']:.2f}:"
-                 f"offset={pre['offset']:.2f}:linear=true,"
-                 f"afade=t=in:d=1.5,afade=t=out:st={fade_out:.2f}:d=1.5",
-          "-ar", str(SR), "-ac", "1", str(out)])
-    # 实测回读：报「目标多少」没用，得报「实际到了多少」。两端淡化会把 integrated 拉低一点点
-    # （1.5s×2 相对全片的占比），所以这里的实测值天然略低于目标，看的是**别差到 1 LU 以上**。
-    got = _loudness_stats(out, target=target)["i"]
-    _err(f"[bgm] 口播 {narration_lufs:.1f} LUFS → BGM 目标 {target:.1f}（低 {duck_db:.0f} LU）"
-         f"，实测 {got:.1f} LUFS ⇒ 实际压差 {narration_lufs - got:.1f} LU")
-    if abs(got - target) > 1.0:
-        raise RuntimeError(
-            f"BGM 归一没打准：目标 {target:.2f} LUFS，实测 {got:.2f} LUFS（差 {got - target:+.2f} LU）\n"
-            f"⛔ 拒跑——差 1 LU 以上说明归一链路有隐性损失（历史元凶：分析域是立体声、"
-            f"输出却 -ac 1，下混白丢 3 dB）。别改这个阈值绕过去，去查链路。")
-    return out, got
+# 🩸 母带归一 / BGM 相对压低的实现**已抽到 `audio_master.py`**（2026-08-17）。
+# 抽的理由：这套逻辑 2026-08-16 只长在本文件一处，另外三条合成出口
+# （compose_video / record_podcast / render_card）全没有——「一处修了另几处没修」
+# 就是那次事故的形状。⛔ 别在本文件重新长出第二份 loudnorm。
+_loudness_stats = audio_master.loudness_stats
+_loudness = audio_master.loudness
+prepare_bgm = audio_master.prepare_bgm
 
 
 def mix_audio(narration: Path, bgm: Path | None, dst: Path, tmp: Path, *,
@@ -510,8 +435,7 @@ def mix_audio(narration: Path, bgm: Path | None, dst: Path, tmp: Path, *,
     口播本身安静，BGM 只会更安静（实测落到 −49.6 LUFS，等于没有）。
     调 duck 只能改相对差，改不动「整片都小声」，必须在混音之后做一次绝对归一。
 
-    两遍法（⛔ 不能一遍过）：第一遍只分析拿 measured_*，第二遍带着测量值做线性归一。
-    单遍 loudnorm 是**流式自适应**的，前几秒还没测准就开始改增益，开头响度会飘。
+    归一那一步（两遍法）见 `audio_master.master_audio`；本函数只负责混音这一半。
     """
     mix = tmp / "mix_raw.wav"
     if bgm is None:
@@ -523,18 +447,7 @@ def mix_audio(narration: Path, bgm: Path | None, dst: Path, tmp: Path, *,
               "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:normalize=0[a]",
               "-map", "[a]", "-ar", str(SR), "-ac", "2", "-c:a", "pcm_s24le", str(mix)])
 
-    pre = _loudness_stats(mix, target=master_lufs)
-    _err(f"[master] 混音后 {pre['i']:.2f} LUFS / 真峰 {pre['tp']:.2f} dBTP "
-         f"→ 归一到 {master_lufs:g} LUFS（提 {master_lufs - pre['i']:+.1f} dB）")
-    # -ar 必须显式给：loudnorm 内部按 192kHz 工作，不指定会把成片音轨变成 192k。
-    _run(["ffmpeg", "-y", "-v", "error", "-i", str(mix),
-          "-af", f"loudnorm=I={master_lufs}:TP=-1.5:LRA=11:"
-                 f"measured_I={pre['i']:.2f}:measured_TP={pre['tp']:.2f}:"
-                 f"measured_LRA={pre['lra']:.2f}:measured_thresh={pre['thresh']:.2f}:"
-                 f"offset={pre['offset']:.2f}:linear=true",
-          "-ar", str(SR), "-ac", "2", "-c:a", "aac", "-b:a", "192k", str(dst)])
-    return {"target_lufs": master_lufs, "pre_master": pre,
-            "gain_db": round(master_lufs - pre["i"], 2)}
+    return audio_master.master_audio(mix, dst, target=master_lufs)
 
 
 # ---------- 收尾自检 ----------
@@ -563,23 +476,17 @@ def _verify(out: Path, pages: list[dict], *, cw: int, ch: int,
 
     # 母带响度凭证：在**成片**上量（端到端，不是量中间文件报个好看的数）。
     # 这条同时是母带归一那段代码的证伪闸门——归一没生效，这里立刻红。
-    final = _loudness_stats(out, target=master_lufs)
-    checks.append((
-        f"母带响度 {final['i']:.2f} LUFS（目标 {master_lufs:g}±1）",
-        abs(final["i"] - master_lufs) <= 1.0,
-        f"整片响度偏离目标——平台常态 −14~−16 LUFS，低太多就是「手机外放听不清」"))
-    checks.append((
-        f"真峰 {final['tp']:.2f} dBTP（应 ≤ −1.5，容差 0.3 留给 AAC 编码）",
-        final["tp"] <= -1.2,
-        "真峰过高，转码/平台二次压缩时会削波爆音"))
+    # 判据实现在 audio_master.verify_master（全形态同一把尺子）。
+    loud = audio_master.verify_master(out, target=master_lufs)
+    checks.extend(loud["checks"])
 
     ok = True
     for label, passed, why in checks:
         _err(f"  {'✅' if passed else '❌'} {label}" + ("" if passed else f" —— {why}"))
         ok &= passed
     return {"passed": ok, "duration": actual, "expected": expect, "drift": drift,
-            "measured_lufs": round(final["i"], 2), "measured_tp": round(final["tp"], 2),
-            "measured_lra": round(final["lra"], 2), "target_lufs": master_lufs}
+            "measured_lufs": loud["measured_lufs"], "measured_tp": loud["measured_tp"],
+            "measured_lra": loud["measured_lra"], "target_lufs": master_lufs}
 
 
 # ---------- 主流程 ----------
@@ -597,11 +504,17 @@ def build(a: argparse.Namespace) -> dict:
                 f"口播稿 {len(texts)} 页 vs 图 {len(images)} 页，对不上。\n"
                 f"  图：{[p.name for p in images]}\n"
                 f"⛔ 拒跑——请把稿子补齐到每页一节（`## Pn`）")
+        # 口播闸门：≤100 汉字/页（narration-spec §九）。位置在**调 TTS 之前**——
+        # 卡在这里是免费的，卡在合成之后是钱已经花了。十四律那几条只 warn 不拦。
+        gate = check_narration.check([(f"P{i + 1:02d}", t) for i, t in enumerate(texts)])
+        check_narration.report(gate)
+        if not gate["ok"]:
+            raise RuntimeError(f"⛔ 拒跑：{len(gate['over'])} 页口播超过 100 汉字（明细见上）。")
         if a.dry_run:
             _err(f"[dry-run] 校验通过：{len(images)} 页 / {len(texts)} 段口播，"
                  f"共 {sum(len(t) for t in texts)} 字（未调 TTS、未渲染）")
             return {"success": True, "dry_run": True, "pages": len(images),
-                    "chars": sum(len(t) for t in texts)}
+                    "chars": sum(len(t) for t in texts), "narration_gate": gate}
         tts_dir = Path(a.tts_dir) if a.tts_dir else out.parent / "narration"
         page_wavs = tts_pages(texts, tts_dir, engine=a.engine, voice=a.voice,
                               speed=a.speed, model=a.model, gap=a.sentence_gap)
@@ -713,10 +626,11 @@ def main() -> None:
     p.add_argument("--script-file", help="分页口播稿，内部串行调 TTS（与 --narration-dir 二选一）")
     p.add_argument("--out", required=True, help="成片 mp4 路径")
     p.add_argument("--bgm", help="BGM：文件路径，或 auto（gen_bgm.py 纯合成，零版权）")
-    p.add_argument("--bgm-duck", type=float, default=14.0,
+    p.add_argument("--bgm-duck", type=float, default=audio_master.BGM_DUCK_LU,
                    help="BGM 低于口播多少 LU（默认 14，老板 2026-08-16 实听从 18 调下来；"
                         "要更突出音乐用 12，要纯背景用 18）")
-    p.add_argument("--master-lufs", type=float, default=-16.0,
+    p.add_argument("--master-lufs", type=float,
+                   default=audio_master.FORM_TARGETS["slideshow"],
                    help="成片母带整体响度目标 LUFS（默认 −16，平台常态 −14~−16）；"
                         "真峰恒定压 −1.5 dBTP")
     p.add_argument("--canvas", default=DEFAULT_CANVAS, help=f"画布，默认 {DEFAULT_CANVAS}（3:4）")
@@ -738,7 +652,8 @@ def main() -> None:
     p.add_argument("--tts-dir", help="TTS 产物落盘目录（默认 <out 同级>/narration）")
     p.add_argument("--dry-run", action="store_true", help="只校验页数/口播段数，不调 TTS 不渲染")
     p.add_argument("--keep-temp", action="store_true")
-    a = p.parse_args()
+    # 风格档案（kind=video / form=slideshow）：只改**没写在命令行上**的那些参数的默认值
+    a = video_style.apply(p, "slideshow")
 
     if bool(a.narration_dir) == bool(a.script_file):
         p.error("--narration-dir 与 --script-file 必须二选一")

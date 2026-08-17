@@ -9,7 +9,7 @@ manifest 契约，源自 compose_video.py（本仓库同目录，勿改）：
     ai_label     第387行 manifest.get("ai_label", "")；docstring 第13行标注"合规显式标识"
     bgm          第388行 manifest.get("bgm")，可选
     bgm_volume   第388行 manifest.get("bgm_volume", 0.15)，可选
-    bgm_gap_db   第389行 manifest.get("bgm_gap_db", 12.0)，可选
+    bgm_gap_db   manifest.get("bgm_gap_db", audio_master.BGM_DUCK_LU)，可选；默认 14 LU（实听调定）
     segments     第359行 manifest.get("segments")，list
   每镜 segment 字段——由 normalize_segment()（第222-292行）消费：
     video           第230行 seg.get("video")，必需，文件须存在
@@ -47,6 +47,9 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import check_narration  # noqa: E402  口播字数硬闸门 + 十四律软提醒（narration-spec 的代码落法）
 
 # compose_video.py docstring 第13行给出的默认值示例；本项目心理科普/AI生成内容合规要求
 # 显式标注，缺省即保留角标（compose 自身默认是 ""→关闭，这里不沿用那个默认）。
@@ -176,7 +179,8 @@ def build_manifest(workdir: Path) -> dict[str, Any]:
     if cover_path.is_file():
         manifest["cover"] = str(cover_path)
 
-    return {"manifest_dict": manifest, "missing": missing, "shots": len(shots)}
+    return {"manifest_dict": manifest, "missing": missing, "shots": len(shots),
+            "shots_raw": shots}   # 原始镜列表，给口播闸门查 narration_text
 
 
 def main() -> None:
@@ -196,8 +200,17 @@ def main() -> None:
                           ensure_ascii=False, indent=2))
         sys.exit(1)
 
-    ok = not result["missing"]
-    report: dict[str, Any] = {"manifest": None, "shots": result["shots"], "missing": result["missing"], "ok": ok}
+    # 口播闸门兜底：主闸在第 2.5 步 render_storyboard（TTS 花钱之前）。这里再查一遍，
+    # 是因为 shots.json 在 storyboard 之后还会被改（补 operation / 改旁白），
+    # 而本步是进 compose 前**必经**的最后一道——⛔ 别指望上游一定跑过。
+    gate = check_narration.check(
+        [(f"第{s.get('index', i + 1)}镜", (s.get("narration_text") or "").strip())
+         for i, s in enumerate(result["shots_raw"])])
+    check_narration.report(gate)
+
+    ok = not result["missing"] and gate["ok"]
+    report: dict[str, Any] = {"manifest": None, "shots": result["shots"],
+                              "missing": result["missing"], "narration_gate": gate, "ok": ok}
 
     # stderr: 结尾汇总
     if ok:
@@ -205,8 +218,8 @@ def main() -> None:
         report["manifest"] = str(out)
         _err(f"manifest 已写入 {out}")
     else:
-        missing_count = len(result["missing"])
-        _err(f"清单完成：{result['shots']} 镜, 缺件 {missing_count}")
+        _err(f"清单完成：{result['shots']} 镜, 缺件 {len(result['missing'])}"
+             + ("" if gate["ok"] else f"；另有 {len(gate['over'])} 镜口播超字数（见上）"))
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
     sys.exit(0 if ok else 1)

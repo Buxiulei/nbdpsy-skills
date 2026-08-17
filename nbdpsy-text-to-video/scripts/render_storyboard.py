@@ -19,6 +19,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import check_narration  # noqa: E402  口播字数硬闸门 + 十四律软提醒（narration-spec 的代码落法）
+
 CSS = """
 :root{--paper:#FAF7F2;--card:#FFFFFF;--ink:#2E3A43;--muted:#6B7884;--brand:#5A6B7B;
 --sage:#C9D6CE;--mist:#A8B5C4;--sand:#E8D8C4;--line:#ECE5DA;--code:#2E3A43;--code-ink:#E9ECEF;}
@@ -180,11 +183,25 @@ def main():
         shots_path.write_text(json.dumps(shots_data, ensure_ascii=False, indent=2), encoding="utf-8")
         _err(f"参考图写回 {attached} 镜 → shots.json")
 
+    # 🩸 口播闸门（2026-08-17 挂在这里）：本步是第 2 步精修与第 3 步 TTS 之间**唯一必经**的
+    # 脚本环节（SKILL.md：「无论哪种模式都生成这一页」），所以字数闸门必须落在这儿——
+    # 挂在旁路等于没挂，而挂到 TTS 之后就是钱已经花了才拦。
+    # 硬闸门只有一条（≤100 汉字，narration-spec §九）；十四律那几条是 warn，⛔ 不拦。
+    gate = check_narration.check(
+        [(f"第{s.get('index', i + 1)}镜", (s.get("narration_text") or "").strip())
+         for i, s in enumerate(shots_data["shots"])])
+    check_narration.report(gate)
+    if not gate["ok"]:
+        print(json.dumps({"error": "口播字数闸门不过", "narration_gate": gate},
+                         ensure_ascii=False))
+        _err("⛔ 不出确认页也不进第 3 步——回第 2 步精简/拆镜后重跑本命令。")
+        sys.exit(1)
+
     out = Path(a.out) if a.out else workdir / f"{workdir.name}-storyboard.html"
     out.write_text(render(shots_data, workdir), encoding="utf-8")
     _err(f"分镜确认页已写入 {out}")
-    print(json.dumps({"html": str(out), "shots": len(shots_data["shots"]), "attached": attached},
-                     ensure_ascii=False))
+    print(json.dumps({"html": str(out), "shots": len(shots_data["shots"]), "attached": attached,
+                      "narration_gate": gate}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -23,6 +23,9 @@ import argparse, json, re, shutil, sys
 from pathlib import Path
 from urllib.parse import quote
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import video_style  # noqa: E402  风格档案（kind=video / form=card）→ 命令行默认值
+
 HERE = Path(__file__).parent
 TPL_DIR = HERE.parent / "assets" / "card-templates"
 TPL = TPL_DIR / "tpl-oneline.html"
@@ -287,14 +290,20 @@ def pixel_check(path: Path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="一行字卡实例化（含单行硬闸门）")
     ap.add_argument("--cues", required=True, help="tts_gen --timed 产出的 *.cues.json")
-    ap.add_argument("--bg", required=True, choices=sorted(BG))
-    ap.add_argument("--canvas", required=True, choices=sorted(CANVAS))
+    # --bg / --canvas 不用 required=True：风格档案（--style）也能给。缺了照旧报错退出，
+    # 只是把「argparse 报缺参数」换成下面那句人话——⛔ 绝不给它们编一个默认值悄悄出片
+    ap.add_argument("--bg", choices=sorted(BG))
+    ap.add_argument("--canvas", choices=sorted(CANVAS))
     ap.add_argument("--out", required=True, help="工作目录（card-oneline.html 落这里）")
     ap.add_argument("--max-line-chars", type=int, default=12,
                 help="单行/屏字数上限（8–14，默认 12；书名场景可 13——整片按安全区统一反推字号，非按行缩字）")
     ap.add_argument("--name", default="card-oneline.html")
     ap.add_argument("--no-check", action="store_true", help="跳过像素闸（⛔ 出片前别用）")
-    a = ap.parse_args(argv)
+    a = video_style.apply(ap, "card", argv)
+    missing = [f"--{k}" for k in ("bg", "canvas") if getattr(a, k) is None]
+    if missing:
+        sys.exit(f"❌ 缺 {' 和 '.join(missing)}：命令行给，或用 --style 喂一套带 oneline 段的"
+                 f"字卡风格档案（style_profile.py --get --form card）")
 
     cues = json.load(open(a.cues, encoding="utf-8"))
     if isinstance(cues, dict):

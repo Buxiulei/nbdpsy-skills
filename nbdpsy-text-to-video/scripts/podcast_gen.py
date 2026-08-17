@@ -45,6 +45,7 @@ from pathlib import Path
 # 套壳会丢掉异常类型、多一层进程启动开销，且凭据要经过命令行/环境二次传递）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tts_gen  # noqa: E402
+import video_style  # noqa: E402  风格档案（kind=video / form=podcast）→ 命令行默认值
 
 # 双声默认音色：女声=温暖闺蜜（现役，与微电影口播同一把嗓子）；
 # 男声=温润男声 Gentleman（规格 §③ 三候选之一，暂定默认，可 --voice-m 覆盖）
@@ -282,6 +283,8 @@ def main() -> None:
                    choices=list(tts_gen.MINIMAX_MODELS))
     s.add_argument("--force", action="store_true",
                    help="忽略已有音频全部重合成（⚠ 重复扣费）")
+    # 风格档案装在**子 parser** 上：argparse 解析子命令时会拿子 parser 的默认值覆盖顶层
+    video_style.attach(s, "podcast")
     a = p.parse_args()
 
     try:

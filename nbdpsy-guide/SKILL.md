@@ -673,12 +673,19 @@ python3 SP --get               # 记下 base_version —— 下面原样传它
 确认过了再跑：
 
 ```bash
-python3 SP --new-profile "<他起的名>" --kind <carousel|typeset> \
+python3 SP --new-profile "<他起的名>" --kind <carousel|typeset|video> \
+  [--form <slideshow|card|microfilm|podcast>]   # 仅 --kind video 时必填 \
   [--from "<已有套名>" | --file /tmp/style-new.json] \
   --base-version <A 读到的 base_version>
 ```
 
-> ⛔ 命令里那两个英文取值（`carousel` = 图文那套、`typeset` = 文字版那套）**只写在命令里，绝不念给运营听**。
+> ⛔ 命令里那几个英文取值（`carousel` = 图文那套、`typeset` = 文字版那套、`video` = 视频那类，
+> 子形态 `slideshow` = 放映、`card` = 字卡、`microfilm` = 微电影、`podcast` = 播客）
+> **只写在命令里，绝不念给运营听**。
+
+> **视频那类要先问他做哪种片子**（放映 / 字卡 / 微电影 / 播客），⛔ 别替他猜：四条产线的旋钮
+> 完全不同（放映有页间停顿、播客有男女双声、微电影有子风格三档），**一个子形态一套**，
+> 建错了那套永远挑不中。字段与用法见 `nbdpsy-text-to-video/SKILL.md`「风格档案（视频那一类）」节。
 
 **D · 报喜**
 

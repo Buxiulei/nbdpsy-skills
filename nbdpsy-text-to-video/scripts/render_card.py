@@ -16,6 +16,28 @@ from pathlib import Path
 HERE = Path(__file__).parent
 FPS = 30
 
+
+def _load_audio_master():
+    """定位并加载 `audio_master`（母带响度归一的唯一真源）。
+
+    ⚠️ 本脚本按契约是**被拷进每条视频的工作目录**跑的，`audio_master.py` 不会跟着拷，
+    所以不能只 `sys.path.insert(HERE)`（那是「真源≠工作副本」的经典坑）。按序找：
+    同目录副本 → 从 HERE 往上找 skill 真源 → 全局安装位。
+    ⛔ 全找不到就**抛**，不静默跳过——静默跳过等于把 2026-08-16 那个「整片小声」的 bug 放回来。
+    """
+    cands = [HERE, *[p / "nbdpsy-text-to-video" / "scripts" for p in HERE.resolve().parents],
+             *[Path.home() / d / "skills" / "nbdpsy-text-to-video" / "scripts"
+               for d in (".claude", ".agents", ".codex")]]
+    for d in cands:
+        if (d / "audio_master.py").is_file():
+            sys.path.insert(0, str(d))
+            import audio_master
+            return audio_master
+    raise RuntimeError(
+        "找不到 audio_master.py（母带响度归一的唯一真源），拒绝出片。\n"
+        "⛔ 别绕过：不归一的成片是 −31 LUFS 量级，手机外放听不清（2026-08-16 实听事故）。\n"
+        f"处置：把 skill 的 scripts/audio_master.py 拷到本脚本同目录（{HERE}）再跑。")
+
 # 光栅后端**默认 CPU**（headless Chromium 不给 GPU 参数时就是 SwiftShader 软光栅）。
 # 不默认开 GPU 的理由（2026-08-12 定）：GPU 与 CPU 是两套字形抗锯齿实现，实测 tpl-basic
 # 同模板同 cues 下 222/222 帧全不同、最严重一帧差 30 万像素——而**存量已过审的字卡片全是 CPU 渲的**，
@@ -226,16 +248,36 @@ def _probe_gl_renderer(page, angle: str):
 
 
 def mux(html_name: str, out_name: str) -> str:
-    """合帧 + 混音。分片渲完后由 wrapper 调这条路径收口。"""
+    """合帧 + 混音 + **母带响度归一**。分片渲完后由 wrapper 调这条路径收口。
+
+    🩸 母带归一 2026-08-17 补：此前本线只把 narration 原样贴上去，成片响度就是 TTS 原始
+    电平（−31 LUFS 量级），比平台常态低 15 dB ＝手机外放听不清。归一在**这一次编码里**做完
+    （两遍法：先分析 narration 拿 measured_*，再带着测量值线性归一），⛔ 别改成先编 AAC 再补一遍。
+    """
+    am = _load_audio_master()
     fd = HERE / ("frames_" + Path(html_name).stem)
     out = HERE / out_name
+    narr = HERE / ("narration.mp3.wav" if (HERE / "narration.mp3.wav").exists() else "narration.mp3")
+    target = am.FORM_TARGETS["card"]
+    pre = am.loudness_stats(narr, target=target)
+    print(f"[master] 口播 {pre['i']:.2f} LUFS → 归一到 {target:g} LUFS "
+          f"（提 {target - pre['i']:+.1f} dB）", file=sys.stderr, flush=True)
     subprocess.run([
-        "ffmpeg", "-y", "-framerate", str(FPS), "-i", str(fd / "f%05d.png"),
-        "-i", str(HERE / ("narration.mp3.wav" if (HERE / "narration.mp3.wav").exists() else "narration.mp3")),
+        "ffmpeg", "-y", "-framerate", str(FPS), "-i", str(fd / "f%05d.png"), "-i", str(narr),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "19", "-preset", "medium",
-        "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(out),
+        # -ar/-ac 必须显式给：loudnorm 内部按 192kHz 工作，不指定会把音轨留在 192k（A3 口径 48k/双声道）
+        "-af", am.loudnorm_filter(pre, target=target),
+        "-ar", str(am.SR), "-ac", "2", "-c:a", "aac", "-b:a", am.BITRATE,
+        "-shortest", "-movflags", "+faststart", str(out),
     ], check=True, capture_output=True)
-    print(f"✅ {out_name} {out.stat().st_size/1048576:.1f}MB", flush=True)
+    v = am.verify_master(out, target=target)
+    for label, passed, why in v["checks"]:
+        print(f"  {'✅' if passed else '❌'} {label}" + ("" if passed else f" —— {why}"),
+              file=sys.stderr, flush=True)
+    if not v["passed"]:
+        raise RuntimeError("母带响度自检不过（见上方 ❌ 行）——⛔ 这条片子别发，先查归一链路。")
+    print(f"✅ {out_name} {out.stat().st_size/1048576:.1f}MB "
+          f"({v['measured_lufs']:.2f} LUFS / {v['measured_tp']:.2f} dBTP)", flush=True)
     return str(out)
 
 
