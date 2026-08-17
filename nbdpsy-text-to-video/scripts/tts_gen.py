@@ -46,6 +46,12 @@
   并写 sidecar `{out}.cues.json`（每句 text/start/end）。compose_video.py 检测到 cues
   就让字幕严格按每句实测时长显示，旁白讲到哪字幕走到哪，彻底同步。
 
+  **逐句合成是并行的 --concurrency（MiniMax 默认 4 路，其余引擎串行）**：
+  2026-08-17 实测这把 key 一次能同时打进 20 发，但被限的其实是每分钟请求数
+  （约 20-22 次/分）——压到完全串行照样撞 1002，所以"必须串行"从来不是解药。
+  限流码不返音频也不计费，撞上就指数退避重试。拼接与 cues 恒按**原句序**，
+  与谁先合成完无关。
+
 豆包大模型音色（本机实测已开通，cluster=volcano_tts）：
   zh_female_wenroushunv_mars_bigtts     温柔淑女（默认·成熟温柔知性，心理科普旁白）
   zh_female_qingxinnvsheng_mars_bigtts  清新女声（清新干净偏年轻）
@@ -68,12 +74,15 @@ import base64
 import codecs
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 EDGE_DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
@@ -115,6 +124,15 @@ MINIMAX_SPEED_MIN, MINIMAX_SPEED_MAX = 0.5, 2.0  # 注意与豆包的 0.8-2.0 �
 # 计费口径（官方）：1 个汉字算 2 字符，其他字符算 1；下表是每万计费字符的人民币价格。
 # 只登记已核对过价格的型号，其余型号只打字符数不瞎估价。
 MINIMAX_PRICE_PER_10K = {"speech-2.8-hd": 3.5, "speech-2.8-turbo": 2.0}
+
+# ---- 限流退避（只对限流码重试；这是本文件"绝不自动重试"铁律的唯一豁免）----
+# 豁免依据是实测而非推测（2026-08-17 本机探测，26 次 1002 响应逐条核对）：
+# 限流响应 data.audio 为空、extra_info.usage_characters 缺席 → 服务端没合成也没计费，
+# 重试不会重复扣费。鉴权(1004)/参数(2013)/非法字符(1042) 等一律不重试，语义不变。
+MINIMAX_RATELIMIT_CODES = (1002, 1039)  # 1002=RPM 限流，1039=TPM 限流
+MINIMAX_RETRY_ATTEMPTS = 5              # 首发之外最多再退避重试 5 次
+MINIMAX_RETRY_BASE_DELAY = 1.0          # 指数退避基数：1/2/4/8/16 秒（另加抖动）
+MINIMAX_RETRY_MAX_DELAY = 16.0
 
 
 def _err(m: str) -> None:
@@ -451,39 +469,59 @@ def _minimax_build_request(text: str, voice: str, speed: float, *,
     return url, body
 
 
+def _minimax_retry_delay(attempt: int) -> float:
+    """第 attempt 次失败后的退避秒数（指数 + 抖动）。抖动是必须的：并行池里多路
+    同时撞限流，若退避时长一致会一起醒来再一起撞墙（惊群），错开才能陆续挤进去。"""
+    base = min(MINIMAX_RETRY_BASE_DELAY * (2 ** (attempt - 1)), MINIMAX_RETRY_MAX_DELAY)
+    return base + random.uniform(0, base * 0.25)
+
+
 def _minimax_synth(text: str, out: str, voice: str, speed: float, api_key: str, *,
                    model: str = MINIMAX_DEFAULT_MODEL, emotion: str | None = None,
-                   group_id: str | None = None) -> bool:
+                   group_id: str | None = None,
+                   retry_attempts: int = MINIMAX_RETRY_ATTEMPTS) -> bool:
     """MiniMax 同步 HTTP 合成（POST /v1/t2a_v2，stream=false，一次请求拿全量音频）。
     响应契约：data.audio 是 **hex 编码**字符串（不是 base64，与豆包不同，用 bytes.fromhex）；
     data.status 1=合成中 2=结束；extra_info.audio_length(ms)/usage_characters(计费字符数)/word_count；
     base_resp.status_code 0=正常，1000 未知 / 1001 超时 / 1002 限流 / 1004 鉴权失败 /
     1039 TPM限流 / 1042 非法字符超10% / 2013 参数不正常。
     **HTTP 200 不代表成功**——这类 API 常在 200 里返错误码，必须查 base_resp（本仓库踩过同类坑）。
-    失败一律原文透出、绝不自动重试：TTS 按字符计费（1 汉字=2 字符；
+    失败一律原文透出、**除限流外绝不自动重试**：TTS 按字符计费（1 汉字=2 字符；
     speech-2.8-hd ¥3.5/万字符、speech-2.8-turbo ¥2.0/万字符），重试就是重复扣费，
-    该不该再花钱由调用方决定。"""
+    该不该再花钱由调用方决定。唯一豁免是限流码（MINIMAX_RATELIMIT_CODES）——
+    实测服务端根本没合成、不返音频也不计费，重试只花时间不花钱（见该常量处的实测依据）。"""
     import requests
     url, body = _minimax_build_request(text, voice, speed, model=model,
                                        emotion=emotion, group_id=group_id)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    r = requests.post(url, headers=headers, json=body, timeout=120)
     group_hint = ("（若你的账号属于旧版/国际站，可配置 MINIMAX_GROUP_ID 后重试）"
                   if not group_id else "")
-    if r.status_code != 200:
-        auth_hint = group_hint if r.status_code == 401 else ""
-        raise RuntimeError(f"MiniMax TTS HTTP {r.status_code}：{r.text[:300]}{auth_hint}")
-    try:
-        j = r.json()
-    except Exception:
-        raise RuntimeError(f"MiniMax TTS 非 JSON 响应 HTTP{r.status_code}: {r.text[:300]}")
-    base = j.get("base_resp") or {}
-    code = base.get("status_code")
+    for attempt in range(1, retry_attempts + 2):
+        r = requests.post(url, headers=headers, json=body, timeout=120)
+        if r.status_code != 200:
+            auth_hint = group_hint if r.status_code == 401 else ""
+            raise RuntimeError(f"MiniMax TTS HTTP {r.status_code}：{r.text[:300]}{auth_hint}")
+        try:
+            j = r.json()
+        except Exception:
+            raise RuntimeError(f"MiniMax TTS 非 JSON 响应 HTTP{r.status_code}: {r.text[:300]}")
+        base = j.get("base_resp") or {}
+        code = base.get("status_code")
+        if code in MINIMAX_RATELIMIT_CODES and attempt <= retry_attempts:
+            delay = _minimax_retry_delay(attempt)
+            _err(f"[tts] MiniMax 限流 status_code={code}（未合成不计费），"
+                 f"{delay:.1f}s 后第 {attempt}/{retry_attempts} 次重试")
+            time.sleep(delay)
+            continue
+        break
     if code not in (0, None):
         hint = group_hint if code == 1004 else ""
+        exhausted = ("（已退避重试 %d 次仍被限流：说明这把 key 的每分钟额度被占满，"
+                     "多半有别的会话在同时用；降低 --concurrency 或错开时间）"
+                     % retry_attempts) if code in MINIMAX_RATELIMIT_CODES else ""
         raise RuntimeError(
             f"MiniMax TTS 失败 status_code={code} msg={base.get('status_msg')} "
-            f"trace_id={j.get('trace_id')}{hint}")
+            f"trace_id={j.get('trace_id')}{hint}{exhausted}")
     audio_hex = ((j.get("data") or {}).get("audio")) or ""
     if not audio_hex:
         raise RuntimeError(f"MiniMax TTS 无音频数据（trace_id={j.get('trace_id')}）：{str(j)[:300]}")
@@ -582,18 +620,41 @@ def _concat_mp3(parts: list[str], out: str) -> bool:
     return r.returncode == 0
 
 
+# 逐句合成的并行度默认值。**只对 MiniMax 实测过**（2026-08-17 本机探测）：
+# 同时打 20 发全进、24 发进 20，但把并发压到 1（完全串行）照样会撞 1002——
+# 说明被限的是「每分钟请求数」（实测约 20-22 次/分），不是「同时在飞几路」。
+# 于是并行的收益是**把一个窗口内的额度一次性用掉**（十来句从 ~25s 压到 ~7s），
+# 而不是把吞吐拉到无穷；超出额度的部分由 _minimax_synth 的限流退避兜住。
+# 默认取 4 而不是实测上限 20：这把 key 是多个会话共用的，实测数字是"整把 key 的",
+# 独占它等于把别的会话饿死；4 路已经吃满典型口播的加速空间，还留着大头给别人。
+# 其他引擎（edge/doubao）没做过并发实测，默认保持串行——不拿没量过的数当默认值。
+MINIMAX_DEFAULT_CONCURRENCY = 4
+
+
+def _resolve_concurrency(concurrency: int | None, engine: str, n_items: int) -> int:
+    """解析实际并行度：显式传入优先；未传时只有 minimax 走并行默认值，其余引擎串行。"""
+    if concurrency is None:
+        concurrency = MINIMAX_DEFAULT_CONCURRENCY if engine == "minimax" else 1
+    return max(1, min(int(concurrency), max(1, n_items)))
+
+
 def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None = None,
               rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95,
               emotion: str | None = None, emotion_scale: int | None = None,
-              model: str = MINIMAX_DEFAULT_MODEL, gap: float = 0.45) -> dict:
+              model: str = MINIMAX_DEFAULT_MODEL, gap: float = 0.45,
+              concurrency: int | None = None) -> dict:
     """逐句合成 + 实测时间轴：每句单独 TTS、ffprobe 实测时长、拼接成 out，
     并写 sidecar {out}.cues.json（[{text,start,end}]），供 compose 做字幕真同步。
     gap = 句间静音秒数（2026-08-07 老板定案：上句说完不能立马抢下句——
-    MiniMax 句尾几乎零留白，逐句拼接必须垫间隙；cues 时间轴含间隙偏移）。"""
+    MiniMax 句尾几乎零留白，逐句拼接必须垫间隙；cues 时间轴含间隙偏移）。
+    concurrency = 逐句合成的并行路数（见 MINIMAX_DEFAULT_CONCURRENCY）。
+    🔴 并行只影响"谁先合成完"，绝不影响"谁排在前面"：拼接与 cues 一律按**原句序**，
+    见下方 executor.map 的顺序保证与 test_tts_concurrency.py 的乱序完成用例。"""
     text = (text or "").strip()
     if not text:
         return {"success": False, "error": "文本为空"}
     sents = _split_sentences(text)
+    workers = _resolve_concurrency(concurrency, engine, len(sents))
     tmp = tempfile.mkdtemp(prefix="tts_timed_")
     try:
         # ⚠️ 拼接必须走 wav/PCM 域（2026-08-11 修）：mp3 逐段 concat 每段漂 ~46ms 且随句数累积
@@ -615,18 +676,30 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
             with wave.open(wav_path, "rb") as w:
                 return w.readframes(w.getnframes())
 
+        def _synth(i: int) -> dict:
+            part = str(Path(tmp) / f"p{i:03d}.mp3")
+            # 发音别名只进合成文本；cue 存原文（字幕要显示 NBDpsy 而不是拆开的字母）
+            return gen_one(_speakable(sents[i]), part, engine=engine, voice=voice, rate=rate,
+                           speed=speed, emotion=emotion, emotion_scale=emotion_scale, model=model)
+
+        # 并行合成：executor.map **按提交顺序**返回结果（与完成先后无关），
+        # 所以 parts[i] 恒对应 sents[i]——顺序不靠"谁先回来"，靠下标。
+        if workers > 1:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                parts = list(ex.map(_synth, range(len(sents))))
+        else:
+            parts = [_synth(i) for i in range(len(sents))]
+        # 失败按最小句序报，跟串行时代的报错口径一致（并行下可能多句同时失败）
+        for i, r in enumerate(parts):
+            if not r.get("success"):
+                return {"success": False, "error": f"句{i}合成失败：{r.get('error')}"}
+
         pcm_chunks, cues, frames_t = [], [], 0
         for i, s in enumerate(sents):
             if i and gap_frames:
                 pcm_chunks.append(b"\x00\x00" * gap_frames)
                 frames_t += gap_frames
-            part = str(Path(tmp) / f"p{i:03d}.mp3")
-            # 发音别名只进合成文本；cue 存原文（字幕要显示 NBDpsy 而不是拆开的字母）
-            r = gen_one(_speakable(s), part, engine=engine, voice=voice, rate=rate, speed=speed,
-                        emotion=emotion, emotion_scale=emotion_scale, model=model)
-            if not r.get("success"):
-                return {"success": False, "error": f"句{i}合成失败：{r.get('error')}"}
-            pcm = _mp3_to_pcm(part)
+            pcm = _mp3_to_pcm(str(Path(tmp) / f"p{i:03d}.mp3"))
             n = len(pcm) // 2
             # 一句 = 一条字幕（2026-08-07 老板定案：句号翻页、逗号换行）。
             # 句内逗号的换行由 compose 渲染层处理，这里保留原文标点作为换行依据。
@@ -653,7 +726,9 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
             json.dumps({"duration": dur, "cues": cues}, ensure_ascii=False, indent=2),
             encoding="utf-8")
         return {"success": True, "output": str(Path(out).resolve()), "engine": engine,
-                "voice": r.get("voice", voice),  # 逐句实际解析出的音色（V3/V1 各自默认不同，见 gen_one）
+                # 逐句实际解析出的音色（V3/V1 各自默认不同，见 gen_one）。取 parts[-1] 而非
+                # "最后一个循环变量"：并行下"最后完成的"不确定，按下标取才可复现。
+                "voice": parts[-1].get("voice", voice),
                 "duration": dur, "cues": cues, "cues_path": cues_path}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -661,7 +736,10 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
 
 def gen_batch(plan_path: str, out_dir: str, *, engine: str = "edge", voice: str | None = None,
               rate: str = EDGE_DEFAULT_RATE, speed: float = 0.95, timed: bool = False,
-              model: str = MINIMAX_DEFAULT_MODEL, gap: float = 0.45) -> dict:
+              model: str = MINIMAX_DEFAULT_MODEL, gap: float = 0.45,
+              concurrency: int | None = None) -> dict:
+    """分镜逐条合成。**分镜之间保持串行**：--timed 时每条分镜内部已经按句并行了，
+    再在外层套一层并行会把并行度乘起来（4 路 × N 分镜），直接把共用 key 的额度打爆。"""
     try:
         plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001
@@ -680,7 +758,8 @@ def gen_batch(plan_path: str, out_dir: str, *, engine: str = "edge", voice: str 
             _err(f"[tts] 分镜 {i}: 跳过(无文案)")
             continue
         if timed:
-            r = gen_timed(text, out, engine=engine, voice=voice, rate=rate, speed=speed, model=model, gap=gap)
+            r = gen_timed(text, out, engine=engine, voice=voice, rate=rate, speed=speed,
+                          model=model, gap=gap, concurrency=concurrency)
         else:
             r = gen_one(text, out, engine=engine, voice=voice, rate=rate, speed=speed, model=model)
         r["index"] = i
@@ -716,15 +795,24 @@ def main() -> None:
                    help="逐句合成+写 .cues.json 时间轴（字幕真同步，强烈建议）")
     p.add_argument("--gap", type=float, default=0.45,
                    help="--timed 句间静音秒数（默认 0.45；上句说完不抢下句）")
+    p.add_argument("--concurrency", type=int, default=None,
+                   help=f"--timed 逐句合成的并行路数。MiniMax 默认 {MINIMAX_DEFAULT_CONCURRENCY}，"
+                        "其余引擎默认串行（只对 MiniMax 做过并发实测，不拿没量过的数当默认值）。"
+                        "2026-08-17 实测：这把 key 一次能同时打进 20 发，但真正被限的是"
+                        "每分钟请求数（约 20-22 次/分），压到完全串行照样会撞 1002。"
+                        f"默认设 {MINIMAX_DEFAULT_CONCURRENCY} 而不是实测上限 20，是因为额度是"
+                        "整把 key 的、多个会话共用，独占它会把别人饿死；限流会自动退避重试")
     a = p.parse_args()
 
     if a.plan:
         res = gen_batch(a.plan, a.out_dir, engine=a.engine, voice=a.voice, rate=a.rate,
-                        speed=a.speed, timed=a.timed, model=a.model, gap=a.gap)
+                        speed=a.speed, timed=a.timed, model=a.model, gap=a.gap,
+                        concurrency=a.concurrency)
     elif a.text and a.out:
         if a.timed:
             res = gen_timed(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
-                            emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model, gap=a.gap)
+                            emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model, gap=a.gap,
+                            concurrency=a.concurrency)
         else:
             res = gen_one(a.text, a.out, engine=a.engine, voice=a.voice, rate=a.rate, speed=a.speed,
                           emotion=a.emotion, emotion_scale=a.emotion_scale, model=a.model)
