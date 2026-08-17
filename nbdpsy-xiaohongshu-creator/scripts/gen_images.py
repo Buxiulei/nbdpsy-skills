@@ -758,7 +758,36 @@ def summarize_outcome(pages_out):
     return "done" if len(ok) == len(pages_out) else "partial"
 
 
-def retry_hint(failed_labels, anchor_url, cover_only):
+# 出图失败的分流表（2026-08-17 立）：**hint 的职责是「告诉人下一步做什么」，所以它必须随错误类型变**。
+# 不随错误变的 hint 比没有更坏——服务号线 15:10 撞 429 额度耗尽，hint 却说「调提示词后重跑」，
+# 照做只会反复撞 429 而不去充值（实证：同一份回执里 error 明写 credit_balance_exhausted）。
+_ERR_ROUTES = (
+    # (判据关键词, 下一步该做什么)
+    (("insufficient_quota", "credit_balance_exhausted", "no credits", "billing"),
+     "🔴 **账号出图额度耗尽，需充值**——⛔ 调提示词无用、重跑只会再撞一次。"
+     "充值入口 https://platform.openai.com/settings/organization/billing"
+     "；等额度期间可改走即梦（有参考图要锚定的单张场景，见 project_wechat/即梦线）"),
+    (("rate_limit", "too many requests", "429 - {'error': {'message': 'Rate limit"),
+     "⏳ **触发限流（不是额度用尽）**——等几分钟原样重跑即可，⛔ 别改提示词、⛔ 别拆小批次绕"),
+    (("content_policy", "safety", "moderation", "rejected your request"),
+     "⚠️ **内容策略拒绝**——这一条才需要**改提示词**（去掉可能触发审核的表述）后重跑"),
+)
+
+
+def classify_error(pages_out):
+    """从各页 error 里认出失败类型，返回对应的下一步；认不出返回 None（走原通用 hint）。"""
+    blob = " ".join(str(p.get("error") or "") for p in pages_out).lower()
+    for keys, advice in _ERR_ROUTES:
+        if any(k.lower() in blob for k in keys):
+            return advice
+    return None
+
+
+def retry_hint(failed_labels, anchor_url, cover_only, pages_out=None):
+    # 先按错误类型分流：额度/限流/内容策略各有各的下一步，⛔ 别一律教「调提示词重跑」
+    routed = classify_error(pages_out or [])
+    if routed:
+        return routed
     if cover_only:
         return "封面页未出成，调提示词后重跑 --cover-only（这是风格闸门第一步，确认后再批量出）"
     nums = ",".join(str(int(l[1:])) for l in failed_labels)
@@ -796,7 +825,7 @@ def emit_result(pages_out, sid, jid, cover_only, anchor, warnings, cover_receipt
            "error": None, "hint": None, "warnings": warnings}
     if outcome != "done":
         failed_labels = [p["page"] for p in pages_out if not p["path"]]
-        out["hint"] = retry_hint(failed_labels, anchor, cover_only)
+        out["hint"] = retry_hint(failed_labels, anchor, cover_only, pages_out)
         if outcome == "failed":
             out["error"] = "全部页未出成（服务端未返回图 URL；可能触发额度/限流，见各页 error）"
     print(json.dumps(out, ensure_ascii=False))

@@ -709,3 +709,46 @@ def test_两步以上推进的故事线放行():
     pages = [{"page": "P1", "claim": "深呼吸其实是在帮倒忙", "page_text": "", "prompt": "x"}]
     gi.validate_structure(_reader_ok_md("x", storyline="现象 → 机制 → 怎么办"), pages)
     gi.validate_structure(_reader_ok_md("x", storyline="先打翻常识；再讲机制；最后给做法"), pages)
+
+
+# ---- hint 必须随错误类型变（2026-08-17 服务号线 429 实证） ----
+
+def _hint_for(err_text, cover_only=True):
+    pages = [{"page": "P1", "url": None, "path": None, "error": err_text}]
+    return gi.retry_hint(["P1"], None, cover_only, pages)
+
+
+def test_额度耗尽的hint要说充值而不是调提示词():
+    """服务号线 15:10 真实回执：hint 说「调提示词后重跑」，照做只会反复撞 429 而不去充钱。
+    **不随错误变的 hint 比没有更坏**——它把人导向一条注定失败的路。"""
+    h = _hint_for("openai_image_call_failed: Error code: 429 - {'error': {'message': "
+                  "'You have no credits remaining.', 'type': 'insufficient_quota', "
+                  "'code': 'credit_balance_exhausted'}}")
+    assert "充值" in h and "额度" in h
+    assert "调提示词无用" in h, "必须明说调提示词没用，否则人还是会去改提示词"
+    assert "billing" in h, "要给充值入口"
+
+
+def test_限流的hint要说等待而不是充值也不是改提示词():
+    h = _hint_for("Error code: 429 - {'error': {'message': 'Rate limit reached', "
+                  "'type': 'rate_limit_error'}}")
+    assert "限流" in h and "重跑" in h
+    assert "充值" not in h, "限流不是额度问题，说充值会误导"
+
+
+def test_内容策略拒绝才该教改提示词():
+    h = _hint_for("Your request was rejected as a result of our safety system (content_policy_violation)")
+    assert "改提示词" in h or "提示词" in h
+    assert "充值" not in h
+
+
+def test_未知错误保持原通用hint():
+    """反向守卫：认不出的错误别乱分流，回到原来的通用建议。"""
+    h = _hint_for("connection reset by peer")
+    assert "风格闸门第一步" in h
+
+
+def test_分流对批量出图路径同样生效():
+    """cover_only=False 的批量路径也要分流，不能只在封面路径上做。"""
+    h = _hint_for("Error code: 429 - insufficient_quota", cover_only=False)
+    assert "充值" in h
