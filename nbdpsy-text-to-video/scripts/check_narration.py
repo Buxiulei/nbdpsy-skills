@@ -199,6 +199,12 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", "", s or "")
 
 
+def _sentence_span(s: str) -> int:
+    """声明值里含几个句子（末尾那个句末标点不算跨句）。⚠️ 只数 。！？——
+    逗号在口播里是停顿不是句界，数进来会把正常的一句报成跨句。"""
+    return len(re.findall(r"[。！？]", (s or "").strip().rstrip("。！？"))) + 1
+
+
 def _depunct(s: str) -> str:
     """只用于**失败后的二次定位**：去掉标点再比一次，好把「压根没写」与「写了但粘歪了」
     分开报。⛔ 不能拿它当主判据——那等于默许凭记忆敲一句近似的就过闸。"""
@@ -231,9 +237,21 @@ def check_intent(items: list[tuple[str, str]], intent: dict) -> dict:
             loose = _depunct(raw)
             near = next((lb for lb, tx in items if loose and loose in _depunct(tx)), None)
             rec["near"] = near
-            out["fail"].append(
-                f"{key}：这句不在稿里" if near is None else
-                f"{key}：{near} 里有这句，但字面对不上（多半是标点）——从成稿原样复制")
+            spans = _sentence_span(raw)
+            rec["sentences"] = spans
+            if near is not None:
+                out["fail"].append(
+                    f"{key}：{near} 里有这句，但字面对不上（多半是标点）——从成稿原样复制")
+            elif spans > 1:
+                # 🔴 第三种失败：值跨了多句。此前它和「稿里真没有」共用一句报错，
+                # 实测（2026-08-17 需求方）第一反应是「脚本坏了」——**而那个反应会让人
+                # 去改脚本或绕过闸门**。跨句在任何模式下都必然找不到（比对按单条做），
+                # 所以这条提示放在通用路径上，⛔ 不分模式。
+                out["fail"].append(
+                    f"{key}：你给的值含 {spans} 个句子。比对是按**单条**（句/页/镜）做的，"
+                    f"跨条的文本必然找不到——请只粘其中一句")
+            else:
+                out["fail"].append(f"{key}：这句不在稿里")
         elif judge_pos:
             idx = [lb for lb, _ in items].index(at)
             ok = idx < 2 if key == "hook" else (idx >= n - 3 if key == "closing" else True)

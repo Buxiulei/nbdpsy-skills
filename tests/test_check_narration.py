@@ -328,3 +328,21 @@ def test_端到端_连续稿位置判据真的会报红(tmp_path):
     assert p.returncode == 1, "closing 落在第 2 句，位置判据必须报红"
     assert "不在后 3 项内" in p.stderr
     assert "本模式**不判字数**" in p.stderr, "⛔ 必须明写字数闸没跑"
+
+
+def test_自证值跨了多句_要与压根没写分开报():
+    """🔴 第三种失败：值跨了 ≥2 句。此前它和「稿里真没有」共用一句报错，实测需求方的
+    第一反应是「脚本坏了」——**而那个反应会让人去改脚本或绕过闸门**。
+    跨句在任何模式下都必然找不到（比对按单条做），所以这条提示不分模式。"""
+    r = cn.check_intent(_ITEMS, {**_OK, "closing": "研究里那组人练了一个月才有变化，"
+                                                   "当场是没感觉的。它是一个月的功课，"
+                                                   "不是当场的开关。"})
+    assert not r["ok"] and "含 2 个句子" in r["fail"][0] and "只粘其中一句" in r["fail"][0]
+    assert r["closing"]["sentences"] == 2
+
+
+def test_单句末尾带句号不算跨句():
+    """⛔ 见标点就叫会把每一条正常声明都报成跨句——末尾那个句末标点不算。"""
+    assert cn._sentence_span("它是一个月的功课，不是当场的开关。") == 1
+    assert cn._sentence_span("它是一个月的功课，不是当场的开关") == 1
+    assert cn._sentence_span("真的吗？我不信。") == 2
