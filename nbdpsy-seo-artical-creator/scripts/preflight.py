@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import count_hanzi          # noqa: E402  R1 纯汉字计数
 import lint_markdown        # noqa: E402  R3/渲染合规
+import compliance_core      # noqa: E402  R7 词表 + R8 热线判据的唯一真源（shared/）
 from publish_post import parse_frontmatter  # noqa: E402  frontmatter 解析（复用发布口径）
 
 # ── 本地常量（与 references/pillar-spec.md 保持一致，改动须两边同步） ──
@@ -44,10 +45,8 @@ CATEGORY_NAMES = {
     "overseas-students": "留学生心理",
     "psych-101": "心理科普",
 }
-# R7 敏感词——绝对红线（出现即 fail：夸大疗效/绝对化承诺）
-ABSOLUTE_WORDS = ["根治", "治愈率", "100%", "彻底摆脱", "保证有效", "最有效", "药到病除"]
-# R7 敏感词——医疗口径（出现给 warn：学术转述可人工豁免）
-WARN_WORDS = ["治疗", "治愈", "诊断", "医生", "医院"]
+# R7 两级敏感词与 R8 停用热线判据都在 shared/compliance_core.py（唯一真源），
+# ⛔ 别在这里再抄一份词表——两边各存一份必漂，今天一致下次改了对面不知道。
 # R9 锚文本黑名单（泛指代，出现即 fail）
 ANCHOR_BLACKLIST = {"点击这里", "点此", "戳这里"}
 
@@ -370,21 +369,19 @@ def run(md_text: str, online: bool = False, api_base: str = DEFAULT_API_BASE):
 
     # ===== R7 敏感词两级（扫描域含正文 + 会上线的 frontmatter 字段） =====
     units = _scan_units(meta, body)
-    abs_hits, warn_hits = [], []
-    for loc, text in units:
-        for w in ABSOLUTE_WORDS:
-            if w in text:
-                # 「最有效」特例：同一文本单元含 [[n]](url) 标注视为文献转述，豁免
-                if w == "最有效" and RE_CITE.search(text):
-                    continue
-                abs_hits.append({"word": w, "loc": loc})
-        for w in WARN_WORDS:
-            if w in text:
-                warn_hits.append({"word": w, "loc": loc})
+    # 判据全部来自 compliance_core：绝对化词 fatal、医疗口径词 warning、
+    # 「最有效」同单元含 [[n]](url) 视为文献转述豁免——三条都在模块里，此处只做展示。
+    # crisis_scope="skip"：R8 的三要素在位另按**正文**判（见下方 R8 段），
+    # ⛔ 不能把 excerpt/faq 里的 12356 算成正文有声明。
+    core = compliance_core.check(units, crisis_scope="skip")
+    abs_hits = [h for h in core["fatal"] if h["rule"] == "R7-abs"]
+    warn_hits = [h for h in core["warnings"] if h["rule"] == "R7-med"]
     if abs_hits:
         add("R7-abs", "sensitive-absolute", "fail",
             "命中绝对化/夸大红线词：" + "；".join(f"{h['word']}({h['loc']})" for h in abs_hits),
-            "删除或改写——禁「根治/治愈率/100%/彻底摆脱/保证有效/最有效/药到病除」等绝对化承诺"
+            # ⛔ 词表从 compliance_core 现取，别在这里手写一遍——手写的帮助文案不会
+            # 跟着词表更新，日后 core 加了词，这行还在教人只防旧的那几个（漂的是人不是代码）。
+            "删除或改写——禁「" + "/".join(compliance_core.ABSOLUTE_WORDS) + "」等绝对化承诺"
             "（『最有效』仅在同行有 [[n]](url) 文献转述时豁免）")
     else:
         add("R7-abs", "sensitive-absolute", "pass", "无绝对化/夸大红线词")
@@ -398,35 +395,18 @@ def run(md_text: str, online: bool = False, api_base: str = DEFAULT_API_BASE):
     # ===== R8 危机声明：须含 12356 + 不构成医疗建议；停用热线回流即 fail；缺 010-82951332 仅 warn =====
     CRISIS_FIX = ("文末固定加：本文不构成医疗建议；如处于心理危机请拨打全国统一心理援助热线 12356 "
                   "或北京心理危机研究与干预中心热线 010-82951332（24小时）；紧急情况拨打 110/120")
-    has_12356 = "12356" in body
-    has_disclaimer = "不构成医疗建议" in body
-    has_bjcrisis = "010-82951332" in body
-    # 容错到带空格的「希望 24」与带连字符的号码：排版换行最容易把机构名拆开，
-    # 与 check_compliance.py 的 DEAD_HOTLINE 同口径（两侧闸门必须对称，否则一边拦一边放）。
-    # ⚠️ 更正稿豁免（2026-08-17）：更正段**必须写出那个号码**，不写读者不知道更正的是哪条热线。
-    # 逐行判而不是整篇判——声明词必须与号码同行，否则文末一句「已停用」会豁免全篇。
-    # 判据两侧：有停用声明词 且 无推荐动词（⛔「已停用…请拨打 4001619995」不放行）。
-    # 与 check_compliance.is_retirement_citation 同口径，两侧闸门必须对称。
-    _DEAD = re.compile(r"4001619995|400-?161-?9995|希望\s*24")
-    _RETIRED_DECL = re.compile(
-        r"已(?:停止服务|停用|停运|下线|不再服务)|停止服务|此前(?:写过|提到|使用)|更正|勘误|不再(?:可用|使用|提供)")
-    _RECOMMEND = re.compile(r"请?(?:拨打|拨号|致电|打)|联系|求助(?:热线)?(?:：|:)")
-    dead_hotline = any(
-        _DEAD.search(ln) and not (_RETIRED_DECL.search(ln) and not _RECOMMEND.search(ln))
-        for ln in body.splitlines())
-    if dead_hotline:
-        add("R8", "crisis-statement", "fail",
-            "停用热线回流：希望24已于2026-08-14证据停用，用 010-82951332 替换。"
-            "⚠️ 若该行是**更正声明**（告诉读者这条热线已停），把「已停止服务／此前写过／更正」"
-            "写进同一行即可放行——⛔ 别为了过闸门把号码删掉，那样更正就废了", CRISIS_FIX)
-    elif not (has_12356 and has_disclaimer):
-        miss = []
-        if not has_disclaimer:
-            miss.append("『不构成医疗建议』免责句")
-        if not has_12356:
-            miss.append("全国统一心理援助热线 12356")
-        add("R8", "crisis-statement", "fail", "危机声明缺要素：" + "、".join(miss), CRISIS_FIX)
-    elif not has_bjcrisis:
+    # 三要素在位 + 停用热线回流都判**正文**：故单喂一个 ("正文", body) 单元走
+    # crisis_scope="joined"。⛔ 不复用上面那次 check(units)——那批含 frontmatter
+    # excerpt/faq，把它们算进危机声明会让「摘要里提了 12356」冒充「正文有声明」。
+    # 停用热线的逐行「同行」语义由 compliance_core 内部保证（整段喂也按行判）。
+    crisis_core = compliance_core.check([("正文", body)], crisis_scope="joined")
+    cr = crisis_core["crisis"]
+    dead_hits = [h for h in crisis_core["fatal"] if h["rule"] == "R8-dead-hotline"]
+    if dead_hits:
+        add("R8", "crisis-statement", "fail", compliance_core.DEAD_HOTLINE_DETAIL, CRISIS_FIX)
+    elif cr["missing"]:
+        add("R8", "crisis-statement", "fail", "危机声明缺要素：" + "、".join(cr["missing"]), CRISIS_FIX)
+    elif not cr["has_bj_hotline"]:
         add("R8", "crisis-statement", "warn",
             "危机声明缺北京心理危机研究与干预中心热线 010-82951332（24小时）——12356 官方口径为每日≥18小时，不可标注 24 小时",
             CRISIS_FIX)

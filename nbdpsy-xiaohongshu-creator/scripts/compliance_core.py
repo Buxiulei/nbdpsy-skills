@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""合规判据唯一真源：绝对化词（fatal）／医疗口径词（warning）／危机声明与停用热线（R8）。
+
+## 判据句
+
+**判断扫描面够不够，问的是「读者能看到哪些字」，不是「我手上有哪些文件」。**
+
+## 为什么存在（2026-08-17 服务号线实查出的缺口）
+
+公众号摘要 `digest` 从来没进过任何合规扫描，而且按老架构永远不会进——所有扫描器都读
+**文件**，而摘要不在文件里（建草稿时单独传的参数，只活在 batch.json 和命令行里）。
+摘要是读者在信息流里第一眼看到的那行字，**比正文更早被看到**。同族的还有 title、
+author、content_source_url。
+
+根因不是「合规检查没抽出来」，是**扫描域被工具的输入形态决定，而不是被『什么东西会上线』
+决定**——没有人做过「摘要不用扫」这个决定，它是工具形态的副产品。而最阴的一点：md 扫干净
+了，所有人都会以为扫完了，**缺口被一份真实的绿色报告盖住**。
+
+## 因此：本模块只收文本单元，⛔ 永远不收文件路径
+
+`check()` 的入参是 `[(定位标签, 文本), ...]`。**只要它收文件路径，扫描域就被文件边界
+锁死了**——这是本模块存在的全部意义。⛔ 不提供「顺便也能收路径」的重载把这个约束又打开。
+调用方要扫文件，自己读成文本再喂；要扫 API 参数，就把参数喂进来。
+
+## 装什么、不装什么
+
+只装**三类合规判据**：R7-abs 绝对化词、R7-med 医疗口径词、R8 危机声明与热线红线。
+⛔ 不装 pillar 长文口径（字数区间／参考文献条数／统计块／FAQ 数组）——那些是官网长文的
+质量规格不是合规，混进来会让别的调用方一挂就整篇红，红的大部分与合规无关，淹掉真正该看的。
+⛔ 也不装小红书平台特有词表（站外导流／硬广特征／极限词正则）——那些只有一个调用方，
+留在 check_compliance.py 本地。
+
+## 词表唯一真源
+
+本文件是 R7-abs / R7-med 词表与停用热线三正则的**唯一真源**。词表复制出去就会漂——
+今天一致，下次改了对面不知道。`tests/test_compliance_core.py::test_no_wordlist_copies_outside_core`
+钉死这条：全仓（除本文件与其 vendored 副本外）不得再出现这些字面量；副本与真源的逐字节
+一致由 `tests/test_shared_sync.py` 保证——两条测试联防，副本允许存在但不许漂。
+"""
+import re
+
+# ── R7-abs 绝对化/夸大词（fatal，调用方应拒绝提交）────────────────────────
+# 广告法禁绝对化承诺 + 非医疗机构禁夸大疗效。子串命中即算，不做词形变化。
+ABSOLUTE_WORDS = ["根治", "治愈率", "100%", "彻底摆脱", "保证有效", "最有效", "药到病除"]
+
+# ── R7-med 医疗口径词（warning，放行）────────────────────────────────────
+# 心理咨询机构非医疗机构，自我描述不得用医疗动词；但学术转述（PTSD 的治疗研究、
+# DSM 诊断标准）是正当用法，故只 warn 交人工裁决，⛔ 不 fail。
+MEDICAL_WORDS = ["治疗", "治愈", "诊断", "医生", "医院"]
+
+# 文献转述豁免：同一文本单元内含 [[n]](url) 标注时，这些词视为引述而非自我承诺。
+# 只给「最有效」——「一项综述称这是最有效的干预之一 [[1]](https://…)」是转述事实，
+# 不是承诺；「根治」「保证有效」这类无论谁说都不能出现在自家文案里，⛔ 不给豁免。
+CITE_EXEMPT_WORDS = ("最有效",)
+# 与 preflight.RE_CITE 形态相同但用途不同：那条用于校验引用编号/URL 一致性，
+# 这条只回答「这行是不是文献转述」。⛔ 别合并——判据变了会互相牵连。
+_RE_CITE_MARKER = re.compile(r"\[\[\d+\]\]\(https?://[^)]+\)")
+
+# ── R8 危机声明三要素 ────────────────────────────────────────────────────
+CRISIS_HOTLINE = "12356"            # 全国统一心理援助热线（fatal 要素）
+CRISIS_DISCLAIMER = "不构成医疗建议"  # 免责句（fatal 要素）
+CRISIS_BJ_HOTLINE = "010-82951332"  # 北京心理危机研究与干预中心（缺失只 warning）
+
+# ── 停用热线红线（2026-08-14 定案）────────────────────────────────────────
+# 希望24（4001619995）已证据停用：官网信息冻结于 2021、2023 年自述近半来电无法接通。
+# 容错到带空格的「希望 24」与带连字符的号码——排版换行最容易把机构名拆开。
+DEAD_HOTLINE = re.compile(r"4001619995|400-?161-?9995|希望\s*24")
+# ⚠️ 更正稿豁免（2026-08-17）：老板批 S1 时定的是「已发布的不删不重发，在下一条推送里
+# 更正」，而更正段**必须写出那个号码**——不写读者不知道更正的是哪条热线，更正就等于没更正。
+# 原判据只认字符串、不认这个字符串在句子里是什么角色，会把更正稿一起拦掉。
+# 真正的危险不是被拦，是**接下来那一步**：有人照着闸门去「修」，会把更正段里的号码删掉，
+# 于是更正废了、闸门反而变绿——闸门亲手制造了它本该防的那个后果。
+DEAD_HOTLINE_RETIRED_DECL = re.compile(
+    r"已(?:停止服务|停用|停运|下线|不再服务)|停止服务|此前(?:写过|提到|使用)|更正|勘误|不再(?:可用|使用|提供)")
+DEAD_HOTLINE_RECOMMEND = re.compile(r"请?(?:拨打|拨号|致电|打)|联系|求助(?:热线)?(?:：|:)")
+
+DEAD_HOTLINE_DETAIL = (
+    "停用热线回流：希望24已于2026-08-14证据停用，用 010-82951332 替换。"
+    "⚠️ 若本行是**更正声明**（告诉读者这条热线已停），"
+    "把「已停止服务／此前写过／更正」这类字样写进同一行即可放行——"
+    "⛔ 别为了过闸门把号码删掉，那样更正就废了")
+
+_CRISIS_SCOPES = ("joined", "skip")
+
+# 空串子串命中恒 True（`"" in "任意字符串"`），会把每个单元都判成违规、或反过来被
+# 当成噪声整条规则关掉——两种都是静默的假结论。加载即断言，⛔ 别让空项混进词表。
+assert all(ABSOLUTE_WORDS) and all(MEDICAL_WORDS), "词表不得含空串"
+
+
+def is_retirement_citation(line: str) -> bool:
+    """这一行提到停用号码，是**引用以更正**还是**推荐给读者拨**？
+
+    放行只给两侧都成立的：有停用声明词 **且** 没有推荐动词。
+    「这条热线已停止服务，请拨打 4001619995」这种自相矛盾的写法**不放行**——
+    它有声明词，但它仍然在叫人去拨那个号。
+
+    ⛔ 声明词必须与号码**同行**，不能是全文任意位置——否则文末一句「已停用」会把
+    全篇的号码都豁免掉。故调用方必须逐行喂，不能整篇喂。
+    """
+    return bool(DEAD_HOTLINE_RETIRED_DECL.search(line)) and not DEAD_HOTLINE_RECOMMEND.search(line)
+
+
+def has_dead_hotline(line: str) -> bool:
+    """这一行是否构成停用热线回流（命中停用号码/机构名，且不是更正引用）。
+
+    ⚠️ 逐行判据——调用方传整篇会让「同行」语义失效（见 is_retirement_citation）。
+    """
+    return bool(DEAD_HOTLINE.search(line)) and not is_retirement_citation(line)
+
+
+def check(units, *, crisis_scope="joined"):
+    """扫一组文本单元，返回三类合规判据的结论。
+
+    参数
+    ----
+    units : 可迭代的 (定位标签, 文本) 二元组
+        定位标签是给人看的坐标，随调用方场景取名——公众号线用字段名
+        （"title"/"digest"/"body"/"author"），长文线用行号（"行12"）或
+        frontmatter 路径（"faq[0].a"）。⛔ 不收文件路径，见模块 docstring。
+        文本可以是一行也可以是整段：R7 两类按**单元**判（子串命中即算），
+        R8 停用热线按单元内的**行**判（「同行」语义所必需）。
+    crisis_scope : "joined" | "skip"
+        "joined"：把所有单元拼起来做**文档级**三要素在位判定（整篇场景）。
+        "skip"：跳过三要素在位判定（调用方场景不需要，如只扫标题+摘要）。
+        ⛔ 没有「对每个单元各判一次」这个取值——标题里当然没有危机声明，那会恒红。
+        ⚠️ **"skip" 只豁免「声明在位」，绝不豁免停用热线**：可以不带危机声明，
+        不能带错的号码（照着拨打不通的号码，伤害与场景无关）。
+        ⛔ 非法取值抛 ValueError 而非静默回落——静默回落会让调用方以为关掉了检查
+        其实没关（或反之），是最难发现的一类假绿。
+
+    返回
+    ----
+    dict:
+      ok       : bool，无 fatal 即 True
+      fatal    : [{rule, loc, word, text, detail}]，调用方应拒绝提交
+                 rule ∈ "R7-abs" | "R8-dead-hotline" | "R8-crisis-missing"
+      warnings : 同构，放行但提示人工裁决
+                 rule ∈ "R7-med" | "R8-crisis-partial"
+      crisis   : crisis_scope="skip" 时为 None；否则
+                 {has_12356, has_disclaimer, has_bj_hotline, missing:[要素名]}
+    """
+    if crisis_scope not in _CRISIS_SCOPES:
+        raise ValueError(
+            f"crisis_scope 非法：{crisis_scope!r}，只接受 {_CRISIS_SCOPES}"
+            "（⛔ 不静默回落——回落会让调用方以为检查已关闭/已开启，其实相反）")
+
+    pairs = [(loc, text if isinstance(text, str) else "") for loc, text in units]
+    fatal, warnings = [], []
+
+    for loc, text in pairs:
+        for w in ABSOLUTE_WORDS:
+            if w in text:
+                if w in CITE_EXEMPT_WORDS and _RE_CITE_MARKER.search(text):
+                    continue
+                fatal.append({
+                    "rule": "R7-abs", "loc": loc, "word": w, "text": text,
+                    "detail": f"绝对化/夸大红线词「{w}」",
+                })
+        for w in MEDICAL_WORDS:
+            if w in text:
+                warnings.append({
+                    "rule": "R7-med", "loc": loc, "word": w, "text": text,
+                    "detail": f"医疗口径词「{w}」（学术转述可人工豁免）",
+                })
+        # 停用热线逐行判：声明词必须与号码同行，整段判会让文末一句「已停用」豁免全篇。
+        for line in text.split("\n"):
+            if has_dead_hotline(line):
+                fatal.append({
+                    "rule": "R8-dead-hotline", "loc": loc, "word": None,
+                    "text": line.strip(), "detail": DEAD_HOTLINE_DETAIL,
+                })
+
+    crisis = None
+    if crisis_scope == "joined":
+        joined = "\n".join(t for _, t in pairs)
+        crisis = {
+            "has_12356": CRISIS_HOTLINE in joined,
+            "has_disclaimer": CRISIS_DISCLAIMER in joined,
+            "has_bj_hotline": CRISIS_BJ_HOTLINE in joined,
+            "missing": [],
+        }
+        if not crisis["has_disclaimer"]:
+            crisis["missing"].append("『不构成医疗建议』免责句")
+        if not crisis["has_12356"]:
+            crisis["missing"].append("全国统一心理援助热线 12356")
+        if crisis["missing"]:
+            fatal.append({
+                "rule": "R8-crisis-missing", "loc": "文档", "word": None, "text": "",
+                "detail": "危机声明缺要素：" + "、".join(crisis["missing"]),
+            })
+        elif not crisis["has_bj_hotline"]:
+            warnings.append({
+                "rule": "R8-crisis-partial", "loc": "文档", "word": None, "text": "",
+                "detail": "危机声明缺北京心理危机研究与干预中心热线 010-82951332（24小时）"
+                          "——12356 官方口径为每日≥18小时，不可标注 24 小时",
+            })
+
+    return {"ok": not fatal, "fatal": fatal, "warnings": warnings, "crisis": crisis}

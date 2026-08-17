@@ -6,9 +6,18 @@ import re
 import sys
 from pathlib import Path
 
+# 同目录 vendored 依赖（shared/ 是真源，tools/sync_shared.py 同步）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import compliance_core  # noqa: E402  停用热线判据 + 危机声明要素的唯一真源
+
 # 词表（移植自 check_compliance.sh）
-# 极限词（广告法 §9）
-JIXIAN = r"最有效|最好的方法|最强|全网第一|第一品牌|唯一一家|独家秘[籍方]|国家级|世界级|顶[级尖]|根治|永久根除|100%|百分之百|彻底治愈|彻底摆脱|彻底解决|绝对有效|包治|包好"
+# 极限词（广告法 §9）＝ **compliance_core 的核心词 + 小红书平台专属扩充**。
+# 🔴 核心那几个从 compliance_core 现取，⛔ 别在这里再抄一遍——抄了就会漂：
+# 今天两边一致，下次谁往 core 加一个词，小红书这条链上就静默漏掉它。
+# 平台扩充部分（全网第一/国家级/包治…）是小红书语境独有的硬广特征，留在本地是对的。
+_JIXIAN_XHS_EXTRA = (r"最好的方法|最强|全网第一|第一品牌|唯一一家|独家秘[籍方]|国家级|世界级|"
+                     r"顶[级尖]|永久根除|百分之百|彻底治愈|彻底解决|绝对有效|包治|包好")
+JIXIAN = "|".join([re.escape(w) for w in compliance_core.ABSOLUTE_WORDS] + [_JIXIAN_XHS_EXTRA])
 
 # 医疗违禁（非医疗机构禁涉）— 逐字移植自 check_compliance.sh
 # 注：治愈 仅当紧跟 [了焦抑情你] 时才判违规（如"治愈了创伤/治愈你的焦虑"），
@@ -208,7 +217,7 @@ def scan_violations(numbered_lines: list) -> list:
 
 def has_crisis_declaration(text: str) -> bool:
     """检查是否包含危机声明 12356。"""
-    return "12356" in text
+    return compliance_core.CRISIS_HOTLINE in text
 
 
 # 危机热线号码红线（2026-08-14 定案）。小红书一行声明维持 12356 单号（300 字笔记的一行
@@ -217,32 +226,15 @@ def has_crisis_declaration(text: str) -> bool:
 #   ① 希望24（4001619995）已证据停用——官网信息冻结于 2021、2023 年自述近半来电无法接通；
 #   ② 12356 官方口径为每日≥18 小时，标「24 小时」会让深夜求助者照着打不通、手里又没有
 #      备选号码；全仓唯一可标 24 小时的号码是 010-82951332。
-DEAD_HOTLINE = re.compile(r"4001619995|400-?161-?9995|希望\s*24")
-# ⚠️ 更正稿豁免（2026-08-17 加）：老板批 S1 时定的是「已发布的不删不重发，在下一条推送里更正」，
-# 而更正段**必须写出那个号码**——不写读者不知道更正的是哪条热线，更正就等于没更正。
-# 原判据只认字符串、不认这个字符串在句子里是什么角色，会把更正稿一起拦掉。
-# 真正的危险不是被拦，是**接下来那一步**：有人照着闸门去「修」，会把更正段里的号码删掉，
-# 于是更正废了、闸门反而变绿——闸门亲手制造了它本该防的那个后果。
-# 判据两侧都要：① 同一行里有停用声明词（正面证据）② 同一行里没有推荐动词（排除「已停用…请拨打 4001619995」这种自相矛盾写法）。
-# ⛔ 声明词必须与号码同行，不能是全文任意位置——否则文末一句「已停用」会把全篇的号码都豁免掉。
-DEAD_HOTLINE_RETIRED_DECL = re.compile(
-    r"已(?:停止服务|停用|停运|下线|不再服务)|停止服务|此前(?:写过|提到|使用)|更正|勘误|不再(?:可用|使用|提供)")
-DEAD_HOTLINE_RECOMMEND = re.compile(r"请?(?:拨打|拨号|致电|打)|联系|求助(?:热线)?(?:：|:)")
+# ① 停用热线的三条正则与「更正稿豁免」判据在 shared/compliance_core.py（唯一真源，
+#    与 preflight.py 共用）——⛔ 别在这里再抄一份，两边各存一份必漂。
+# ② 「12356 标 24 小时」是小红书侧独有的检查（长文侧 R8 要求 010-82951332 在位，
+#    此处只有 12356 单号），故留本地。
 H24_MARK = re.compile(r"24\s*(?:小时|[hH](?![A-Za-z]))")
 # 分段边界：强句读 + 010-82951332 本身。用于判断「24 小时」到底挂在谁身上——
 # 标准声明「…12356，或…010-82951332（24 小时）」里两者同行但 24 小时归 010，不能误伤。
 # ⛔ 不能拿逗号当边界：违规写法「12356（全国心理援助热线，24 小时）」正是靠逗号连接的。
 H24_SCOPE_SPLIT = re.compile(r"[。；;！!？?\n]|010-?82951332")
-
-
-def is_retirement_citation(line: str) -> bool:
-    """这一行提到停用号码，是**引用以更正**还是**推荐给读者拨**？
-
-    放行只给两侧都成立的：有停用声明词 **且** 没有推荐动词。
-    「这条热线已停止服务，请拨打 4001619995」这种自相矛盾的写法**不放行**——
-    它有声明词，但它仍然在叫人去拨那个号。
-    """
-    return bool(DEAD_HOTLINE_RETIRED_DECL.search(line)) and not DEAD_HOTLINE_RECOMMEND.search(line)
 
 
 def scan_crisis_hotline_violations(numbered_lines):
@@ -254,13 +246,10 @@ def scan_crisis_hotline_violations(numbered_lines):
     """
     out = []
     for line_no, line in numbered_lines:
-        if DEAD_HOTLINE.search(line) and not is_retirement_citation(line):
+        if compliance_core.has_dead_hotline(line):
             out.append({
                 "rule": "停用热线",
-                "detail": "停用热线回流：希望24已于2026-08-14证据停用，用 010-82951332 替换。"
-                          "⚠️ 若本行是**更正声明**（告诉读者这条热线已停），"
-                          "把「已停止服务／此前写过／更正」这类字样写进同一行即可放行——"
-                          "⛔ 别为了过闸门把号码删掉，那样更正就废了",
+                "detail": compliance_core.DEAD_HOTLINE_DETAIL,
                 "line": line_no,
                 "text": line.strip(),
             })
