@@ -585,7 +585,10 @@ _HTML_LAYOUTS = ("compare", "steps", "define")
 # 画布比例：封面用微信官方的 2.35:1。html 路径**直接按此比例渲染**，
 # 不像 openai 路径要先出横版再居中裁——所以也就没有 cover-raw.jpg。
 CANVAS_COVER = "2.35:1"
-CANVAS_ILLUS = "16:9"
+# ⚠️ 插图在两条链路上**故意叫两个名字**，这不是 bug，别"修"成一个：
+#   · openai 路径 → 文件头的 `ASPECT_RATIO = "16:9"`，那是出图 API 的入参名，外部契约，改不了；
+#   · html  路径 → 下面的 `CANVAS_ILLUS_HTML = "3:2"`，那是我们自己的脚本，用真实比例。
+# 两者指向**同一个客观画布**（到手都是 3:2），差别只在"跟谁说话"。
 # 2026-08-17：html 路径的插图**传真实比例 `3:2`**，⛔ 不沿用 `16:9` 那个错名。
 # 分界线在「这个名字是谁的契约」：`16:9` 是出图 API 那边的 aspect_ratio 参数名，我们改不了，
 # 只能在 openai 分支里照它的规矩喊；而 render_cover.py 是我们自己的脚本，没有任何理由
@@ -605,7 +608,9 @@ CANVAS_ILLUS_HTML = "3:2"
 # 文档白纸黑字写着 16:9，查的人会先怀疑图错了，不会怀疑闸门。
 CANVAS_EXPECTED_RATIO = {
     CANVAS_COVER: 2.35,        # 微信封面官方比例
-    CANVAS_ILLUS: 3 / 2,       # 名字叫 16:9，真身是 3:2 —— 见上（openai 路径）
+    ASPECT_RATIO: 3 / 2,       # openai 路径的叫法：名字 16:9，真身 3:2 —— 见上。
+                               # 直接引用文件头那个常量，⛔ 别再写一遍 "16:9" 字面量：
+                               # 同一个值写两处，改的时候必然只改一处
     CANVAS_ILLUS_HTML: 3 / 2,  # 同一个真身，html 路径用真名。两行同值不是重复：
                                # 左边是两条链路各自的「叫法」，右边是同一个客观事实
 }
@@ -848,6 +853,8 @@ def run_html(args, md, images_dir):
     specs = []
     for item in selected:
         data, flag, value = parse_html_spec(item)
+        # ⚠️ 插图取 `3:2`，而 openai 路径同一件事传的是 `16:9`——**两处不一致是有意的**，
+        # 原因见 CANVAS_ILLUS_HTML 定义处。⛔ 看到不一致别顺手"统一"，那会把 3:2 改回错名。
         canvas = CANVAS_COVER if item["slot"] == "cover" else CANVAS_ILLUS_HTML
         specs.append((item, data, flag, value, canvas))
 

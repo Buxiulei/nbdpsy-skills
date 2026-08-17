@@ -95,6 +95,56 @@ def test_paraphrase_not_flagged():
     assert rules("说是焦虑，那是医生排除掉心和肺之后才能下的结论。") == set()
 
 
+# ---------- 三态：「没读到」不许冒充「没超标」 ----------
+
+def test_all_empty_is_observation_failure_not_a_pass():
+    """🩸 字段名一改、shots.json 结构一漂，每镜都读成空串 ⇒ 全算 0 汉字 ⇒ 全部放行，
+    闸门恒绿且一声不吭。实测过：两镜各 300 字、字段名写成 `narration`，旧版判 ok=True。
+    ⛔ 「没找到」必须与「没超标」可区分。"""
+    res = cn.check([("第1镜", ""), ("第2镜", "")])
+    assert res["ok"] is False and res["blind"] is True
+
+
+def test_all_empty_passes_when_explicitly_allowed():
+    """真是一条无口播的片子，得有一扇明写的门——⛔ 否则闸门会被整个绕过去。"""
+    res = cn.check([("第1镜", ""), ("第2镜", "")], allow_empty=True)
+    assert res["ok"] is True and res["blind"] is False
+
+
+def test_non_chinese_narration_is_read_not_blind():
+    """🩸 判「有没有读到」看**原串是否为空**，⛔ 不看汉字数是否为 0。
+    「n1」「hello」这类非汉字文案是**读到了、只是 0 汉字**，合法通过。
+    第一版拿汉字数当判据，把它们全误报成观测失败——既有的 test_build_manifest 当场抓到。"""
+    for legal in ("n1", "hello world", "TODO"):
+        res = cn.check([("第1镜", legal)])
+        assert res["blind"] is False and res["ok"] is True, legal
+
+
+def test_whitespace_only_counts_as_not_read():
+    assert cn.check([("第1镜", "   \n  ")])["blind"] is True
+
+
+def test_single_empty_shot_is_legal():
+    """单镜空是合法的（无旁白镜靠 subtitle 兜底），⛔ 别做成见零就叫。"""
+    res = cn.check([("第1镜", ""), ("第2镜", "所以说，先把结论放在前面。")])
+    assert res["ok"] is True and res["blind"] is False
+
+
+def test_empty_shot_list_is_not_blind():
+    assert cn.check([])["blind"] is False
+
+
+def test_cli_exit_1_on_wrong_field_name(tmp_path):
+    """端到端：字段名写错时 CLI 必须非零退出，⛔ 不许静默放行 300 字的稿子。"""
+    p = tmp_path / "shots.json"
+    p.write_text(json.dumps({"shots": [{"index": 1, "narration": "一" * 300}]},
+                            ensure_ascii=False), encoding="utf-8")
+    r = _run(["--shots", str(p)])
+    assert r.returncode == 1
+    assert json.loads(r.stdout)["blind"] is True
+    assert _run(["--shots", str(p), "--allow-empty"]).returncode == 0
+
+
 # ---------- 软提醒绝不能变成硬闸门 ----------
 
 def test_soft_findings_never_fail_the_gate():

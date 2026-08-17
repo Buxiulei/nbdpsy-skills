@@ -115,21 +115,35 @@ def soft_findings(text: str) -> list[dict]:
 
 
 def check(items: list[tuple[str, str]], *, limit: int = HARD_LIMIT,
-          warn: bool = True) -> dict:
-    """items = [(镜号标签, 旁白原文)]。返回结构化结果，不负责退出码。"""
-    shots, over, warns = [], [], []
+          warn: bool = True, allow_empty: bool = False) -> dict:
+    """items = [(镜号标签, 旁白原文)]。返回结构化结果，不负责退出码。
+
+    🩸 **三态，不是两态**（2026-08-17 补）：命中超标 / 确认没超标 / **根本没读到口播**。
+    第三态必须与第二态分开——字段名一改（`narration_text` → 别的）或 shots.json 结构一漂，
+    每镜都读成空串 ⇒ 全算 0 汉字 ⇒ **全部放行**，闸门恒绿且一声不吭。
+    实测过：两镜各 300 字、字段名写成 `narration`，旧版判 `ok=True` 全放行。
+    ⛔ 「没找到」不许冒充「没超标」。真是一条无口播的片子，显式传 `allow_empty`。
+    """
+    shots, over, warns, got_text = [], [], [], False
     for label, text in items:
         n = hanzi_count(text)
         rec = {"label": label, "hanzi": n, "over": max(0, n - limit)}
         shots.append(rec)
+        if (text or "").strip():
+            got_text = True
         if n > limit:
             over.append({**rec, "text": text})
         if warn:
             for f in soft_findings(text):
                 warns.append({"label": label, **f,
                               "sentence": _sentence_of(text, f["hit"])})
-    return {"ok": not over, "limit": limit, "shots": shots,
-            "over": over, "warnings": warns,
+    # ⚠️ 判「有没有读到」看**原串是否为空**，⛔ 不看汉字数是否为 0——
+    # 「n1」「TODO」这类非汉字文案是读到了、只是 0 汉字，合法通过。
+    # 拿汉字数当判据会把它们误报成观测失败（写这行时实测栽过，靠既有测试抓到）。
+    # 单镜空是合法的（无旁白镜靠 subtitle 兜底）；**全镜皆空**才是观测失败的信号。
+    blind = bool(shots) and not got_text and not allow_empty
+    return {"ok": (not over) and not blind, "limit": limit, "shots": shots,
+            "over": over, "warnings": warns, "blind": blind,
             "total_hanzi": sum(s["hanzi"] for s in shots)}
 
 
@@ -181,7 +195,12 @@ def report(res: dict) -> None:
         for w in res["warnings"]:
             _err(f"  · {w['label']} [{w['law']}·{w['rule']}] 命中「{w['hit']}」——{w['why']}")
             _err(f"    原句：{w['sentence']}")
-    if not res["ok"]:
+    if res.get("blind"):
+        _err(f"\n🚨 观测失败：{len(res['shots'])} 镜**全部**读到 0 汉字，闸门等于没跑。")
+        _err("⛔ 这不是「都没超标」，是「根本没读到口播」——最可能是字段名不是 "
+             "`narration_text`，或 shots.json 结构变了。")
+        _err("先核一眼字段名；确属无口播的片子，显式加 --allow-empty。")
+    elif not res["ok"]:
         _err(f"\n⛔ 拒跑：{len(res['over'])} 镜超过 {res['limit']} 汉字。")
         _err("处置按 narration-spec 第十一律的删除次序：**修辞 → 场景 → 例子**，")
         _err("限定句（反向事实、样本量、时间范围）永远最后一个动，动不了就砍整页。")
@@ -198,6 +217,8 @@ def main() -> None:
     p.add_argument("--max-hanzi", type=int, default=HARD_LIMIT,
                    help=f"汉字上限（默认 {HARD_LIMIT}，来自 narration-spec §九；⛔ 别为了让稿子过而调大）")
     p.add_argument("--no-warn", action="store_true", help="关掉十四律软提醒（不影响硬闸门）")
+    p.add_argument("--allow-empty", action="store_true",
+                   help="确属「全片无口播」时才加；默认全镜皆空视为**观测失败**而非通过")
     a = p.parse_args()
 
     try:
@@ -212,7 +233,7 @@ def main() -> None:
         _err(f"⛔ 读不到口播稿：{e}")
         sys.exit(2)
 
-    res = check(items, limit=a.max_hanzi, warn=not a.no_warn)
+    res = check(items, limit=a.max_hanzi, warn=not a.no_warn, allow_empty=a.allow_empty)
     report(res)
     print(json.dumps(res, ensure_ascii=False, indent=2))
     sys.exit(0 if res["ok"] else 1)
