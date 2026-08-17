@@ -32,6 +32,31 @@
 
 > ⚠️ **核对口径**：`plant-stake.svg` 与 `domino-fall.svg` 在本文件出现两次——一次在主表、一次在下方「自绘件」说明区（记录为什么自绘）。**核一致性时按主表计**：主表行数 = 目录 `*.svg` 文件数。
 
+> 🔴 **核对口径 · 2026-08-17 补充（本库从「一层」变成「两层」，上面那句的适用范围要跟着缩）**
+>
+> 本库现在是**两段结构**，两段的记法与数法都不一样，⛔ 别拿一段的口径去核另一段：
+>
+> | | 上半段：**手工件** | 下半段：**集合包** |
+> |---|---|---|
+> | 存在哪 | `svg-library/*.svg`（平铺） | `svg-library/collections/<前缀>/icons.json` |
+> | 台账怎么记 | **逐文件一行**（§一、§二，原样保留） | **逐集合一行**（§五）——34,995 枚逐个记没人维护得动 |
+> | 逐条许可证在哪看 | 每个 SVG 的文件头注释 | **`svg_find.py` 检索输出里那一列**——集合级台账不逐条记，就把「逐条」挪到用的时候现打 |
+> | 怎么数 | `ls *.svg \| wc -l` 减掉落地件 | `python3 scripts/svg_find.py --list-collections`（读 icons.json 现算） |
+>
+> **手工件那 66 个怎么核**（上面那句「主表行数 = 目录 `*.svg` 文件数」现在只对这一段有效，且要修正）：
+> 主表（§一）实际 **63 行**，`headphones` / `coffee` / `cup-soda` 三个记在 §二 的表里，
+> 两表去重后共 **66 行 = 66 个手工件**。所以准确的口径是
+> **§一 + §二 去重后的行数 = 平铺目录里手工件的个数**，⛔ 不是「主表行数」。
+>
+> **落地件另算**：平铺目录里还会多出 `<集合前缀>-<图标名>.svg`——由
+> `svg_find.py --emit … --install` 从集合包落地（为什么要落地见 §五末尾）。
+> 它们的许可证**由所属集合那一行覆盖**，⛔ 不必逐个补行。于是：
+>
+> ```
+> ls *.svg | wc -l  =  66 手工件  +  落地件个数
+> 落地件 = 文件名以「已知集合前缀 + 连字符」开头的那些（当前 1 个：tabler-mood-sad.svg）
+> ```
+
 ## 一、逐文件台账
 
 ### 手
@@ -241,3 +266,91 @@ curl -sSL https://raw.githubusercontent.com/tabler/tabler-icons/main/icons/outli
 **Lucide 的一个坑**：Lucide 整体是 ISC，但其 LICENSE 里点名列出一批**派生自 Feather 的图标**，那些是 MIT（版权人 Cole Bemis）。
 本表已逐个区分（本库涉及的 Feather 派生项：clock、compass、feather、key、life-buoy、link-2、moon）。两者都免署名，
 差别只在版权声明写谁——照抄本表即可，别一律写成 ISC。
+
+---
+
+## 五、集合包台账（2026-08-17 扩库，**逐集合一行**）
+
+> 手工件那 66 个是**逐文件**记的（§一、§二，原样不动）。这一节记的是另一层东西：
+> 整包引进的图标集合，存放在 `collections/<前缀>/icons.json`。
+> **逐条许可证不在这张表里，在 `svg_find.py` 的检索输出里现打**——理由见文件顶部「核对口径」。
+
+**来源与形态**：`npm i @iconify-json/<前缀>` 取得，只把 `icons.json`（图标数据）与 `info.json`（元信息）
+两个文件拷进本库，⛔ **node_modules 不进仓**。`icons.json` 里存的是 SVG 片段（`body`），
+不是 38,239 个独立文件——要用时由 `svg_find.py --emit` 现拼成完整 SVG。
+
+| 集合 | 前缀 | 许可证 SPDX | 作者 | 上游 LICENSE URL | 图标数 | 体积 | 入库日期 |
+|---|---|---|---|---|---|---|---|
+| Lucide | `lucide` | ISC | Lucide Contributors | https://github.com/lucide-icons/lucide/blob/main/LICENSE | 2053（1836 + 217 别名） | 0.6 MB | 2026-08-17 |
+| Tabler Icons v3.45.0 | `tabler` | MIT | Paweł Kuna | https://github.com/tabler/tabler-icons/blob/master/LICENSE | 6426（6232 + 194 别名） | 2.0 MB | 2026-08-17 |
+| Iconoir v7.11.0 | `iconoir` | MIT | Luca Burgio | https://github.com/iconoir-icons/iconoir/blob/main/LICENSE | 2020（1682 + 338 别名） | 0.6 MB | 2026-08-17 |
+| HeroIcons v2.2.0 | `heroicons` | MIT | Refactoring UI Inc | https://github.com/tailwindlabs/heroicons/blob/master/LICENSE | 1297（1288 + 9 别名） | 0.6 MB | 2026-08-17 |
+| Phosphor v2.1.1 | `ph` | MIT | Phosphor Icons | https://github.com/phosphor-icons/core/blob/main/LICENSE | 9198（9161 + 37 别名） | 4.4 MB | 2026-08-17 |
+| Material Design Icons | `mdi` | Apache-2.0 | Pictogrammers | https://github.com/Templarian/MaterialDesign/blob/master/LICENSE | 14001（7638 + 6363 别名） | 3.0 MB | 2026-08-17 |
+
+**合计 34,995 枚 / 11.2 MB**（`collections/` 目录实际占用 12 MB，含 `info.json` 与块对齐）。
+全部 ✅ 级：**商用免署名**，与手工件同一条红线。
+上游 LICENSE 全文已存进 `licenses/`（MIT / ISC / Apache-2.0 都要求再分发时保留声明，这就是履行方式）。
+
+### ⚠️ 两处「Iconify 元数据与上游实际不符」（核查日 2026-08-17，⛔ 别照抄 info.json）
+
+`icons.json` 同目录的 `info.json` 里有个 `license.spdx` 字段，**它是 Iconify 的二手记录，会过期**。
+实测两处不符，本表以**上游 LICENSE 原文**为准：
+
+| 集合 | info.json 写的 | 上游实际 | 影响 |
+|---|---|---|---|
+| `mdi` | `Apache-2.0` | 文件名叫 LICENSE，内容是 **Pictogrammers Free License**——正文写明「Icons: Apache 2.0」 | 结论不变（Apache-2.0、商用免署名）。上游**没有 NOTICE 文件**（实测 404），故 Apache-2.0 §4(d) 的 NOTICE 转录义务不触发 |
+| `ri` | `Apache-2.0` | **已于 2026-01 换成自订 Remix Icon License v1.0**（旧的 Apache `LICENSE` 文件实测 404，现为 `License`） | ⛔ **因此没有入库**，见下 |
+
+### ⛔ Remix Icon：评估后**不入库**（与 §三 unDraw 同一条红线）
+
+- **许可证**：Remix Icon License v1.0（2026-01），全文留档 `licenses/ri-RemixIconLicense-v1.0-NOT-BUNDLED.txt`。
+- **商用与署名**：§2.1 允许商用、§2.4 明写「Attribution … appreciated but not required」——**这两条本身没问题**。
+- **卡住的是再分发**：§3.2「Prohibited: Competing Icon Libraries — You may NOT use the Icons to create,
+  **distribute**, or sell a competing icon library or icon set」，**没有「仅限出售」的限定语**；
+  §5 另要求「distributing the complete Icon library or substantial portions thereof」时随附许可证。
+  而本目录正是「把整包 3,244 枚打包成素材库、随**公开仓库**分发」的形态——
+  跟 §三 里 unDraw 被否掉的理由（「禁止 redistribute in packs」）是同一个形状。
+- **结论**：按本库既有红线**不入库**。⚠️ 这是**合规灰区判断，不是黑白结论**——
+  要推翻（认为 §2.3「作为更大产品的组成部分」足以覆盖），由老板拍板，加库只要一条命令：
+
+  ```bash
+  npm i @iconify-json/ri && cp node_modules/@iconify-json/ri/{icons,info}.json \
+      nbdpsy-xiaohongshu-creator/assets/svg-library/collections/ri/
+  # 再把 svg_find.py 里 COLLECTIONS 那条的 bundled 改成 True，并回本表补一行
+  ```
+- 在此之前，`svg_find.py` 对 `ri` 的一切请求都会**明确报出「故意没有入库 + 原因 + 加库命令」**，
+  ⛔ 不会静默当成「没有这个图标」。
+
+### 落地件：集合包里的图标怎么才能被 `render_cover.py` 用上
+
+`render_cover.py` 有一道校验——**图标必须来自本素材库**，不在库就 exit 2 报红。它的判据是
+平铺目录的 `SVG_LIB.glob('*.svg')`（**不递归**），且**拒收带 `lucide:` 前缀的名字**。
+
+`collections/` 是子目录，那道 glob 看不见它 ⇒ **扩库没有把闸门弄松**：3 万多枚图标一枚都没被自动放行
+（已实测：扩库后拿集合里的 `a-arrow-down` 喂进去，照样报红）。要用某一枚，必须显式**落地**：
+
+```bash
+python3 scripts/svg_find.py --emit tabler:mood-sad --install --note "低落的脸：说不出哪里不对劲"
+# → 写出 assets/svg-library/tabler-mood-sad.svg（带 NBDpsy 文件头 + class="nbd-svg-icon"）
+# → 此后 render_cover.py 的 icons 里写 "tabler-mood-sad" 即可
+```
+
+落地件的规矩：
+
+1. **文件名一律 `<集合前缀>-<图标名>.svg`**，⛔ 不许用裸名——防止覆盖同名手工件（库里已有 `heart.svg`，
+   落地 Tabler 的心就得叫 `tabler-heart.svg`）；
+2. 许可证**由上表对应集合那一行覆盖**，⛔ 不必回 §一 补行（但文件头注释里会自动写清来源与许可证）；
+3. 跨族取图记得归一线宽：`--stroke-width 2`（Iconoir 是 1.5，直接混进来会比周围细一档）。
+
+**当前落地件清单**（1 个）：
+
+| 文件名 | 来自 | 意象 | 许可证 | 落地日期 |
+|---|---|---|---|---|
+| `tabler-mood-sad.svg` | `tabler:mood-sad` | 低落的脸：说不出哪里不对劲 | MIT（见上表 Tabler 行） | 2026-08-17 |
+
+### 体积口径的调整
+
+§五 之前 README 里那条「目录总量 ≤2MB」是给**平铺手工件**定的，现在只对那一段有效
+（当前 67 个文件共 268 KB，仍达标）。集合包另算一档：`collections/` 现 12 MB，
+**上限定在 20 MB**——再多就该考虑只留同族两家（Lucide + Tabler 合计 2.6 MB）。

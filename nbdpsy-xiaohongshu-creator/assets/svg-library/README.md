@@ -1,20 +1,124 @@
 # NBDpsy 封面 SVG 素材库
 
-给 **HTML 封面模板**用的线条图形库：63 个可着色 SVG，全部 ISC / MIT / 自有版权，**商用免署名**。
+给 **HTML 封面模板**用的线条图形库，**两层结构**，全部 ISC / MIT / Apache-2.0 / 自有版权，**商用免署名**：
+
+- **手工件 66 个**（平铺 `*.svg`）——逐个查过许可证、加过 NBDpsy 文件头与 `class="nbd-svg-icon"`，**挑图优先用这一层**；
+- **集合包 34,995 枚**（`collections/`，6 个开源集合）——2026-08-17 扩库，管「手工件里没有」的长尾。
+
 改文案＝改文本，版式与图形分毫不动、秒出、零 AI 出图额度——图形这一环就靠这个库兜住。
 
-- 许可证台账（免责依据，逐文件）：[`LICENSES.md`](./LICENSES.md)
+- 许可证台账（免责依据）：[`LICENSES.md`](./LICENSES.md)　⚠️ **手工件逐文件记、集合逐集合记**，两套数法见台账顶部「核对口径」
 - 上游许可证全文：[`licenses/`](./licenses/)
-- **一眼看全库**：浏览器打开 [`gallery.html`](./gallery.html)（品牌配色渲染，按意象分组，标了文件名与用法）
+- **一眼看全手工件**：浏览器打开 [`gallery.html`](./gallery.html)（品牌配色渲染，按意象分组）
+- **在集合里找图**：`python3 ../../scripts/svg_find.py 咖啡杯` —— 见下面 §〇
 
 ```
 svg-library/
 ├── README.md            ← 本文件：怎么用
-├── LICENSES.md          ← 逐文件许可证台账（新增素材必须补一行）
-├── gallery.html         ← 全库总览页（图标已内联，双击即可看）
-├── licenses/            ← 上游 LICENSE 全文（再分发 SVG 源文件时须一并附带）
-└── *.svg                ← 63 个图形，平铺，文件名即上游名（自绘除外）
+├── LICENSES.md          ← 许可证台账（手工件逐文件；集合逐集合）
+├── gallery.html         ← 手工件总览页（图标已内联，双击即可看）
+├── licenses/            ← 上游 LICENSE 全文（再分发时须一并附带）
+├── collections/         ← 集合包：<前缀>/{icons.json, info.json}
+│   ├── lucide/      2,053 枚  ISC        描边 2/24  ★同族
+│   ├── tabler/      6,426 枚  MIT        描边 2/24  ★同族
+│   ├── iconoir/     2,020 枚  MIT        描边 1.5/24 ◇需归一
+│   ├── heroicons/   1,297 枚  MIT        描边/填充混合
+│   ├── ph/          9,198 枚  MIT        填充 · 256 网格
+│   └── mdi/        14,001 枚  Apache-2.0 填充
+└── *.svg                ← 66 个手工件（文件名即上游名，自绘除外）
+                           ＋ 落地件 <集合前缀>-<图标名>.svg（从集合包取下来的）
 ```
+
+> ⛔ **`collections/` 里的图标不能直接在封面里点名**。`render_cover.py` 只认平铺 `*.svg`，
+> 子目录它看不见——这是**故意的**，扩库没有把「图标必须在库内」那道闸门弄松。
+> 要用某一枚，先 `svg_find.py --emit … --install` 落地成平铺文件。见 §〇之三。
+
+---
+
+## 〇、`svg-find`：在 34,995 枚里挑图（⛔ 默认不联网）
+
+脚本在 [`../../scripts/svg_find.py`](../../scripts/svg_find.py)。⛔ 别手翻 `icons.json`。
+
+### 之一：检索
+
+```bash
+python3 scripts/svg_find.py 咖啡杯          # 中文
+python3 scripts/svg_find.py coffee          # 英文
+python3 scripts/svg_find.py 心 --family same --limit 20   # 只要同族
+python3 scripts/svg_find.py coffee --json   # 给排版 agent 用
+```
+
+```
+# 「咖啡杯」→ 英文词：coffee, cup（命中映射键：咖啡杯）
+lucide:coffee    ISC         描边2/24        ★同族  已入库 assets/svg-library/coffee.svg
+tabler:cup       MIT         描边2/24        ★同族
+tabler:coffee    MIT         描边2/24        ★同族
+lucide:cup-soda  ISC         描边2/24        ★同族  已入库 assets/svg-library/cup-soda.svg
+ph:coffee        MIT         填充(线宽不可调)  ⚠️异族
+mdi:cup          Apache-2.0  填充(线宽不可调)  ⚠️异族
+```
+
+四列各是什么：
+
+- **许可证列**：集合级台账不逐条记，那就在**用的时候**逐条打出来——这一列就是免责依据的现场版；
+- **族别**：`★同族`＝描边 2/24，跟 66 个手工件同一形状，直接用；
+  `◇近亲`＝描边但线宽不是 2（Iconoir 是 1.5），取图时加 `--stroke-width 2`；
+  `⚠️异族`＝填充族。⚠️ 「填充」**不等于**「实心色块」——Phosphor 常规档是用填充路径描出轮廓，
+  目视跟线条图几乎一样；真正的差别是**线宽写死在路径几何里，调不动**；
+- **已入库**：命中的图标如果已经是那 66 个手工件之一，会标出本地路径——**优先用手工件**
+  （它带 NBDpsy 文件头与 class，是人工挑过、写过意象说明的）；
+- 自绘件（`domino-fall` / `plant-stake`，集合里根本没有）以 `local:` 前缀参与检索，排最前。
+
+**中文缺词**：映射表当前 374 个词（→ 411 个英文词），缺词时会明说「**没有中文映射**——不是库里没有这个图标，
+是这个词还没进映射表」，并给相近的词与英文重查建议，**退出码 1**。
+⛔ 不会静默返回空表——那会让人误判成「库里没有」，转头去烧 AI 出图额度。
+补词就往 `svg_find.py` 的 `ZH_KEYWORDS` 里加一行（有测试挡着死词：映射到的英文名必须真实存在）。
+
+**零命中**：本脚本**只查本地 6 个集合，不联网**。真要现搜就自己去
+<https://icon-sets.iconify.design>，找到后回来核许可证再入库。⛔ 没有 `--online` 这个开关。
+
+### 之二：取图（打印可直接内联的完整 SVG）
+
+```bash
+python3 scripts/svg_find.py --emit lucide:coffee                      # 原样
+python3 scripts/svg_find.py --emit iconoir:coffee-cup --stroke-width 2 # 跨族：线宽归一到 2
+python3 scripts/svg_find.py --emit local:domino-fall                   # 手工件（自动剥版权注释头）
+```
+
+出来的 SVG 跟手工件同一形状：根上带 `class="nbd-svg-icon"`，
+并把 body 里**取值唯一**的 `stroke` / `fill` / `stroke-width` / `linecap` / `linejoin` **提到根上**。
+⚠️ 这一步不是洁癖：Iconify 把这些属性写在**子元素**上，而写在子元素上的呈现属性
+**盖得过**从根继承的 CSS —— 不提上来的话，模板里那条 `.nbd-svg-icon{stroke-width:1.6}`
+会**静默失效**（图照出，只是线宽没变，截完图才发现）。
+
+线宽归一按网格折算（Phosphor 是 256 网格），保证**视觉粗细**一致而不是数字一致；
+路径数据一个字节都不改（有测试钉着），所以⛔ 不会变形。
+填充族给了 `--stroke-width` 会**明确警告无效**，不静默吞掉。
+
+> **归一后的目视确认**（2026-08-17 实测，非只改数字）：Iconoir 的 `coffee-cup` / `brain` /
+> `heart` / `flower` 四个从 1.5 归一到 2，与右侧 Lucide 同名图并排渲染 —— 粗细齐平、形状无变形。
+> ⚠️ 一条注意：**细节密的图标**（如 `iconoir:brain` 的脑回沟）归一到 2 后笔画间距明显变紧，
+> 104px 上仍清晰，但**≤40px 的角标位置会糊成一团**，那种位置请保留 1.5 或换图。
+
+### 之三：落地（让 `render_cover.py` 认得它）
+
+```bash
+python3 scripts/svg_find.py --emit tabler:mood-sad --install --note "低落的脸：说不出哪里不对劲"
+# → assets/svg-library/tabler-mood-sad.svg
+# → 封面 JSON 里写 "icons": ["tabler-mood-sad"]
+```
+
+文件名一律 `<集合前缀>-<图标名>.svg`，⛔ 不用裸名——防止覆盖同名手工件。
+许可证由 `LICENSES.md` 集合行覆盖，⛔ 不必回逐文件表补行。
+
+### 之四：集合台账速查
+
+```bash
+python3 scripts/svg_find.py --list-collections
+```
+
+会连**故意没入库的集合**一起列出来（当前 `ri` / Remix Icon，理由见 `LICENSES.md` §五），
+⛔ 不会让人以为「查不到就是没有」。
 
 ---
 
@@ -175,7 +279,8 @@ with sync_playwright() as p:
 2. **必须能着色**：`stroke="currentColor"` 或 `fill="currentColor"`，多色插画不收。
 3. **补文件头注释 + 加 `class="nbd-svg-icon"`**（照抄库内任一文件的格式）。
 4. **回 `LICENSES.md` 补一行**：文件名 / 意象 / 来源 URL / 许可证 / 是否需署名 / 下载日期。这张表是免责依据，不许留空。
-5. **体积**：单文件 ≤20KB，目录总量 ≤2MB（现状 63 个共 51.4 KB，SVG 超 20KB 通常说明拿错了东西）。
+5. **体积**：单文件 ≤20KB；**平铺目录**总量 ≤2MB（现状 67 个共 268 KB，SVG 超 20KB 通常说明拿错了东西）。
+   ⚠️ 这条 2MB 只管平铺那一层；`collections/` 另算一档，上限 20MB（现 12MB），口径见 `LICENSES.md` §五末尾。
 6. **找不到就如实记「缺」**，别拿不相干的图形凑数——真需要就自绘（自绘请对齐 24×24 网格 / 2px 线宽 / 圆角端点，
    并在文件头写明「NBDpsy 自绘原创」）。
 
