@@ -106,9 +106,11 @@ KIND_FONT_SEL = {'jinjin': '.hero .l', 'still-life': '#font-probe'}
 # 报告阶段会硬取的 fit 字段。模板版本对不上时**提前报明白**，别等到 KeyError 抛出来
 # （见下方版本校验：未接住的异常会把退出码搅成 1，与「出图了但不合格」混为一谈）。
 FIT_KEYS = {
-    # ⚠️ hero_glyph_pct_band / hero_glyph_band_canvas / hero_fill_* 必须进这张表：
-    # 上限告警的文案会硬取它们，模板老一版就会 KeyError——那是个**没被接住的异常**，
+    # ⚠️ hero_glyph_pct_band / hero_ink_ratio / hero_max / hero_fill_* / steps_count 必须进这张表：
+    # 告警文案会硬取它们，模板老一版就会 KeyError——那是个**没被接住的异常**，
     # 退出码会撞上「1＝出图了但不合格」，把版本不同步伪装成质量不合格。
+    # 🔴 反面也真出过：`hero_glyph_band_canvas` 随根因修复从模板移除、这张表却还列着它，
+    # **每一张都渲不出来**、报「模板与脚本版本对不上」。⇒ 删模板字段时必须同步删这里。
     'jinjin': ('hero_fs', 'hero_lines', 'sub_fs', 'step_fs', 'name_fs', 'role_fs',
                'overflow_px', 'safe_3x4_ok', 'crop_3x4',
                'hero_glyph_pct_band', 'hero_ink_ratio', 'hero_max',

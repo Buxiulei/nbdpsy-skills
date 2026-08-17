@@ -794,8 +794,10 @@ def test_两个画幅共用同一条判据带(_browser):
     port = _fit_band(_browser, _cover(6), 876, 1313)
     assert land["hero_glyph_pct_band"] == [9, 13] == port["hero_glyph_pct_band"], \
         "根因修好后⛔ 不该再有「横版一档竖版一档」"
-    assert port["hero_fill_pct"] is None and port["hero_fill_low"] is None, \
-        "竖版⛔ 不判占宽——恒 null，⛔ 不是 0（0 会被读成「量到了，占 0%」）"
+    # 竖版**量但不判**：数要有（下一轮标定要用），闸门为 null（⛔ 别读成 false＝判过没问题）
+    assert isinstance(port["hero_fill_pct"], (int, float)) and port["hero_fill_pct"] > 0
+    assert port["hero_fill_min"] is None and port["hero_fill_low"] is None, \
+        "竖版⛔ 没有占宽闸——恒 null，⛔ 不是 False"
 
 
 @pytest.mark.parametrize("n", [5, 6, 8])
@@ -1138,3 +1140,68 @@ def test_steps不校验是有意的():
                               "identity": {"name": "刘", "line": "作者"},
                               "footer": "NBDpsy"}, landscape=False)
     assert [w for w in red if "steps" in w or "递进" in w] == []
+
+
+# ══════════ 守边界那条测试的继任者：⛔ 它必须活着 ══════════
+# 旧名 `test_竖版上限告警一个字没动`，守的是「竖版这条告警是老板验收过的，逐字不动」。
+# `solveHeroMax()` 落地后**竖版 3 字根本不再触发上限告警**（14.24% → 12.95%），旧断言的
+# 前提消失了。🔴 但那条测试是这次**唯一拦住入库的东西**——没有它，8 份变 1 份不会有任何人
+# 发现。⛔ 所以不删，重判前提后由下面两条继承它的职责：
+#   ① 把竖版短 hero 的**新事实**钉死（字号/字高/不再报警），任何人再动求解都会红；
+#   ② 上限告警本身仍**可被触发**（显式 theme.hero_max），⛔ 证明它没有变成死闸门。
+
+@pytest.mark.parametrize("n,fs_lo,fs_hi", [(2, 178, 182), (3, 177, 181), (4, 177, 181)])
+def test_竖版短hero的新事实被钉死(_browser, n, fs_lo, fs_hi):
+    """继任 `test_竖版上限告警一个字没动`。**入库前实测**：3 字 198px / 14.24% / ⚠️报警；
+    现在 179px / 12.95% / 不报。⛔ 谁再动 solveHeroMax，这条就该红。"""
+    fit = _fit_band(_browser, _cover(n), 876, 1313)
+    assert fs_lo <= fit["hero_fs"] <= fs_hi, \
+        f"{n} 字竖版字号 {fit['hero_fs']}px 跑出区间——求解被动过了，请重新走一遍影响面"
+    assert 12.5 <= fit["hero_glyph_pct_of_h"] <= 13.0, f"实测 {fit['hero_glyph_pct_of_h']}%"
+    assert fit["hero_glyph_pct_high"] is False, "修复后竖版短 hero ⛔ 不该再冲破上限"
+    assert fit["hero_at_max"] is True, "它确实是被上限接管的（⛔ 不是宽度恰好也没超）"
+
+
+def test_竖版上限告警仍然触发得到(_browser):
+    """继任的另一半：⛔ 别让「不再报」变成「再也报不了」——那就成死闸门了。"""
+    base = _fit_band(_browser, _cover(3), 876, 1313)
+    fit = _fit_band(_browser, _cover(3, theme={"hero_max": 260}), 876, 1313)
+    # ⚠️ 不断言 hero_fs == 260：3 字在 876 版心上宽度解只有 251.2，宽度先接管。
+    # 要验的是**告警会不会响**，⛔ 不是字号等不等于那个数。
+    assert fit["hero_fs"] > base["hero_fs"], f"调大 hero_max 后字号没变大：{fit['hero_fs']}"
+    assert fit["hero_glyph_pct_high"] is True, \
+        f"显式调大 hero_max 后仍不报，实测 {fit['hero_glyph_pct_of_h']}%"
+
+
+def test_影响面判据_五字及以上的纯中文hero不受影响(_browser):
+    """🔴 交付验收的判据面。⚠️ 判据**不是字数**而是「旧解有没有超过新上限」——
+    实测 1080×1440 上「标点混排」的 5 字 hero **会变**（旧 191.4 > 新上限 187）。
+    纯中文 5–6 字在 876×1313 / 1080×1440 上都由**宽度**接管，与上限无关，所以不变。"""
+    for W, H in ((876, 1313), (1080, 1440)):
+        for n in (5, 6):
+            fit = _fit_band(_browser, _cover(n), W, H)
+            assert fit["hero_at_max"] is False, \
+                f"{W}x{H} {n} 字若被上限接管，它就落进影响面了（实测 {fit['hero_fs']}px）"
+
+
+# ────────── 竖版占宽：量了但⛔ 没设闸，理由是阈值搬不动 ──────────
+# 背景：上限告警在竖版此前靠副作用兜住了「hero 太短」（3/4 字撞上限→报警→人去加字）。
+# 根因一修副作用没了。⚠️ 但竖版设不出一个稳的阈值——见下面这条测试量的那件事。
+
+@pytest.mark.parametrize("W,H,n,lo,hi", [
+    (876, 1313, 3, 69, 73), (1080, 1440, 3, 60, 64),      # 同样 3 字，两张竖版差 9 个百分点
+])
+def test_竖版占宽百分比在两张竖版画布之间就不通用(_browser, W, H, n, lo, hi):
+    """🔴 这就是「⛔ 别把横版那个 40% 搬过来」的量化理由——**连竖版自己的百分比都搬不动**：
+    竖版 `--pad-x` 固定 60px、不随画布宽缩放，占宽随画布变；横版 pad-x = 0.065W 按比例缩放，
+    才会四档画布同值。⇒ 竖版闸门必须按画幅推导，⛔ 不能是一个常数。"""
+    fit = _fit_band(_browser, _cover(n), W, H)
+    assert lo <= fit["hero_fill_pct"] <= hi, f"{W}x{H} {n} 字实测 {fit['hero_fill_pct']}%"
+
+
+def test_竖版量了占宽但没有闸门(_browser):
+    """⛔ 「量了」与「判了」是两件事，凭证里要分得开：数有值、闸门为 null。"""
+    fit = _fit_band(_browser, _cover(3), 876, 1313)
+    assert fit["hero_fill_pct"] > 0, "数要有——下一轮按画幅标阈值时要用它"
+    assert fit["hero_fill_min"] is None and fit["hero_fill_low"] is None, \
+        "⛔ 竖版没有占宽闸；null 才读得出「没闸门」，False 会被读成「判过了没问题」"
