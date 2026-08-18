@@ -7,6 +7,7 @@
 """
 import json
 import subprocess
+from pathlib import Path
 import sys
 from pathlib import Path
 
@@ -130,3 +131,30 @@ def test_审稿材料必须并排列出卡片与口播():
     md = cp.to_md(cp.check({"screens": [_dec()]}, CUES))
     assert "卡片：「不代表能停药」" in md
     assert "口播：「感觉好了不代表能停药」" in md and "这段时间真正念的话" in md
+
+
+def test_粒度目标区间_太碎和太长都提示():
+    """🩸 实算（小红书发布线读代码 2026-08-18）：九条说话体口播——
+    按句切 107 条 7.2–10.3s（**一屏挂不下**）／按逗号切 292 条 2.5–3.2s
+    （**正是老板批的"节奏非常快"**）⇒ 粒度须在两者之间，合并到 4–6s/屏。
+    ⛔ 区间外只 warn（内容有长有短），低于 3.5s 才拒。"""
+    cues = [{"text": "感觉好了不代表能停药", "start": 0, "end": 9.0}]
+    base = {"i": 0, "card": "不代表能停药", "semantic": "反驳", "motif": "wipe",
+            "emphasis": "不代表", "relation": "开场",
+            "why": "「不代表」是划掉重写，wipe 演它"}
+    mk = lambda a, b: cp.check({"screens": [{**base, "covers": [a, b],
+                                             "start": a, "end": b}]}, cues)
+    assert not mk(0, 3.0)["ok"], "低于下限该拒"
+    r5 = mk(0, 5.0)
+    assert r5["ok"] and not r5["warns"], "目标区间内不该有提示"
+    r9 = mk(0, 9.0)
+    assert r9["ok"] and "偏长" in r9["warns"][0], "偏长该 warn 但不拒"
+
+
+def test_切分字符集只有一份真源():
+    """🔴 实证：此前两处各写一份且不一致——`tts_gen` 含冒号、`splitSegs` 不含
+    ⇒「很多人会接一句：所以你要等他。」按前者切按后者不切，**印章说反话重演**。
+    ⭕ 解耦后渲染层⛔不再做标点切分，切分只剩一处；本常量是那一处的真源。"""
+    assert "：" in cp.SEPS and ":" in cp.SEPS, "冒号必须在——那正是两处不一致的那个字符"
+    src = (Path(cp.__file__).read_text(encoding="utf-8"))
+    assert "splitSegs" in src, "真源注释里必须留着那次不一致的实证，⛔ 别让后人再造第二份"

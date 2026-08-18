@@ -36,6 +36,33 @@ SEMANTICS = ("断言", "反驳", "列举", "对比", "转折", "因果",
              "数据", "比喻", "场景", "提问", "收口", "留白")
 MOTIFS = ("rise", "wipe", "depth", "drift", "tilt", "still")
 RELATIONS = ("开场", "延续", "切换", "呼应", "收口")
+HOLD_BAND = (4.0, 6.0)
+"""每屏停留的**目标区间**（小红书发布线 2026-08-18 读代码实算）：
+
+| 切法 | 条数 | 每条时长 | 判 |
+|---|---|---|---|
+| `tts_gen._split_sentences`（按句） | 107 | **7.2–10.3s**，最长 64 字 | ⛔ 一屏挂不下 |
+| `tts_gen._split_caption_units`（按逗号） | 292 | **2.5–3.2s** | ⛔ **正是老板批的"节奏非常快"** |
+| **合并到 4–6s/屏** | ~18–22 屏 | ✅ | 目标 |
+
+⇒ **切屏粒度在两者之间**：以 caption units 为**输入粒度**，由 LLM 把相邻条**按语义合并**。
+⚠️ 合并点必须落在语义边界——**机械合并会把「一次出色，」从破折号后切走**。
+⛔ 落在区间外只 warn（内容有长有短），低于 `HOLD_MIN` 才拒。"""
+
+SEPS = "，、；：,;:"
+"""🔴 **切分字符集的唯一真源。**
+
+🩸 实证（小红书发布线读代码，2026-08-18）：此前有**两处各写一份**且不一致——
+`tts_gen._split_caption_units` 是 `，、；：,;:`（**含冒号**），
+`tpl-collage-cards.html:259 splitSegs` 是 `[，、； ]`（**不含冒号**）。
+⇒ 「很多人会接一句：所以你要等他。」按前者切、按后者不切 ⇒
+**先单显前半再补后半，印章说反话那个事故重演**。
+
+⭕ **而在解耦后的新架构里这个 bug 会自动消失**：卡片文字由 **LLM 提炼**，
+**⛔ 渲染层不再做任何标点切分**（`splitSegs` 那类逻辑在新版式里根本不存在）。
+⇒ **切分只剩一处**（`tts_gen`），也就没有第二份可以漂。
+⚠️ 但收 collage 进 skill 仓时**必须确认这一点**——⛔ 别把旧模板的 `splitSegs` 一起搬进来。"""
+
 HOLD_MIN = 3.5
 """每屏停留下限。🔴 ⚠️ 停留时长 ⛔ 不由排版层决定——它 ＝ `cue 时长 ÷ 该句拆的屏数`，
 而 **cue 时长是 TTS 已经定死的**。⇒ 合并到「一句一屏」仍不够，**那是语速问题**，
@@ -159,6 +186,12 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
                 f"{tag}：停留 {hold}s < 下限 {hold_min}s ——合并相邻屏；\n"
                 f"    ⚠️ 若已经是「一句一屏」还不够，**那是语速问题不是排版问题**：\n"
                 f"    重跑 TTS 放慢或加句间停顿，⛔ 别在排版层硬撑")
+        # ⑥-b 粒度目标区间（warn）：太碎＝老板批过的"节奏非常快"，太长＝一屏挂不下
+        elif not (HOLD_BAND[0] <= hold <= HOLD_BAND[1]):
+            warns.append(
+                f"{tag}：停留 {hold}s 在目标区间 {HOLD_BAND[0]}–{HOLD_BAND[1]}s 之外"
+                f"（{'偏碎，接近老板批过的节奏' if hold < HOLD_BAND[0] else '偏长，一屏可能挂不下'}）")
+
         rows.append({"tag": tag, "hold": hold, "semantic": s.get("semantic"),
                      "motif": s.get("motif"), "emphasis": emph, "cite": cite,
                      "text": text, "why": why, "card": card, "covers": covers})
