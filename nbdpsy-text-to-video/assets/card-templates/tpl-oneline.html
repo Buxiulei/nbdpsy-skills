@@ -130,6 +130,31 @@ if (SCREENS.length) {
 /* ── 像素层复核：字号写死，所以"装不下"只可能是断句闸门漏了 ──
    build_oneline.py --check 会开浏览器读这份 report 并据此判成败。
    offsetWidth 是布局宽（不受 transform 影响），描边画在布局盒之外，须自己把 2×STROKE 加回去。 */
+/* ── 专名屏 refit：按**实测宽度**回收 Python 端估算留下的余量 ──
+   Python 的 units() 把 ASCII 按 0.6 折算，而 ZCOOLKuaiLe 的拉丁字实际更窄
+   ⇒ 估算出的字号偏小（实测 57px 那屏只用了 896/1000px，**104px 没用上**）。
+   🔴 **只放大、⛔ 绝不缩小**：缩小是 Python 那一侧的裁决（含下限判定），这里不重做。
+   🔴 **放到整片字号为止**：专名屏最好看的结果就是"跟别的屏一样大"，⛔ 不许更大。
+   ⚠️ 必须跑在 window.SEEK 挂出去**之前**——否则第一批帧是 refit 前的字号，
+      而渲染器只等 SEEK，根本不知道页面还在变。
+   ⚠️ 这一步是**改**不是**量**，所以跟 report() 分开写：量具和被量对象混在一起，
+      量出来的就永远是自己想要的数。 */
+function refitProper() {
+  SCREENS.forEach((s, i) => {
+    if (!s.lines) return;
+    const el = els[i];
+    const stroke = p => Math.round(p * 0.17);
+    const wid = p => { el.style.fontSize = p + 'px'; return el.offsetWidth + 2 * stroke(p); };
+    let px = s.font_px;
+    /* 留 1% 余量防度量非线性（字号变了字距不是严格线性缩放） */
+    const cand = Math.min(FONT_PX, Math.floor(px * (SAFE_W * 0.99) / wid(px)));
+    if (cand > px && wid(cand) <= SAFE_W) px = cand;   // 试过才算数，超了就退回
+    el.style.fontSize = px + 'px';
+    el.style.webkitTextStroke = stroke(px) + 'px #FFFFFF';
+    s.font_px = px; s.stroke_px = stroke(px);
+  });
+}
+
 function report() {
   const over = [], proper = [];
   SCREENS.forEach((s, i) => {
@@ -153,6 +178,7 @@ function report() {
 document.fonts.load('__FONT_PX__px "ONELINE"', SCREENS.map(s => s.text).join(''))
   .then(() => document.fonts.ready)
   .then(() => {
+    refitProper();     // ⚠️ 先 refit 再 report：report 要报的是**最终**字号
     report();
     window.TOTAL = total;
     window.SEEK = t => { tl.seek(Math.min(t, total - 0.001), false); };

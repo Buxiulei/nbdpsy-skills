@@ -417,9 +417,16 @@ def proper_font(lines, cv: dict) -> int:
     ⚠️ **这是估算，且已知偏保守**：`units()` 把 ASCII 按 0.6 折算，而 ZCOOLKuaiLe 的
     拉丁字实际更窄——实测「有一本期刊叫 Psychotherapy and Psychosomatics 上面登过这个研究」
     出 57px 时真宽 896px，安全区 1000px **还剩 104px 没用上**。
-    ⇒ 偏差方向是**安全的**：只会把字号压得比必要更小、极端情况下**少给一次例外**（多拒），
-    ⛔ 不会放出一屏真的超宽的片子。要回收这段余量得在浏览器端 refit——
-    **在有句子因此被误拒之前，⛔ 不做**（多一套自适应逻辑就多一个不确定来源）。"""
+    ⇒ 偏差方向是**安全的**：只会把字号压得比必要更小，⛔ 不会放出一屏真的超宽的片子。
+
+    🔴 **余量由模板的 `refitProper()` 在浏览器端回收**（助理 2026-08-18 拍板，下限保持 60%）：
+    实测 57/58/53px → **62/66/63px**（77/78/72% → 84/89/85%）。
+    ⚠️ **本函数返回的仍是估算下限，⛔ 不是最终字号**——最终值只有像素闸报得出。
+
+    ⚠️ **残余的保守没有一起放宽**：`proper_lines()` 里 `limit = cap/PROPER_MIN_RATIO` 仍按估算算，
+    所以少数 refit 后其实能过的句子会在 build 阶段就被拒。**这是有意留的**——放宽它等于
+    让 `--precheck`（离线、开不了浏览器）说能过、真跑却被像素闸拒，**预检与真闸当场不同源**。
+    ⇒ 宁可多拒（代价：作者多断一句，且报得清楚），⛔ 不要假绿。"""
     safe_w = cv["w"] - 2 * cv["pad"]
     return min(cv["font"], int(safe_w / (max(units(x) for x in lines) + 0.34)))
 
@@ -741,7 +748,8 @@ def precheck(path: Path, cap: int) -> int:
             px = proper_font(x["lines"], apply_max_chars(CANVAS["3:4"], cap))
             # ⚠️ 前缀跟 fail 的「· 第」错开：同一个记号会让「数出几处失败」的计数串味
             print(f"  [专名屏] 第 {x['sent_no']} 句：{x['lines'][0]} ／ {x['lines'][1]}"
-                  f"（该屏字号 {px}px，3:4 档；其余屏不变）", file=sys.stderr)
+                  f"（两行，估算 ≥{px}px，3:4 档；真跑会按实测往上抬；其余屏不变）",
+                  file=sys.stderr)
     if softs:
         print(f"\n⚠️ 无标点处自动软断 {len(softs)} 处（断点归写稿人裁决，认可就把逗号补进稿子）：",
               file=sys.stderr)
@@ -835,8 +843,10 @@ def main(argv=None):
     # ⚠️ 两边看到的东西不一样，「预检与真闸同源」就只剩一句口号。
     for pr in propers:
         px = proper_font(pr["lines"], cv)
+        # ⚠️ 这里的 px 是**估算下限**——模板的 refitProper() 会按实测宽度回收余量往上抬，
+        # 最终字号以下方像素闸那行为准。⛔ 别把这两个数当同一个数（实测普遍高 8–15%）。
         print(f"   [专名屏] 例外：{pr['lines'][0]} ／ {pr['lines'][1]}"
-              f"（两行，该屏 {px}px；⛔ 无需改稿）", file=sys.stderr)
+              f"（两行，估算 ≥{px}px，实际见像素闸；⛔ 无需改稿）", file=sys.stderr)
 
     if fails:
         print(f"\n❌ 单行闸门拒绝出片：{len(fails)} 处断不开的超长句（上限 {cv['max_chars']} 字/屏）\n",

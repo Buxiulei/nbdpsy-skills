@@ -410,3 +410,33 @@ def test_软断片段不许带首尾空格():
     r = bo.soft_split("复发率下降了 35.5% 这个差异是显著的结论", 12)
     for piece in (r or []):
         assert piece == piece.strip() and piece, f"片段带空格：{piece!r}"
+
+
+# ────── 专名屏 refit（助理 2026-08-18 拍板：回收估算余量，下限保持 60%） ──────
+
+def test_refit必须在SEEK挂出去之前():
+    """⚠️ 渲染器只等 `window.SEEK`，**根本不知道页面还在变**——refit 若跑在 SEEK 之后，
+    第一批帧就是 refit 前的字号，而且**没有任何东西会报错**。"""
+    src = (ROOT / "assets/card-templates/tpl-oneline.html").read_text(encoding="utf-8")
+    assert src.index("refitProper();") < src.index("window.SEEK ="), "refit 跑在 SEEK 之后"
+
+
+def test_refit只放大不缩小且不超整片字号():
+    """🔴 **只放大**：缩小是 Python 那一侧的裁决（含 60% 下限判定），⛔ 这里不重做。
+    🔴 **放到整片字号为止**：专名屏最好看的结果就是"跟别的屏一样大"，⛔ 不许更大。"""
+    src = (ROOT / "assets/card-templates/tpl-oneline.html").read_text(encoding="utf-8")
+    assert "Math.min(FONT_PX," in src, "没有以整片字号封顶"
+    assert "if (cand > px && wid(cand) <= SAFE_W) px = cand;" in src, "没有「只放大且试过才算数」"
+
+
+def test_refit与report必须分开写():
+    """⚠️ 这一步是**改**不是**量**。量具和被量对象混在一起，量出来的就永远是自己想要的数。"""
+    src = (ROOT / "assets/card-templates/tpl-oneline.html").read_text(encoding="utf-8")
+    body = src[src.index("function report()"):src.index("window.ONELINE_REPORT")]
+    assert "style.fontSize" not in body, "report() 里改了字号——量具在改被量对象"
+
+
+def test_python端报的是估算下限不是最终字号():
+    """⚠️ 两个数印在同一份输出里，人会当成同一个数（实测普遍高 8–15%）。"""
+    src = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
+    assert src.count("估算 ≥") == 2, "预检与真闸都要标明这是估算下限"
