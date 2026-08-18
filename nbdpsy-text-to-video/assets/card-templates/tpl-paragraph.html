@@ -46,14 +46,7 @@
   html,body { width:__W__px; height:__H__px; overflow:hidden; }
   body { background:__BASE__; position:relative; }
 
-  /* 纸纹：内联 SVG feTurbulence + feColorMatrix saturate=0 去色（零外网依赖），静态一层。
-     ⛔ 没有 feDiffuseLighting——2026-08-16 试过并放弃（高通标准差 0.92＝等于没纹理）。 */
-  #paper { position:absolute; inset:0; z-index:1;
-    background-image:__PAPER_URL__;
-    background-size:__TEX_SCALE__px __TEX_SCALE__px;
-    mix-blend-mode:multiply; opacity:__TEX_OPACITY__; }
-  #vignette { position:absolute; inset:0; z-index:2; pointer-events:none;
-    background:radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 42%, __VIGNETTE__ 100%); }
+__BG_LAYERS_CSS__
 
   /* perspective 挂在舞台上，tilt 类 motif 才有透视；不挂则 rotationX 看起来只是压扁 */
   #stage { position:absolute; inset:0; z-index:3; perspective:1400px; }
@@ -72,8 +65,7 @@
 </style>
 </head>
 <body>
-<div id="paper"></div>
-<div id="vignette"></div>
+__BG_LAYERS_HTML__
 <div id="stage"></div>
 <div id="brand">NBDpsy 心理科普</div>
 

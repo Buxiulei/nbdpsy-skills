@@ -32,16 +32,7 @@
   html,body { width:__W__px; height:__H__px; overflow:hidden; }
   body { background:__BASE__; position:relative; }
 
-  /* 纸纹：内联 SVG feTurbulence + feColorMatrix saturate=0 去色（零外网依赖），静态一层。
-     ⛔ 没有 feDiffuseLighting——2026-08-16 试过并放弃（本尺度下只出平滑渐变，高通标准差 0.92
-     ＝等于没纹理）。⛔ 也别去掉那道去色：不去色出的是彩色噪点，像彩电雪花不像纸。 */
-  #paper { position:absolute; inset:0; z-index:1;
-    background-image:__PAPER_URL__;
-    background-size:__TEX_SCALE__px __TEX_SCALE__px;
-    mix-blend-mode:multiply; opacity:__TEX_OPACITY__; }
-  /* 四角压暗，把视线收到中间那行字上 */
-  #vignette { position:absolute; inset:0; z-index:2; pointer-events:none;
-    background:radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 42%, __VIGNETTE__ 100%); }
+__BG_LAYERS_CSS__
 
   #stage { position:absolute; inset:0; z-index:3; }
   /* ⚠️ 宽度必须收缩到文字本身（不给 width）——像素闸量的就是这个盒子。
@@ -60,8 +51,7 @@
 </style>
 </head>
 <body>
-<div id="paper"></div>
-<div id="vignette"></div>
+__BG_LAYERS_HTML__
 <div id="stage"></div>
 <div id="brand">NBDpsy 心理科普</div>
 

@@ -118,3 +118,43 @@ def test_端到端_段落编排真的多样且相邻段不重复(built):
     dup = [i for i in range(1, len(ms)) if ms[i] == ms[i - 1]]
     assert not dup, f"🔴 相邻段用了同一手法（位置 {dup}）：{ms}"
     assert len(rep["overflow"]) == 0
+
+
+# ────────── 背景层：一份定义、两处填充（2026-08-18 抽占位符后的形态） ──────────
+# 🩸 抽之前是两份硬编码，**第二份当场就漂了**：复制时掉了「四角压暗」那行注释、
+# `#paper` 的注释还被精简掉两句。⚠️ 丢的都是注释——没有视觉后果，却少了给下一个人的
+# 路标，最难发现。⇒ 抽成 `__BG_LAYERS_CSS__`/`__BG_LAYERS_HTML__` 后**不可能再漏**。
+#
+# 🔴 测试形态也跟着换了：抽完就没有"可比的两份"了，比对没有意义。
+# 现在防的是**新建第 3、第 4 个模板时忘了放占位符**。
+
+BG_PLACEHOLDERS = ("__BG_LAYERS_CSS__", "__BG_LAYERS_HTML__")
+
+
+def test_每个版式模板都必须含背景层占位符():
+    """⛔ 别再往模板里手写 #paper/#vignette——手写就会各写一份，各自漂。
+
+    先断言**扫到的模板数 == TEMPLATES 表里的条数**，⛔ 不是"扫到几个查几个"：
+    扫到 0 个也会全过，那正是恒绿。
+    """
+    checked = 0
+    for name, path in bo.TEMPLATES.items():
+        assert path.exists(), f"版式 {name} 的模板文件不存在：{path}"
+        html = path.read_text(encoding="utf-8")
+        for ph in BG_PLACEHOLDERS:
+            assert ph in html, (
+                f"模板 {path.name} 里没有 {ph} —— 是不是又手写了一份背景层？\n"
+                f"  ⇒ 背景层的唯一真源是 build_oneline.py 的 BG_LAYERS_*，⛔ 别在模板里重写。")
+        assert "#paper {" not in html and "#vignette {" not in html, (
+            f"模板 {path.name} 里还有手写的 #paper/#vignette —— 与占位符重复定义了")
+        checked += 1
+    assert checked == len(bo.TEMPLATES) >= 2, \
+        f"只查了 {checked} 个模板，TEMPLATES 表里有 {len(bo.TEMPLATES)} 个"
+
+
+def test_背景层定义里带着为什么(  ):
+    """路标不是装饰：这两条注释各自记着一次踩坑（feDiffuseLighting 没纹理、
+    不去色出彩色噪点）。⛔ 谁把它们精简掉，下一个人就会再走一遍那两条死路。"""
+    assert "feDiffuseLighting" in bo.BG_LAYERS_CSS, "少了「⛔ 没有 feDiffuseLighting」那条路标"
+    assert "彩色噪点" in bo.BG_LAYERS_CSS, "少了「别去掉去色」那条路标"
+    assert "四角压暗" in bo.BG_LAYERS_CSS, "少了 vignette 的存在理由"

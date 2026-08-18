@@ -239,6 +239,28 @@ def build_screens(cues, cap):
     return out, fails, warns
 
 
+# ───────────────────── 背景层：一份定义，两处填充 ─────────────────────
+# 🩸 2026-08-18 抽出来的。此前 `#paper`/`#vignette` 在 tpl-oneline 与 tpl-paragraph 里
+# 各写一份 ⇒ **第二份当场就漂了**：复制时掉了「四角压暗」那行注释、`#paper` 的注释还被
+# 精简掉两句。⚠️ 丢的都是注释——**没有视觉后果，却少了给下一个人的路标**，最难发现。
+# ⇒ 抽成占位符后**不可能再漏**：新模板忘了放占位符，`instantiate()` 末尾那道
+#   「模板还有没填的占位符」检查会当场退出。⛔ 别再往模板里手写这两层。
+
+BG_LAYERS_CSS = """  /* 纸纹：内联 SVG feTurbulence + feColorMatrix saturate=0 去色（零外网依赖），静态一层。
+     ⛔ 没有 feDiffuseLighting——2026-08-16 试过并放弃（本尺度下只出平滑渐变，高通标准差 0.92
+     ＝等于没纹理）。⛔ 也别去掉那道去色：不去色出的是彩色噪点，像彩电雪花不像纸。 */
+  #paper { position:absolute; inset:0; z-index:1;
+    background-image:__PAPER_URL__;
+    background-size:__TEX_SCALE__px __TEX_SCALE__px;
+    mix-blend-mode:multiply; opacity:__TEX_OPACITY__; }
+  /* 四角压暗，把视线收到中间那行字上 */
+  #vignette { position:absolute; inset:0; z-index:2; pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 42%, __VIGNETTE__ 100%); }"""
+
+BG_LAYERS_HTML = """<div id="paper"></div>
+<div id="vignette"></div>"""
+
+
 # ────────────────────────── 实例化 ──────────────────────────
 
 def paper_url(t):
@@ -271,6 +293,10 @@ def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3):
         sys.exit(f"❌ 画幅档 {cv['w']}x{cv['h']} 自相矛盾：{cv['max_chars']} 字需 {need}px > 安全区 {safe_w}px。"
                  f"\n   改 CANVAS 里的 font/pad，⛔ 别改 max_chars 之外的运行期逻辑。")
     sub = {
+        # ⚠️ 必须排在最前：它展开后内部仍含 __PAPER_URL__/__TEX_SCALE__ 等，
+        # 靠后面的条目接着替换（dict 保序）。放后面就会留下没填的占位符。
+        "__BG_LAYERS_CSS__": BG_LAYERS_CSS,
+        "__BG_LAYERS_HTML__": BG_LAYERS_HTML,
         "__CANVAS__": f"{cv['w']}x{cv['h']}", "__W__": cv["w"], "__H__": cv["h"],
         "__FONT_PX__": cv["font"], "__STROKE_PX__": stroke, "__SAFE_W__": safe_w,
         "__RISE__": cv["rise"], "__BRAND_PX__": cv["brand_px"],
