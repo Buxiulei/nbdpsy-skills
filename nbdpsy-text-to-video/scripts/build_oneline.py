@@ -130,19 +130,39 @@ DROP = set("「」『』“”‘’\"'（）()《》〈〉【】[]{}")
 SOFT_HEAD = ("然后", "所以", "因为", "其实", "真正", "根本", "反而", "只是", "而是", "不是",
              "而且", "并且", "如果", "除非", "直到", "一旦", "可能", "应该", "已经", "正在",
              "后来", "现在", "以后", "之后", "之前", "我们", "你们", "他们", "很多", "有的",
-             "是", "在", "把", "被", "让", "给", "从", "对", "跟", "和", "与", "就", "都",
+             "是", "让", "就", "都",
              "才", "也", "还", "又", "却", "而", "但", "并", "不", "没", "要", "会", "能",
-             "可", "比", "像", "为", "由", "到", "往", "向", "再", "更", "最", "这", "那")
+             "可", "比", "像", "为", "由", "到", "往", "再", "更", "最", "这", "那")
+# 🩸 2026-08-18 从这张表里删掉了 9 个单字：**在 把 被 给 从 对 跟 和 与**（外加原有的「向」）。
+#    它们此前**同时**出现在两张表里——`TAIL_BAN` 说「不许做上屏结尾」，`SOFT_HEAD` 说
+#    「可以做下屏开头」。⚠️ **两张登记表对同一批字给了相反的裁决**，而代码先读哪张就听哪张。
+#    ⇒ 实证（助理转博客长文，本轮 53 处软断里扫出）：
+#      「把想来的人挡｜在门外」「正念更关心你｜和自己感受之间的距离」
+#    ⛔ 别再把它们加回来——要放宽得改 STRUCT_PARTICLES 那一张表，两侧同时生效。
 SOFT_TAIL = ("了", "着", "过", "们", "时", "后")
 # 🩸 「的」已从 SOFT_TAIL 移除（2026-08-18 审稿代理实证，936 屏扫出约 40 处）：
 #    它把「如果你正被持续的｜情绪困扰缠着」判成合法断点——**5 条科普的危机声明全中**。
 #    ⚠️ jieba 词边界拦不住它：「持续的」「情绪困扰」**本来就是两个词**，那确实是词边界。
 #    ⇒ 词边界是必要条件，**⛔ 不是充分条件**。
 
-TAIL_BAN = ("的", "地", "得", "把", "被", "在", "从", "对", "向", "给", "跟", "和", "与")
-"""🔴 **禁止在这些字后面断屏**（助理 2026-08-18 拍）——它们是**结构虚词**，
-后面必然还有话，断在这里那一屏**不成话**。
-实证：「如果你正被持续的｜情绪困扰缠着」「练的就是怎么在难受的｜时候」。"""
+STRUCT_PARTICLES = ("的", "地", "得", "把", "被", "在", "从", "对", "向", "给", "跟", "和", "与")
+"""🔴 **结构虚词：前后都不断**（助理 2026-08-18 两次拍板合成的**一张表**）。
+
+它们的共同点是**自己不成话，必须跟旁边的成分捆在一起**。所以一个字若不许做上屏结尾，
+它同样不许做下屏开头——⚠️ **不对称的规则只挡住半边**：
+
+| 上屏结尾（第一次拍，已生效） | 下屏开头（第二次拍，本次补） |
+|---|---|
+| 「如果你正被持续的｜情绪困扰缠着」 | 「第一作者是我们｜的咨询师负责人李牧阳」 |
+| 「练的就是怎么在难受的｜时候」 | 「把想来的人挡｜在门外」 |
+| | 「正念更关心你｜和自己感受之间的距离」 |
+
+🩸 **右列那三处是本轮真出片时软断出来的**——左列的规则昨天就上线了，
+它们仍然照出不误，因为**判据只看了断口的左边**。
+⇒ **一张表、两侧生效**：加减字只改这一处，⛔ 别再分开维护两份。"""
+
+TAIL_BAN = STRUCT_PARTICLES   # 不许做**上屏结尾**
+HEAD_BAN = STRUCT_PARTICLES   # 不许做**下屏开头**
 
 AB_QUESTION = re.compile(r"(.)不\1|在不在|行不行|是不是|有没有|能不能|会不会|要不要")
 """正反问（X不X）**不可劈**：实证「它还在不在影响你的日子」被劈成
@@ -154,9 +174,18 @@ EN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9''\-]*(?:\s+[A-Za-z][A-Za-z0-9''\-]*)*
 **第 2 屏单看是个不存在的刊名**——⚠️ 比"读着别扭"严重得多，那是**编造了一个刊物**。"""
 
 
+NUM_TOKEN = re.compile(r"\d[\d\-–—]*")
+"""🔴 **数字串与英文专名同等保护**（2026-08-18 验专名屏时顺带抓到）。
+
+⚠️ 危害比刊名更大：`请打 12356` 若被劈成「请打 123」「56」，
+**读者看到的是一个错的危机热线号码**——刊名说错是学术不严谨，热线说错是有人打不通。
+⛔ 所以纯数字虽然不是"专名"，但走同一条不可分割规则。"""
+
+
 def _protected_spans(seg: str):
-    """不可切区间 [start, end)：英文词组 ＋ 正反问结构。"""
+    """不可切区间 [start, end)：英文词组 ＋ 数字串 ＋ 正反问结构。"""
     spans = [(m.start(), m.end()) for m in EN_TOKEN.finditer(seg) if m.end() - m.start() > 1]
+    spans += [(m.start(), m.end()) for m in NUM_TOKEN.finditer(seg) if m.end() - m.start() > 1]
     spans += [(m.start(), m.end()) for m in AB_QUESTION.finditer(seg)]
     return spans
 MIN_SOFT = 3      # 软断点切出来的碎片不得短于此（避免"都被""而是"这种孤儿行）
@@ -208,8 +237,10 @@ def word_edges(seg: str):
 def soft_ok(seg: str, i: int, edges=None, spans=None) -> bool:
     """在 seg 的第 i 个字之前断开是否算合法软断点。
 
-    四条**全部**要满足（⚠️ 前三条是硬否决，任一不过就不许断）：
+    五条**全部**要满足（⚠️ 前四条是硬否决，任一不过就不许断）：
     ① 🔴 **前一个字不是结构虚词**（`TAIL_BAN`）——断在「的/把/被/在…」后面那一屏不成话；
+    ①' 🔴 **后一个字也不是结构虚词**（`HEAD_BAN`，同一张表）——下屏以「的/和/在…」
+       开头同样不成话，实证「第一作者是我们｜的咨询师负责人李牧阳」；
     ② 🔴 **不切进保护区间**（英文词组／正反问）——切开会**编造出不存在的刊名**、
        或留下「是它还在不」这种半句；
     ③ **切点落在词边界上**（jieba）——⛔ 别把「参与」「创伤后应激障碍」劈开；
@@ -217,9 +248,13 @@ def soft_ok(seg: str, i: int, edges=None, spans=None) -> bool:
 
     🩸 **①②是 2026-08-18 补的，因为③不够**：jieba 认为「持续的｜情绪困扰」是词边界
     （那**确实**是两个词）⇒ **词边界是必要条件，⛔ 不是充分条件**。
+    🩸 **①' 是当天晚些补的，因为①只挡住了半边**——同一批虚词做下屏开头照样出病句，
+    而规则只写了「后面不断」。⚠️ **写规则时把"前后"写全，比事后补一半容易得多。**
     ⚠️ `edges is None` 表示 jieba 不可用，此时跳过③（并由调用方报出「这项没查」）。
     """
     if i > 0 and seg[i - 1] in TAIL_BAN:
+        return False
+    if i < len(seg) and seg[i] in HEAD_BAN:
         return False
     for a, b in (spans or ()):
         if a < i < b:                       # 切点落在保护区间内部
@@ -270,10 +305,95 @@ def soft_split(seg: str, cap: int):
     return out
 
 
+# ────────────────────── 专名屏例外（助理 2026-08-18 拍板 A） ──────────────────────
+
+PROPER_MIN_RATIO = 0.60
+"""专名屏允许缩到整片字号的这个比例，⛔ 再小就拒。
+
+⚠️ **这个数是约定，不是实测出来的阈值**——⛔ 别引用它当"可读性下限的证据"。
+定它的两条考虑：① 3:4 档 80px × 0.60 = 48px，按小红书 feed 宽 375 折算 ≈ 16.7px 屏显，
+在插图线实测的可读下限（`MIN_FEED_PX=11.0`）之上；② 再小就明显"不是同一条片子的字"，
+版式身份就散了。**要动它请连着这两条一起重估**，别只挪数字。"""
+
+
+def proper_spans_en(seg: str):
+    """seg 里的英文专名区间（长度 >1）。⚠️ 正反问不在内——它是断句保护，不给排版例外。"""
+    return [(m.start(), m.end()) for m in EN_TOKEN.finditer(seg) if m.end() - m.start() > 1]
+
+
+def proper_lines(seg: str, cap: int):
+    """**专名屏例外**：一屏装不下、又因为含不可分割英文专名而切不开时，改**两行排版**。
+
+    返回 `[上行, 下行]`；不适用返回 `None`。
+
+    🔴 **触发条件是「含不可分割专名」，⛔ 不是「装不下」。**这条区别是整个例外能不能
+    存在的前提：若由"装不下"触发，那任何长句都能触发，**版式当场就废了**（tpl-oneline
+    硬契约①）；由"含专名"触发，它就是**封闭的、可枚举的**——期刊名、量表名、书名。
+
+    🔴 **为什么两行同屏可以、两屏分时不可以**（同一个专名，两种切法后果完全不同）：
+      · 分**屏** = 时间上分离 ⇒ 第 2 屏单看是「and Psychosomatics」，
+        那是**一个不存在的刊名**，读者那 1.6 秒看到的是假事实；
+      · 分**行** = 空间上同时可见 ⇒ 读者一眼看到完整刊名，只是排成两行。
+    ⇒ 所以折行**允许落在专名内部的空格上**，而分屏永远不许。
+
+    🔴 **折点由本函数算死，⛔ 绝不交给 CSS 自动折行**：`Psychotherapy and Psychosomatics`
+    里有空格，浏览器会在 `Psychotherapy` 后面折——那是能折的地方里**最坏**的一个
+    （上行结尾正好是个完整的假刊名）。⚠️ 自动折行看着"能用"，出的正是我们要禁的那一屏。
+    """
+    if units(seg) <= cap:
+        return None
+    spans = proper_spans_en(seg)
+    if not spans:
+        return None                      # 不含英文专名 ⇒ ⛔ 不给例外，照旧拒
+    limit = cap / PROPER_MIN_RATIO       # 字号缩 r 倍 ⟺ 每行能装 cap/r 个字
+    edges = word_edges(seg)
+    best = None
+    for p in range(1, len(seg)):
+        if seg[p] == " ":
+            continue                     # 折在空格前／后是同一刀，只留"空格后"这一种
+        inside = next(((a, b) for a, b in spans if a < p < b), None)
+        if inside and seg[p - 1] != " ":
+            continue                     # 🔴 专名内部**只许折在空格之后**，⛔ 绝不切进单词
+        if not inside and edges is not None and p not in edges:
+            continue                     # 中文侧仍守词边界
+        a, b = units(seg[:p]), units(seg[p:])
+        if max(a, b) > limit:
+            continue
+        rank = (0 if not inside else 1, abs(a - b))   # 优先折在专名之外，其次求均衡
+        if best is None or rank < best[0]:
+            best = (rank, p)
+    return [seg[:best[1]].strip(), seg[best[1]:].strip()] if best else None
+
+
+def proper_font(lines, cv: dict) -> int:
+    """专名屏该用多大字号：按最宽那一行反推，**只缩不放**，⛔ 只影响这一屏。
+
+    ⚠️ **这是估算，且已知偏保守**：`units()` 把 ASCII 按 0.6 折算，而 ZCOOLKuaiLe 的
+    拉丁字实际更窄——实测「有一本期刊叫 Psychotherapy and Psychosomatics 上面登过这个研究」
+    出 57px 时真宽 896px，安全区 1000px **还剩 104px 没用上**。
+    ⇒ 偏差方向是**安全的**：只会把字号压得比必要更小、极端情况下**少给一次例外**（多拒），
+    ⛔ 不会放出一屏真的超宽的片子。要回收这段余量得在浏览器端 refit——
+    **在有句子因此被误拒之前，⛔ 不做**（多一套自适应逻辑就多一个不确定来源）。"""
+    safe_w = cv["w"] - 2 * cv["pad"]
+    return min(cv["font"], int(safe_w / (max(units(x) for x in lines) + 0.34)))
+
+
 def suggest(seg: str, cap: int):
-    """给切不开的段落挑 3 个"在这儿加个逗号就行"的位置。"""
+    """给切不开的段落挑 3 个"在这儿加个逗号就行"的位置。**建议本身必须合法**。
+
+    🔴 **建议断点要过与真闸同一道 `soft_ok`**（词边界／结构虚词／保护区间）。
+    🩸 起因：闸门拒了「如果你正被持续的情绪困扰缠着不放请打 12356」，给的三条建议是
+    「情绪困｜扰」「持续的情绪｜困扰」——**全都切在词中间或虚词后面**，
+    正是同一天刚立规矩要禁的那两种。
+    ⚠️ 闸门报红是对的，但**处置建议会把人引到一个新的错**——
+    一个把人引向错误修法的报错，比不报还糟。
+    ⇒ 挑不出合法位置时**明说"这句没有合法断点，请改写"**，⛔ 绝不硬凑三条。
+    """
+    edges, spans = word_edges(seg), _protected_spans(seg)
     cands = []
     for p in range(MIN_SOFT, len(seg) - MIN_SOFT + 1):
+        if not soft_ok(seg, p, edges, spans):
+            continue
         left, right = seg[:p], seg[p:]
         # 加了这一刀之后，两边各自还能不能被自动处理（≤cap 或还能软切）
         ok = all(units(x) <= cap or soft_split(x, cap) for x in (left, right))
@@ -284,29 +404,39 @@ def suggest(seg: str, cap: int):
 
 # ────────────────────────── 闸门主体 ──────────────────────────
 
-def split_cue(text: str, cap: int):
-    """一句 → 若干屏。返回 (屏文本, 失败清单, 软断记录)。失败清单非空即拒渲染。
+def split_cue(text: str, cap: int, allow_proper: bool = True):
+    """一句 → 若干屏。返回 (屏列表, 失败清单, 软断记录, 专名屏记录)。失败清单非空即拒渲染。
+
+    屏列表元素是 `{"text":…, "lines": None 或 [上行, 下行]}`——`lines` 非空即**专名屏**。
 
     软断（在没有标点的地方下刀）是**兜底不是常态**：它一定会被登记出来给人看一眼，
     ⛔ 绝不静默——断点断得对不对只有写稿的人说了算。
+
+    `allow_proper=False` 关掉专名屏例外（段落版式用）：⚠️ 关掉后它**照旧报"断不开"**，
+    ⛔ 不会静默地把一屏塞爆。
     """
     parts = [p for p in re.split("[" + re.escape("".join(HARD)) + "]", text)]
-    screens, fails, softs = [], [], []
+    screens, fails, softs, propers = [], [], [], []
     for raw in parts:
         seg = display(raw)
         if not seg:
             continue
         if units(seg) <= cap:
-            screens.append(seg)
+            screens.append(dict(text=seg, lines=None))
             continue
         pieces = soft_split(seg, cap)
-        if pieces is None:
-            fails.append(dict(seg=seg, chars=units(seg), suggest=suggest(seg, cap)))
-            screens.append(seg)      # 占位，好让报告里看得见它排在第几屏
-        else:
+        if pieces is not None:
             softs.append(dict(seg=seg, pieces=pieces))
-            screens.extend(pieces)
-    return screens, fails, softs
+            screens.extend(dict(text=p, lines=None) for p in pieces)
+            continue
+        lines = proper_lines(seg, cap) if allow_proper else None
+        if lines is not None:
+            propers.append(dict(seg=seg, lines=lines))
+            screens.append(dict(text=seg, lines=lines))
+            continue
+        fails.append(dict(seg=seg, chars=units(seg), suggest=suggest(seg, cap)))
+        screens.append(dict(text=seg, lines=None))   # 占位，好让报告里看得见它排在第几屏
+    return screens, fails, softs, propers
 
 
 def weight(s: str, is_seg_end: bool) -> float:
@@ -314,30 +444,33 @@ def weight(s: str, is_seg_end: bool) -> float:
     return units(s) + (1.6 if is_seg_end else 0.0)
 
 
-def build_screens(cues, cap):
+def build_screens(cues, cap, allow_proper: bool = True):
     """cues → 屏序列（含起止时刻）。句边界＝屏边界（零估算）；句内按权重分配。"""
-    out, fails, warns = [], [], []
+    out, fails, warns, propers = [], [], [], []
     for ci, c in enumerate(cues):
-        texts, f, softs = split_cue(c["text"], cap)
+        texts, f, softs, pr = split_cue(c["text"], cap, allow_proper)
         for x in f:
             x["cue"] = ci
             x["cue_text"] = c["text"]
         fails.extend(f)
         for s in softs:
-            warns.append(f"第 {ci + 1} 句在无标点处自动软断：{'｜'.join(s['pieces'])}"
+            warns.append(f"[软断] 第 {ci + 1} 句在无标点处自动软断：{'｜'.join(s['pieces'])}"
                          f"（断点归写稿人裁决，认可就把逗号补进稿子）")
+        for s in pr:
+            propers.append(dict(cue=ci, **s))
         if not texts:
             continue
-        ws = [weight(t, i == len(texts) - 1) for i, t in enumerate(texts)]
+        ws = [weight(s["text"], i == len(texts) - 1) for i, s in enumerate(texts)]
         span, tot = c["end"] - c["start"], sum(ws) or 1.0
         t = c["start"]
-        for i, (txt, w) in enumerate(zip(texts, ws)):
+        for i, (s, w) in enumerate(zip(texts, ws)):
             end = c["end"] if i == len(texts) - 1 else t + span * w / tot
-            out.append(dict(text=txt, start=round(t, 3), end=round(end, 3), cue=ci))
+            out.append(dict(text=s["text"], lines=s["lines"],
+                            start=round(t, 3), end=round(end, 3), cue=ci))
             if end - t < MIN_SEC:
-                warns.append(f"第 {len(out)} 屏「{txt}」仅 {end - t:.2f}s（建议 ≥{MIN_SEC}s）")
+                warns.append(f"第 {len(out)} 屏「{s['text']}」仅 {end - t:.2f}s（建议 ≥{MIN_SEC}s）")
             t = end
-    return out, fails, warns
+    return out, fails, warns, propers
 
 
 # ───────────────────── 背景层：一份定义，两处填充 ─────────────────────
@@ -440,6 +573,22 @@ def apply_max_chars(cv: dict, max_chars: int) -> dict:
     return cv
 
 
+def with_proper_font(screens, cv: dict):
+    """给专名屏补 `font_px`/`stroke_px`；普通屏原样返回（**没有这两个键**）。
+
+    ⚠️ 「没有这个键」与「键值等于整片字号」不是一回事：前者是"这一屏没走例外"，
+    后者是"走了例外但没缩"。⛔ 别为了模板少写个判断就给所有屏都填上。
+    """
+    out = []
+    for s in screens:
+        if s.get("lines"):
+            px = proper_font(s["lines"], cv)
+            out.append(dict(s, font_px=px, stroke_px=round(px * 0.17)))
+        else:
+            out.append(s)
+    return out
+
+
 def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3):
     stroke = round(cv["font"] * 0.17)
     safe_w = cv["w"] - 2 * cv["pad"]
@@ -458,7 +607,7 @@ def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3):
         "__BASE__": bg["base"], "__INK__": bg["ink"], "__VIGNETTE__": bg["vignette"],
         "__BRAND_COLOR__": bg["brand"], "__TEX_OPACITY__": bg["tex_opacity"],
         "__PAPER_URL__": paper_url(bg["turb"]), "__BG_NAME__": bg_name,
-        "__SCREENS__": json.dumps(screens, ensure_ascii=False),
+        "__SCREENS__": json.dumps(with_proper_font(screens, cv), ensure_ascii=False),
         # 段落字卡专用；oneline 模板里没有这个占位符，填了也不会有副作用
         "__SEC_CUES__": sec_cues,
     }
@@ -504,6 +653,12 @@ def precheck(path: Path, cap: int) -> int:
     **两把尺不同源**。⇒ 本函数**直接调用真闸用的那两个函数**：
     切句用 `tts_gen._split_sentences`（TTS 的统一单元），拆屏用本模块的 `split_cue`。
     ⛔ **别再另写一份"预检版"逻辑**——预检与真闸不同源，等于没预检。
+
+    🩸 **三类结果各有各的记号**：`[断不开]`／`[软断]`／`[专名屏]`。
+    此前 fail 与 soft **共用「· 第」这一个记号**，于是"数出几处失败"的计数会把软断
+    也算进去——⚠️ 原来的样本恰好一处软断都没有，所以这个坑一直没露头，
+    直到专名屏例外把那句刊名接走、样本换成带软断的句子才当场报假红。
+    ⇒ **同源比对靠的是记号能分类**，⛔ 别让两类结果长一个样。
     """
     sys.path.insert(0, str(HERE))
     import tts_gen                                  # 与真链路同一把切句尺
@@ -516,35 +671,57 @@ def precheck(path: Path, cap: int) -> int:
               file=sys.stderr)
         return 2
 
-    fails, softs, screens = [], [], 0
+    fails, softs, propers, screens = [], [], [], 0
     for i, sent in enumerate(sents, 1):
-        texts, f, sf = split_cue(sent, cap)
+        texts, f, sf, pr = split_cue(sent, cap)
         screens += len(texts)
         for x in f:
             x["sent_no"] = i
             x["sent"] = sent
         fails.extend(f)
         softs.extend(dict(sent_no=i, **x) for x in sf)
+        propers.extend(dict(sent_no=i, **x) for x in pr)
 
     print(f"  {len(sents)} 句 → {screens} 屏（上限 {cap} 字/屏）", file=sys.stderr)
+    if propers:
+        # ℹ️ **专名屏例外是 info，⛔ 不是 warn 也不是 fail**：它是**已经处理好**的状态，
+        #    不需要作者做任何事。⚠️ 把它报成 warn 会让人跑来"修"一个没坏的东西
+        #    ——那正是假红的代价。
+        print(f"\nℹ️ 专名屏例外 {len(propers)} 处（含不可分割英文专名 ⇒ **两行排版**，"
+              f"⛔ 无需改稿）：", file=sys.stderr)
+        for x in propers:
+            px = proper_font(x["lines"], apply_max_chars(CANVAS["3:4"], cap))
+            # ⚠️ 前缀跟 fail 的「· 第」错开：同一个记号会让「数出几处失败」的计数串味
+            print(f"  [专名屏] 第 {x['sent_no']} 句：{x['lines'][0]} ／ {x['lines'][1]}"
+                  f"（该屏字号 {px}px，3:4 档；其余屏不变）", file=sys.stderr)
     if softs:
         print(f"\n⚠️ 无标点处自动软断 {len(softs)} 处（断点归写稿人裁决，认可就把逗号补进稿子）：",
               file=sys.stderr)
         for x in softs[:8]:
-            print(f"  · 第 {x['sent_no']} 句：{'｜'.join(x['pieces'])}", file=sys.stderr)
+            print(f"  [软断] 第 {x['sent_no']} 句：{'｜'.join(x['pieces'])}", file=sys.stderr)
         if len(softs) > 8:
             print(f"  …另有 {len(softs) - 8} 处", file=sys.stderr)
     if fails:
         print(f"\n⛔ {len(fails)} 处**断不开**（真跑会拒绝出片，⚠️ 而那时 TTS 配额已经花掉）：",
               file=sys.stderr)
         for x in fails:
-            print(f"  · 第 {x['sent_no']} 句「{x['seg']}」（{x['chars']:.1f} 字）", file=sys.stderr)
-            print(f"    建议断点：{x['suggest'][0] if x['suggest'] else '（无）'}", file=sys.stderr)
+            print(f"  [断不开] 第 {x['sent_no']} 句「{x['seg']}」（{x['chars']:.1f} 字）",
+                  file=sys.stderr)
+            if x["suggest"]:
+                print(f"    建议断点：{x['suggest'][0]}", file=sys.stderr)
+            else:
+                print("    ⚠️ **这一句挑不出合法断点**（词边界／结构虚词／不可分割专名都不许切）"
+                      "\n       ⇒ 请改写成两句，⛔ 别硬找地方塞逗号", file=sys.stderr)
             # ⚠️ 断不开的原因往往是保护区间——说清楚，⛔ 别让人在不该断的地方硬断
             seg = x["seg"]
-            if EN_TOKEN.search(seg) and len(EN_TOKEN.search(seg).group()) > 1:
-                print(f"    ⚠️ 含英文词组「{EN_TOKEN.search(seg).group()}」——**不可分割**"
-                      f"（劈开会造出不存在的刊名/术语）⇒ 逗号补在它**之外**", file=sys.stderr)
+            if proper_spans_en(seg):
+                # ⚠️ 走到这里说明**连专名屏例外都救不了**（两行仍超 cap/PROPER_MIN_RATIO），
+                #    ⛔ 别再让人去"补逗号"——专名本身就装不下，补逗号不解决问题
+                name = proper_spans_en(seg)[0]
+                print(f"    ⚠️ 含英文专名「{seg[name[0]:name[1]]}」——**不可分割**，"
+                      f"且**两行也装不下**（专名屏例外已试过）\n"
+                      f"       ⇒ 把它单独说成一屏（前后各断一句），"
+                      f"⛔ 别在专名内部补逗号——那等于把刊名改了", file=sys.stderr)
             if AB_QUESTION.search(seg):
                 print(f"    ⚠️ 含正反问「{AB_QUESTION.search(seg).group()}」——**不可劈**"
                       f"（劈开会留下「还在不」这种半句）", file=sys.stderr)
@@ -600,16 +777,30 @@ def main(argv=None):
         sys.exit(f"❌ --max-line-chars 只收 8–14，收到 {a.max_line_chars}")
     cv, bg = apply_max_chars(CANVAS[a.canvas], a.max_line_chars), BG[a.bg]
 
-    screens, fails, warns = build_screens(cues, cv["max_chars"])
+    # ⚠️ 专名屏例外只有 oneline 版式实现了（模板里要有 .scr.proper 的两行排版）。
+    # paragraph 走这条会**静默出一屏塞爆的字**——所以对它显式关掉，让它照旧报「断不开」。
+    screens, fails, warns, propers = build_screens(cues, cv["max_chars"],
+                                                   allow_proper=(a.template == "oneline"))
+
+    # 🔴 **专名屏先报，⛔ 别放在 fail 早退之后**：有 fail 就 return 的话，
+    # 作者要修完 fail 再跑一次才看得到这一类——而预检是三类一次报全的，
+    # ⚠️ 两边看到的东西不一样，「预检与真闸同源」就只剩一句口号。
+    for pr in propers:
+        px = proper_font(pr["lines"], cv)
+        print(f"   [专名屏] 例外：{pr['lines'][0]} ／ {pr['lines'][1]}"
+              f"（两行，该屏 {px}px；⛔ 无需改稿）", file=sys.stderr)
 
     if fails:
         print(f"\n❌ 单行闸门拒绝出片：{len(fails)} 处断不开的超长句（上限 {cv['max_chars']} 字/屏）\n",
               file=sys.stderr)
         for f in fails:
             print(f"  · 第 {f['cue'] + 1} 句：{f['cue_text']}", file=sys.stderr)
-            print(f"    断不开的片段：「{f['seg']}」（{f['chars']:.1f} 字）", file=sys.stderr)
-            for s in f["suggest"]:
-                print(f"    建议断点：{s}", file=sys.stderr)
+            print(f"    [断不开] 片段「{f['seg']}」（{f['chars']:.1f} 字）", file=sys.stderr)
+            for x in f["suggest"]:
+                print(f"    建议断点：{x}", file=sys.stderr)
+            if not f["suggest"]:
+                print("    ⚠️ **这一句挑不出合法断点**（词边界／结构虚词／不可分割专名都不许切）"
+                      "\n       ⇒ 请改写成两句，⛔ 别硬找地方塞逗号", file=sys.stderr)
             print("", file=sys.stderr)
         print("处置：在建议位置加逗号或把句子拆成两句，重跑 tts_gen --timed 后再来。\n"
               "⛔ 不要调小字号——字号是这个版式的身份，缩了就没有这个版式了。\n"
@@ -633,15 +824,18 @@ def main(argv=None):
         instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues),
         encoding="utf-8")
 
-    n_over = sum(1 for s in screens if units(s["text"]) > cv["max_chars"])
+    # ⚠️ 统计只看普通屏：专名屏本来就**允许**超单行上限（它排两行、字号另算），
+    # 把它算进「超限」会让每条带刊名的片子都自带一条假红。
+    plain = [s for s in screens if not s.get("lines")]
+    n_over = sum(1 for s in plain if units(s["text"]) > cv["max_chars"])
     print(f"✅ {html_path}")
     print(f"   {a.canvas} {cv['w']}x{cv['h']} · {bg['label']} · 字号 {cv['font']}px · "
           f"上限 {cv['max_chars']} 字/屏")
     if _JIEBA_STATE["ok"] is False:
         print("   ⚠️ jieba 未安装 ⇒ **软断的词边界检查这一项没做**（可能把词/术语劈开）。"
               "\n      ⛔ 这不是「检查过没问题」。装上：pip install jieba", file=sys.stderr)
-    print(f"   {len(cues)} 句 → {len(screens)} 屏，最长 {max(units(s['text']) for s in screens):.0f} 字，"
-          f"超限 {n_over} 屏")
+    print(f"   {len(cues)} 句 → {len(screens)} 屏，最长 "
+          f"{max((units(s['text']) for s in plain), default=0):.0f} 字，超限 {n_over} 屏")
     for w in warns:
         print(f"   ⚠️ {w}")
 
@@ -651,9 +845,26 @@ def main(argv=None):
             print(f"\n❌ 像素闸拒绝出片：{len(rep['overflow'])} 屏实测超宽（字数闸没算准，多半是数字/字母）",
                   file=sys.stderr)
             for o in rep["overflow"]:
-                print(f"  · 第 {o['i'] + 1} 屏「{o['text']}」{o['width']}px > 安全区 {o['limit']}px",
+                print(f"  · 第 {o['i'] + 1} 屏「{o['text']}」{o['width']}px > 安全区 {o['limit']}px"
+                      f"{'（专名屏：两行也装不下，改稿把专名单独说成一屏）' if o.get('proper') else ''}",
                       file=sys.stderr)
             return 1
+        # 🔴 专名屏的**最终裁决权在像素层**：Python 端那个 units() 按 ASCII×0.6 估宽，
+        # 而 ZCOOLKuaiLe 是中文字体、拉丁字宽根本不是 0.6 ⇒ 估算能过、实测未必。
+        # ⚠️ 所以下限 PROPER_MIN_RATIO 要在**量到真宽度之后**再判一次，⛔ 不能只信估算。
+        too_small = [p for p in rep.get("proper", []) if p["ratio"] < PROPER_MIN_RATIO]
+        if too_small:
+            print(f"\n❌ 专名屏缩得太小：{len(too_small)} 屏低于整片字号的 "
+                  f"{PROPER_MIN_RATIO:.0%}（再小就不像同一条片子的字）", file=sys.stderr)
+            for p in too_small:
+                print(f"  · 第 {p['i'] + 1} 屏「{p['text']}」→ {p['font_px']}px "
+                      f"（{p['ratio']:.0%}）", file=sys.stderr)
+            print("处置：把专名单独说成一屏（前后各断一句），⛔ 别在专名内部补逗号——那等于改刊名。",
+                  file=sys.stderr)
+            return 1
+        for p in rep.get("proper", []):
+            print(f"   ✅ 专名屏第 {p['i'] + 1} 屏实测 {p['width']}px ≤ {cv['w'] - 2 * cv['pad']}px，"
+                  f"字号 {p['font_px']}px（{p['ratio']:.0%}）")
         print(f"   ✅ 像素闸：{rep['screens']} 屏全部在安全区内，总时长 {rep['total']:.2f}s")
     return 0
 

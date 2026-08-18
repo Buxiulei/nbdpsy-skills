@@ -14,6 +14,15 @@
   ① **一屏只有一行字，绝不折行、绝不缩字号**。字号是版式身份的一部分，写死在
      __FONT_PX__，⛔ 任何"装不下就调小一点"的改动都等于废掉这个版式。装不下＝
      断句，断不开＝拒渲染（闸门在 build_oneline.py，本文件只做像素层复核）。
+     ┌ **唯一例外：专名屏**（助理 2026-08-18 拍板 A）——那一屏含不可分割的英文专名
+     │ （期刊/量表/书名）时，允许**两行排版**、并只把**这一屏**的字号缩到装得下。
+     │ 🔴 **例外由「含不可分割专名」触发，⛔ 不由「装不下」触发。**这条区别就是它
+     │    没有废掉版式的原因：若由"装不下"触发，任何长句都能触发，契约①当场失效；
+     │    由"含专名"触发，触发集是**封闭可枚举的**。
+     │ 🔴 **折点由 build_oneline.py 算死后随数据下发，⛔ 本文件绝不开 CSS 自动折行**：
+     │    `Psychotherapy and Psychosomatics` 里有空格，浏览器会折在 `Psychotherapy`
+     │    后面——那是所有折法里**最坏**的一个（上行结尾正好是个假刊名）。
+     └ 判据在 `proper_lines()`，字号在 `proper_font()`。⛔ 别在本文件里加第二套。
   ② 本文件**不是手改文案的模板**，是 build_oneline.py 的模子：分屏数据、画幅、
      各档色值一律由它填（占位符形如两侧双下划线）。⛔ 别在这里硬编码句子。
   ③ 画面上除了正在说的那一句，什么都没有——纸纹背景静止、无插画、无进度条。
@@ -44,6 +53,10 @@ __BG_LAYERS_CSS__
     -webkit-text-stroke:__STROKE_PX__px #FFFFFF;
     paint-order:stroke fill;                       /* 描边只长在字外，不吃笔画 */
     opacity:0; will-change:transform,opacity; }
+  /* 专名屏：两行。⚠️ 每行各自是个 block，`white-space:nowrap` 从 .scr 继承下来
+     ⇒ **行内仍然绝不自动折**，折点只认 JS 下发的那两段文本（见头部契约①的例外）。 */
+  .scr.proper { text-align:center; }
+  .scr.proper .ln { display:block; }
 
   #brand { position:absolute; left:0; right:0; bottom:__BRAND_BOTTOM__px; z-index:4;
     text-align:center; font-family:"ONELINE"; font-size:__BRAND_PX__px;
@@ -61,13 +74,26 @@ const CUES    = __CUES__;      // 句级 cues（渲染器注入），本版式�
 const SCREENS = __SCREENS__;   // build_oneline.py 断句分屏后的逐屏 {text,start,end,cue}
 const SAFE_W  = __SAFE_W__;
 const STROKE  = __STROKE_PX__;
+const FONT_PX = __FONT_PX__;
 const TAIL    = 1.4;           // 末屏定格
 
 const stage = document.getElementById('stage');
 const els = SCREENS.map(s => {
   const d = document.createElement('div');
-  d.className = 'scr';
-  d.textContent = s.text;
+  d.className = 'scr' + (s.lines ? ' proper' : '');
+  if (s.lines) {
+    /* 专名屏：字号与描边只改这一个元素——⛔ 其余屏一个像素都不动 */
+    d.style.fontSize = s.font_px + 'px';
+    d.style.webkitTextStroke = s.stroke_px + 'px #FFFFFF';
+    s.lines.forEach(t => {
+      const b = document.createElement('span');
+      b.className = 'ln';
+      b.textContent = t;
+      d.appendChild(b);
+    });
+  } else {
+    d.textContent = s.text;
+  }
   stage.appendChild(d);
   return d;
 });
@@ -105,14 +131,20 @@ if (SCREENS.length) {
    build_oneline.py --check 会开浏览器读这份 report 并据此判成败。
    offsetWidth 是布局宽（不受 transform 影响），描边画在布局盒之外，须自己把 2×STROKE 加回去。 */
 function report() {
-  const over = [];
+  const over = [], proper = [];
   SCREENS.forEach((s, i) => {
-    const w = els[i].offsetWidth + 2 * STROKE;
-    if (w > SAFE_W) over.push({ i, text:s.text, width:Math.round(w), limit:SAFE_W });
+    /* 专名屏字号/描边另算——⚠️ 拿整片的 STROKE 去量它，量出来的就不是它自己 */
+    const st = s.lines ? s.stroke_px : STROKE;
+    const w = els[i].offsetWidth + 2 * st;
+    if (w > SAFE_W) over.push({ i, text:s.text, width:Math.round(w), limit:SAFE_W,
+                                proper:!!s.lines });
+    if (s.lines) proper.push({ i, text:s.text, lines:s.lines, font_px:s.font_px,
+                               ratio:+(s.font_px / FONT_PX).toFixed(3),
+                               width:Math.round(w) });
   });
   window.ONELINE_REPORT = {
-    bg:"__BG_NAME__", canvas:[__W__, __H__], font_px:__FONT_PX__,
-    screens:SCREENS.length, total, overflow:over,
+    bg:"__BG_NAME__", canvas:[__W__, __H__], font_px:FONT_PX,
+    screens:SCREENS.length, total, overflow:over, proper,
   };
 }
 

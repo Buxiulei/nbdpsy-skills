@@ -8,11 +8,13 @@
 预览页的纹理层少一句 `mix-blend-mode:multiply`，所以它比真模板出片更浅更淡。
 **要验参数就比这里的五个字段，⛔ 别拿那张图的像素当靶子**（会得出「没搬对」的错结论）。
 """
+import re
 import sys
 from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).parent.parent / "nbdpsy-text-to-video"
 SCRIPTS = Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -132,7 +134,12 @@ def test_预检与真闸必须同源(tmp_path):
     _s.path.insert(0, str(SCRIPTS))
     import tts_gen
 
-    txt = ("感觉好了不代表能停药。药名一样但人不一样。"
+    # ⚠️ 样本要**两类各一**：一句真断不开（无专名的超长中文），一句走专名屏例外。
+    # 🩸 原样本只有刊名那句——专名屏例外上线后它被接住了，这个测试当场变成
+    #    「真闸 0 处 vs 预检 1 处」的假红。⇒ 同源测试的样本必须覆盖**每一种终态**，
+    #    否则它测的只是"当前恰好走到的那一条路"。
+    txt = ("感觉好了不代表能停药。"
+           "焦虑抑郁强迫创伤解离躯体化人格障碍成瘾进食睡眠问题。"
            "有一本期刊叫 Psychotherapy and Psychosomatics 上面登过这个研究。")
     src = tmp_path / "s.txt"
     src.write_text(txt, encoding="utf-8")
@@ -150,9 +157,13 @@ def test_预检与真闸必须同源(tmp_path):
     real = run("--cues", str(cf), "--bg", "miwen", "--canvas", "3:4",
                "--max-line-chars", "13", "--out", str(tmp_path / "o"), "--no-check")
     pre = run("--precheck", str(src), "--max-line-chars", "13")
-    n_real = real.stderr.count("断不开的片段")
-    n_pre = pre.stderr.count("· 第")
-    assert n_real == n_pre == 1, f"真闸 {n_real} 处 vs 预检 {n_pre} 处——两把尺不同源"
+    # 🔴 **三类终态逐一比对**，⛔ 不是只比 fail：断不开／软断／专名屏例外。
+    # 🩸 原来只比 fail，且 fail 与软断**共用「· 第」这一个记号** ⇒ 计数互相串味。
+    #    ⚠️ 那时的样本恰好一处软断都没有，所以坑一直没露头。
+    real_txt, pre_txt = real.stdout + real.stderr, pre.stdout + pre.stderr
+    for mark, want in (("[断不开]", 1), ("[专名屏]", 1), ("[软断]", 0)):
+        a, b = real_txt.count(mark), pre_txt.count(mark)
+        assert a == b == want, f"{mark}：真闸 {a} vs 预检 {b}（应各 {want}）——两把尺不同源"
     assert pre.returncode == 1, "有断不开却退出 0——闸门没起作用"
 
 
@@ -234,3 +245,119 @@ def test_渲染长度不许取音频长():
     src = (SCRIPTS / "render_card.py").read_text(encoding="utf-8")
     assert '"-shortest"' not in src, "⛔ -shortest 会把末屏定格截掉"
     assert "TAIL 被整个截掉" in src, "去掉的理由要留在原地，⛔ 别让后人顺手加回来"
+
+
+# ────── 结构虚词前后对称（2026-08-18 晚，博客长文 53 处软断实测） ──────
+
+@pytest.mark.parametrize("seg,head", [
+    ("第一作者是我们的咨询师负责人李牧阳", "的"),
+    ("把想来的人挡在门外面等着叫号", "在"),
+    ("正念更关心你和自己感受之间的距离", "和"),
+])
+def test_禁止让结构虚词做下屏开头(seg, head):
+    """🩸 昨天只禁了「不许做上屏结尾」，这三处照出不误——**判据只看了断口的左边**。
+
+    ⚠️ 根子在**两张登记表对同一批字给了相反的裁决**：`TAIL_BAN` 说不许做结尾，
+    `SOFT_HEAD` 却把「在/和/把/被…」列为合法开头。⇒ 现在合成一张 `STRUCT_PARTICLES`，
+    ⛔ 别再分开维护。
+    """
+    pytest.importorskip("jieba")
+    r = bo.soft_split(seg, 12)
+    if r:
+        assert not any(x.startswith(head) for x in r[1:]), f"下屏以「{head}」开头：{r}"
+
+
+def test_两张表必须是同一张():
+    """⛔ 别把 TAIL_BAN／HEAD_BAN 拆回两份——不对称的规则只挡住半边。"""
+    assert bo.TAIL_BAN is bo.STRUCT_PARTICLES and bo.HEAD_BAN is bo.STRUCT_PARTICLES
+    # SOFT_HEAD 里不许再出现结构虚词（那是"可以做开头"，与 HEAD_BAN 直接打架）
+    assert not [w for w in bo.SOFT_HEAD if w in bo.STRUCT_PARTICLES]
+
+
+# ────── 专名屏例外（助理 2026-08-18 拍板 A） ──────
+
+def test_专名屏例外由含专名触发_不由装不下触发():
+    """🔴 这条区别就是例外没有废掉版式的原因：若由"装不下"触发，**任何长句都能触发**，
+    tpl-oneline 硬契约①（绝不折行绝不缩字号）当场失效。"""
+    assert bo.proper_lines("这是一句没有任何英文专名的超长中文句子所以不该拿到例外", 13) is None
+    assert bo.proper_lines("有一本叫 Psychotherapy and Psychosomatics 的期刊", 13) is not None
+    # 装得下的短句不走例外（哪怕含专名）
+    assert bo.proper_lines("叫 PSS 量表", 13) is None
+
+
+@pytest.mark.parametrize("seg", [
+    "有一本叫 Psychotherapy and Psychosomatics 的期刊",
+    "这个量表叫 Perceived Stress Scale",
+    "研究发表在 Journal of Consulting and Clinical Psychology 上面",
+])
+def test_专名折行绝不切进单词(seg):
+    """🩸 首版写岔过：两条守卫互相打架（一条要求折点前是空格、另一条禁止折点贴空格）
+    ⇒ **唯一合法的折法被排除**，剩下的全是切进单词中间的，实际出的是
+    「Psychotherapy a ／ nd Psychosomatics」。⚠️ 是这条断言当场把它逼出来的。"""
+    lines = bo.proper_lines(seg, 13)
+    assert lines, f"{seg} 该给例外却没给"
+    joined = re.sub(r"\s+", " ", " ".join(lines))
+    for a, b in bo.proper_spans_en(seg):
+        assert re.sub(r"\s+", " ", seg[a:b]) in joined, f"专名被切碎：{lines}"
+
+
+def test_专名屏字号只影响那一屏():
+    """⚠️ 「没有 font_px 这个键」与「键值等于整片字号」不是一回事——
+    前者是"这一屏没走例外"，后者是"走了例外但没缩"。"""
+    cv = bo.apply_max_chars(bo.CANVAS["3:4"], 13)
+    screens = [{"text": "普通一屏", "lines": None},
+               {"text": "有一本叫 Psychotherapy and Psychosomatics 的期刊",
+                "lines": bo.proper_lines("有一本叫 Psychotherapy and Psychosomatics 的期刊", 13)}]
+    out = bo.with_proper_font(screens, cv)
+    assert "font_px" not in out[0], "普通屏被塞了字号"
+    assert 0 < out[1]["font_px"] <= cv["font"] and out[1]["stroke_px"] > 0
+
+
+def test_模板绝不开CSS自动折行():
+    """🔴 `Psychotherapy and Psychosomatics` 里有空格，浏览器会折在 `Psychotherapy`
+    后面——那是所有折法里**最坏**的一个（上行结尾正好是个假刊名）。
+    ⇒ 折点必须由 proper_lines() 算死后下发，⛔ 模板里不许出现自动折行的口子。"""
+    css = (ROOT / "assets/card-templates/tpl-oneline.html").read_text(encoding="utf-8")
+    for bad in ("white-space:normal", "white-space: normal", "word-break", "overflow-wrap"):
+        assert bad not in css, f"模板里出现了自动折行口子：{bad}"
+    assert ".scr.proper .ln { display:block; }" in css
+
+
+def test_段落版式不给专名例外_但也不静默():
+    """⚠️ paragraph 模板没实现两行排版 ⇒ 放行会**静默出一屏塞爆的字**。
+    关掉例外后它必须**照旧报「断不开」**，⛔ 不是悄悄放过。"""
+    seg = "有一本叫 Psychotherapy and Psychosomatics 的期刊"
+    _, fails, _, propers = bo.split_cue(seg + "。", 13, allow_proper=False)
+    assert fails and not propers
+    _, fails2, _, propers2 = bo.split_cue(seg + "。", 13, allow_proper=True)
+    assert propers2 and not fails2
+
+
+def test_数字串不可分割():
+    """🔴 危害比刊名更大：`请打 12356` 若被劈成「请打 123」「56」，
+    **读者看到的是一个错的危机热线号码**——刊名说错是学术不严谨，热线说错是有人打不通。"""
+    seg = "如果你正被持续的情绪困扰缠着不放请打 12356"
+    r = bo.soft_split(seg, 13)
+    for piece in (r or []):
+        assert "12356" in piece or not re.search(r"\d", piece), f"数字被劈开：{r}"
+    spans = bo._protected_spans("请打 12356 这个号码")
+    assert any(b - a == 5 for a, b in spans), "12356 没进保护区间"
+
+
+def test_建议断点本身必须合法():
+    """🩸 闸门拒了「…情绪困扰缠着不放请打 12356」，给的建议是「情绪困｜扰」
+    ——**切在词中间**，正是同一天刚立规矩要禁的。
+    ⚠️ 闸门报红是对的，但**处置建议把人引到一个新的错**——
+    一个把人引向错误修法的报错，比不报还糟。"""
+    pytest.importorskip("jieba")
+    seg = "如果你正被持续的情绪困扰缠着不放请打 12356"
+    edges, spans = bo.word_edges(seg), bo._protected_spans(seg)
+    for s in bo.suggest(seg, 13):
+        p = s.index("｜")
+        assert bo.soft_ok(seg, p, edges, spans), f"建议了一个非法断点：{s}"
+
+
+def test_挑不出合法断点时明说_不硬凑():
+    """⛔ 凑不出三条就别凑——`suggest` 返回空，调用方要打印"请改写成两句"。"""
+    src = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
+    assert src.count("挑不出合法断点") == 2, "预检与真闸都要有这句人话"
