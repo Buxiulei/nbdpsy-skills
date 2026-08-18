@@ -309,7 +309,13 @@ def mux(html_name: str, out_name: str) -> str:
         # -ar/-ac 必须显式给：loudnorm 内部按 192kHz 工作，不指定会把音轨留在 192k（A3 口径 48k/双声道）
         "-af", am.loudnorm_filter(pre, target=target),
         "-ar", str(am.SR), "-ac", "2", "-c:a", "aac", "-b:a", am.BITRATE,
-        "-shortest", "-movflags", "+faststart", str(out),
+        # 🩸 **⛔ 不用 `-shortest`**（2026-08-18 审稿代理实证，12 条全中）：
+        # 它让输出取**最短的流**＝音频长，而视频比音频长 `TAIL`（末屏定格 1.4s）
+        # ⇒ **TAIL 被整个截掉**：落款只淡入 40–47%（末帧不透明度 63–72%、基本读不出），
+        #    末屏「12356」念完立刻黑、**没有定格**。
+        # ⇒ 去掉它，输出取**最长流＝视频**，音频结束后自然静音，末屏定格与落款都完整。
+        # ⚠️ 只要 `total = end + TAIL` 这条不变，视频必然比音频长，⛔ 不会反过来截视频。
+        "-movflags", "+faststart", str(out),
     ], check=True, capture_output=True)
     v = am.verify_master(out, target=target)
     for label, passed, why in v["checks"]:

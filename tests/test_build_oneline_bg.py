@@ -11,6 +11,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = Path(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -192,3 +194,43 @@ def test_jieba不可用是没查不是查过(monkeypatch):
     assert bo.word_edges("随便一句话") is None
     # 此时 soft_ok 只走词形判据，⛔ 不因为「没有词边界」就全判非法
     assert bo.soft_ok("很多人参与了这个项目", 3, None) or True
+
+
+# ────── 断句器三条硬否决（2026-08-18 审稿代理审 12 条成片实证） ──────
+
+@pytest.mark.parametrize("seg,forbidden_tail", [
+    ("如果你正被持续的情绪困扰缠着", "的"),      # 🩸 5 条科普的危机声明全中
+    ("练的就是怎么在难受的时候", "的"),
+])
+def test_禁止在结构虚词后断屏(seg, forbidden_tail):
+    """🩸 `SOFT_TAIL` 原本把「的」当合法结尾 ⇒「如果你正被持续的｜情绪困扰缠着」被判合法。
+    ⚠️ **jieba 词边界拦不住它**——「持续的」「情绪困扰」**本来就是两个词**，那确实是词边界。
+    ⇒ **词边界是必要条件，⛔ 不是充分条件。**"""
+    import pytest as _p
+    _p.importorskip("jieba")
+    r = bo.soft_split(seg, 12)
+    if r:
+        assert not any(x.endswith(forbidden_tail) for x in r[:-1]), f"断在「{forbidden_tail}」后：{r}"
+
+
+def test_英文词组不可分割_宁可拒也不劈():
+    """🔴 实证：`Psychotherapy and Psychosomatics` 被劈成两屏，
+    **第 2 屏单看是个不存在的刊名**——那不是"读着别扭"，是**编造了一个刊物**。
+    ⇒ 宁可断不开（要求补逗号），⛔ 也不劈开。"""
+    r = bo.soft_split("有一本叫 Psychotherapy and Psychosomatics 的期刊", 12)
+    assert r is None or not any("Psychotherapy" in x and "Psychosomatics" not in x for x in r)
+
+
+def test_正反问不可劈():
+    """🔴 实证：「它还在不在影响你的日子」→「是它还在不」，1.6s 一屏、根本不成话。"""
+    r = bo.soft_split("它还在不在影响你的日子", 12)
+    assert r is None or all("在不" not in x or "在不在" in x for x in r)
+
+
+def test_渲染长度不许取音频长():
+    """🩸 `-shortest` 让输出取**最短流＝音频长**，而视频比音频长 TAIL(1.4s)
+    ⇒ **末屏定格与落款被整个截掉**（12 条全中：落款只淡入 40–47%）。
+    最小样本实测：视频 2.0s／音频 1.2s，带 `-shortest` 出 1.2s、去掉出 2.0s。"""
+    src = (SCRIPTS / "render_card.py").read_text(encoding="utf-8")
+    assert '"-shortest"' not in src, "⛔ -shortest 会把末屏定格截掉"
+    assert "TAIL 被整个截掉" in src, "去掉的理由要留在原地，⛔ 别让后人顺手加回来"

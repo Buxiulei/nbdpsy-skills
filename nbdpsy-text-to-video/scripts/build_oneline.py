@@ -133,7 +133,32 @@ SOFT_HEAD = ("然后", "所以", "因为", "其实", "真正", "根本", "反而
              "是", "在", "把", "被", "让", "给", "从", "对", "跟", "和", "与", "就", "都",
              "才", "也", "还", "又", "却", "而", "但", "并", "不", "没", "要", "会", "能",
              "可", "比", "像", "为", "由", "到", "往", "向", "再", "更", "最", "这", "那")
-SOFT_TAIL = ("的", "了", "着", "过", "们", "时", "后")
+SOFT_TAIL = ("了", "着", "过", "们", "时", "后")
+# 🩸 「的」已从 SOFT_TAIL 移除（2026-08-18 审稿代理实证，936 屏扫出约 40 处）：
+#    它把「如果你正被持续的｜情绪困扰缠着」判成合法断点——**5 条科普的危机声明全中**。
+#    ⚠️ jieba 词边界拦不住它：「持续的」「情绪困扰」**本来就是两个词**，那确实是词边界。
+#    ⇒ 词边界是必要条件，**⛔ 不是充分条件**。
+
+TAIL_BAN = ("的", "地", "得", "把", "被", "在", "从", "对", "向", "给", "跟", "和", "与")
+"""🔴 **禁止在这些字后面断屏**（助理 2026-08-18 拍）——它们是**结构虚词**，
+后面必然还有话，断在这里那一屏**不成话**。
+实证：「如果你正被持续的｜情绪困扰缠着」「练的就是怎么在难受的｜时候」。"""
+
+AB_QUESTION = re.compile(r"(.)不\1|在不在|行不行|是不是|有没有|能不能|会不会|要不要")
+"""正反问（X不X）**不可劈**：实证「它还在不在影响你的日子」被劈成
+「是它还在不」——**1.6s 一屏、根本不成话**。"""
+
+EN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9''\-]*(?:\s+[A-Za-z][A-Za-z0-9''\-]*)*")
+"""**英文连续词组视为不可分割 token**（刊名/书名/术语）：实证
+`Psychotherapy and Psychosomatics` 被劈成「一本叫 Psychotherapy」→「and Psychosomatics」，
+**第 2 屏单看是个不存在的刊名**——⚠️ 比"读着别扭"严重得多，那是**编造了一个刊物**。"""
+
+
+def _protected_spans(seg: str):
+    """不可切区间 [start, end)：英文词组 ＋ 正反问结构。"""
+    spans = [(m.start(), m.end()) for m in EN_TOKEN.finditer(seg) if m.end() - m.start() > 1]
+    spans += [(m.start(), m.end()) for m in AB_QUESTION.finditer(seg)]
+    return spans
 MIN_SOFT = 3      # 软断点切出来的碎片不得短于此（避免"都被""而是"这种孤儿行）
 MIN_SEC = 1.0     # 单屏建议下限；低于此只告警（字数上限决定了它并不下去，只能改稿）
 
@@ -180,13 +205,25 @@ def word_edges(seg: str):
     return out
 
 
-def soft_ok(seg: str, i: int, edges=None) -> bool:
+def soft_ok(seg: str, i: int, edges=None, spans=None) -> bool:
     """在 seg 的第 i 个字之前断开是否算合法软断点。
 
-    两条都要满足：① 本来的 SOFT_HEAD/SOFT_TAIL 词形判据；
-    ② 🔴 **切点落在词边界上**（jieba）——⛔ 别把「参与」「创伤后应激障碍」劈开。
-    ⚠️ `edges is None` 表示 jieba 不可用，此时只走 ①（并由调用方报出「这项没查」）。
+    四条**全部**要满足（⚠️ 前三条是硬否决，任一不过就不许断）：
+    ① 🔴 **前一个字不是结构虚词**（`TAIL_BAN`）——断在「的/把/被/在…」后面那一屏不成话；
+    ② 🔴 **不切进保护区间**（英文词组／正反问）——切开会**编造出不存在的刊名**、
+       或留下「是它还在不」这种半句；
+    ③ **切点落在词边界上**（jieba）——⛔ 别把「参与」「创伤后应激障碍」劈开；
+    ④ 本来的 SOFT_HEAD/SOFT_TAIL 词形判据。
+
+    🩸 **①②是 2026-08-18 补的，因为③不够**：jieba 认为「持续的｜情绪困扰」是词边界
+    （那**确实**是两个词）⇒ **词边界是必要条件，⛔ 不是充分条件**。
+    ⚠️ `edges is None` 表示 jieba 不可用，此时跳过③（并由调用方报出「这项没查」）。
     """
+    if i > 0 and seg[i - 1] in TAIL_BAN:
+        return False
+    for a, b in (spans or ()):
+        if a < i < b:                       # 切点落在保护区间内部
+            return False
     if not (seg[i:].startswith(SOFT_HEAD) or seg[:i].endswith(SOFT_TAIL)):
         return False
     return True if edges is None else (i in edges)
@@ -199,6 +236,7 @@ def soft_split(seg: str, cap: int):
     """
     n = len(seg)
     edges = word_edges(seg)      # None ⇒ jieba 不可用，词边界这一项没查
+    spans = _protected_spans(seg)   # 英文词组／正反问：切进去就出事
     best = {n: (0, 0.0, None)}   # 位置 -> (片数, 长度方差, 下一刀位置)
 
     def solve(i):
@@ -210,7 +248,7 @@ def soft_split(seg: str, cap: int):
             if units(seg[i:j]) > cap:
                 break
             if j < n:
-                if n - j < MIN_SOFT or not soft_ok(seg, j, edges):
+                if n - j < MIN_SOFT or not soft_ok(seg, j, edges, spans):
                     continue
             sub = solve(j)
             if sub is None:
@@ -502,6 +540,14 @@ def precheck(path: Path, cap: int) -> int:
         for x in fails:
             print(f"  · 第 {x['sent_no']} 句「{x['seg']}」（{x['chars']:.1f} 字）", file=sys.stderr)
             print(f"    建议断点：{x['suggest'][0] if x['suggest'] else '（无）'}", file=sys.stderr)
+            # ⚠️ 断不开的原因往往是保护区间——说清楚，⛔ 别让人在不该断的地方硬断
+            seg = x["seg"]
+            if EN_TOKEN.search(seg) and len(EN_TOKEN.search(seg).group()) > 1:
+                print(f"    ⚠️ 含英文词组「{EN_TOKEN.search(seg).group()}」——**不可分割**"
+                      f"（劈开会造出不存在的刊名/术语）⇒ 逗号补在它**之外**", file=sys.stderr)
+            if AB_QUESTION.search(seg):
+                print(f"    ⚠️ 含正反问「{AB_QUESTION.search(seg).group()}」——**不可劈**"
+                      f"（劈开会留下「还在不」这种半句）", file=sys.stderr)
         return 1
     print("\n✅ 全部可拆，跑批不会被单行闸拦下", file=sys.stderr)
     return 0
