@@ -10,7 +10,7 @@
 
 ⚠️ 路径基准是脚本自身所在目录（HERE），不是 cwd——每条视频必须独立工作目录、各带一份本脚本副本。
 """
-import argparse, json, os, re, subprocess, sys, time
+import argparse, json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -247,6 +247,47 @@ def _probe_gl_renderer(page, angle: str):
     return r
 
 
+def _mp4_playable(path: Path) -> float | None:
+    """成片能不能被下游吃下——返回时长秒数，读不出返回 None。
+
+    🔴 **⛔ 不用「文件存在且非空」当判据**：MP4 的 moov atom 在**末尾**写入，
+    混音进行中的半成品同样存在、同样有几 MB（2026-08-18 实测：3.8MB 的半成品
+    `ffprobe` 报 `moov atom not found`，写完是 25MB）。
+    **拿它当「渲完了」去删帧，会把还在用的帧删掉。**
+    """
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
+        return float(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    except Exception:
+        return None
+
+
+def sweep_frames(html_name: str, out_name: str, keep: bool = False) -> str:
+    """成片确认可读后删帧目录。🩸 2026-08-18 立，起因是一次跑批前的体积核算。
+
+    **1080×1440 30fps 的 PNG ≈2.3MB/帧，一条 3–6 分钟口播＝12–25GB，12 条并存 241GB。**
+    而磁盘是**共享的**——撑爆不只是本线失败，**会连同时在出片的别条线一起死**。
+    ⇒ 清帧从「跑批脚本各自记得做」提到**产线默认行为**，⛔ 别再指望每个调用方自觉。
+
+    ⚠️ 三条不删的情况：① `--keep-frames`；② 成片 `ffprobe` 读不出（渲染没成功，
+    帧还有用）；③ 分片模式（帧还要给别的片和收口用）——由调用方不调本函数来保证。
+    """
+    fd = HERE / ("frames_" + Path(html_name).stem)
+    if keep:
+        return f"🔲 保留帧目录（--keep-frames）：{fd.name}"
+    if not fd.is_dir():
+        return ""
+    dur = _mp4_playable(HERE / out_name)
+    if dur is None:
+        return (f"⚠️ 成片读不出时长，**帧目录保留**：{fd.name}"
+                f"\n   ⛔ 这不是「渲完了」——先查 {out_name} 再决定，别手动删帧")
+    n = len(list(fd.glob("f*.png")))
+    size = sum(f.stat().st_size for f in fd.glob("f*.png")) / 1e9
+    shutil.rmtree(fd)
+    return f"🧹 已删帧目录 {fd.name}（{n} 帧 / {size:.1f}GB）——成片 {dur:.1f}s 可读"
+
+
 def mux(html_name: str, out_name: str) -> str:
     """合帧 + 混音 + **母带响度归一**。分片渲完后由 wrapper 调这条路径收口。
 
@@ -363,6 +404,9 @@ def main(argv=None):
     ap.add_argument("--verify-frames", action="store_true", help="只校验帧目录连续性")
     ap.add_argument("--expect", type=int, help="配合 --verify-frames：期望帧数")
     ap.add_argument("--mux-only", action="store_true", help="只合帧混音（分片渲完后收口）")
+    ap.add_argument("--keep-frames", action="store_true",
+                    help="渲完保留帧目录（调试用）。⚠️ 默认**成片确认可读后自动删**——"
+                         "一条 3–6 分钟口播的帧是 12–25GB，磁盘共享，撑爆会连累别条线")
     a = ap.parse_args(argv)
 
     if a.verify_frames:
@@ -371,12 +415,18 @@ def main(argv=None):
         if not a.out:
             ap.error("--mux-only 需要 out 参数")
         mux(a.html, a.out)
+        print(sweep_frames(a.html, a.out, a.keep_frames), file=sys.stderr)
         return 0
     if a.shard is None and not a.out:
         ap.error("整片渲染需要 out 参数")
     if a.shard is not None:
         shard_range(1, *a.shard)  # 提前把 i/N 越界喊出来，别等渲到一半
     render(a.html, a.out, tuple(a.shard) if a.shard else None, a.angle, a.deterministic)
+    # ⚠️ 只在整片渲染后清帧——**分片模式绝不能清**：帧还要给别的片和 --mux-only 收口用
+    if a.shard is None:
+        msg = sweep_frames(a.html, a.out, a.keep_frames)
+        if msg:
+            print(msg, file=sys.stderr)
     return 0
 
 
