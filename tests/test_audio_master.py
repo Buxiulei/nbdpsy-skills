@@ -193,3 +193,54 @@ def test_form_targets_cover_all_four_outputs():
     """四条合成出口各有一档位。当前同值 −16（调研结论：不按时长分档，按投放渠道分档）。"""
     assert set(am.FORM_TARGETS) == {"slideshow", "microfilm", "card", "podcast"}
     assert set(am.FORM_TARGETS.values()) == {-16.0}
+
+
+# ────── 字卡线接 BGM（老板 2026-08-18 22:40：「都没有背景音，需要添加」） ──────
+
+import re as _re
+from pathlib import Path as _P
+
+_RC = _P(__file__).parent.parent / "nbdpsy-text-to-video" / "scripts" / "render_card.py"
+
+
+def test_字卡线的BGM必须复用prepare_bgm():
+    """🩸 根因不是"没做过 BGM"——**轮播线与微电影线一直有**，`BGM_DUCK_LU=14` 还是老板
+    2026-08-16 对着成片实听调下来的。**只有字卡线漏接了。**
+
+    ⚠️ 这是 `BGM_DUCK_LU` 注释里那条教训的第二次现身：**「修复只落在他点名的那个形态上」**
+    ⇒ 同一个老板在另一个形态上又听到一次同样的问题。
+    ⇒ 三条线必须同一个声音，⛔ 不许为字卡线另写一套混音。"""
+    src = _RC.read_text(encoding="utf-8")
+    assert "am.prepare_bgm(" in src, "字卡线没复用 prepare_bgm"
+    assert "sidechain" not in src.lower() or "⛔ 不在这里开分支" in src, \
+        "字卡线单独上 sidechain ＝ 三条线三个声音"
+    assert "BGM_DEFAULT = \"auto\"" in src, "默认必须是纯合成（零版权）"
+
+
+def test_ffmpeg输入段不许混进编码选项():
+    """🩸 `-i a.mp4 -c:v copy -i b.wav` 里的 `-c:v copy` 被 ffmpeg 当成 **b.wav 的输入选项**
+    ⇒ 退出码 8。⚠️ 而 `capture_output=True` 把真正的原因（stderr）**吞了**，
+    看到的只有「returned non-zero exit status 8」。"""
+    src = _RC.read_text(encoding="utf-8")
+    vin = _re.search(r"vin = \((.*?)\n\s*vopt", src, _re.S)
+    assert vin and "-c:v" not in vin.group(1), "输入段里混进了 -c:v"
+    assert "def _run_ffmpeg" in src and "p.stderr" in src, "ffmpeg 失败时必须把 stderr 报出来"
+
+
+def test_remux不许覆盖输入():
+    """⚠️ ffmpeg 边读边写会把源片写坏，**而坏了就没有原件了**（那批帧渲完即清）。"""
+    src = _RC.read_text(encoding="utf-8")
+    assert "重混的输出不能覆盖输入" in src
+
+
+def test_remux不许拿成片音轨当口播():
+    """⛔ 成片里的音轨**已经归一过、还可能已经混了 BGM** ⇒ 拿它当口播＝归一叠归一。"""
+    src = _RC.read_text(encoding="utf-8")
+    assert "别拿成片里的音轨当口播" in src
+
+
+def test_remux参数不借位置参数():
+    """🩸 借了的话 `--remux a.mp4 b.mp4` 会把 b.mp4 当成 html，
+    报出来的却是「需要 out 参数」——**把用法错说成缺参数**，会教人走错路。"""
+    src = _RC.read_text(encoding="utf-8")
+    assert 'nargs=2, metavar=("源.mp4", "输出.mp4")' in src

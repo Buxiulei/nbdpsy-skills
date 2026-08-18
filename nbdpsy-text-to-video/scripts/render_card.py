@@ -10,7 +10,7 @@
 
 ⚠️ 路径基准是脚本自身所在目录（HERE），不是 cwd——每条视频必须独立工作目录、各带一份本脚本副本。
 """
-import argparse, json, os, re, shutil, subprocess, sys, time
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -288,7 +288,50 @@ def sweep_frames(html_name: str, out_name: str, keep: bool = False) -> str:
     return f"🧹 已删帧目录 {fd.name}（{n} 帧 / {size:.1f}GB）——成片 {dur:.1f}s 可读"
 
 
-def mux(html_name: str, out_name: str) -> str:
+def _run_ffmpeg(cmd: list[str]) -> None:
+    """跑 ffmpeg，失败时**把 stderr 尾巴报出来**。
+
+    🩸 `capture_output=True, check=True` 抛出的 `CalledProcessError` 只会显示
+    「returned non-zero exit status 8」和一长串参数——**真正的原因在 stderr 里，而它被吞了**。
+    ⚠️ 排查时得手动重跑一遍才看得到，那正是本仓反复踩的「吞 stderr」。
+    """
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"ffmpeg 失败（exit {p.returncode}）：\n{(p.stderr or '')[-1500:]}")
+
+
+BGM_DEFAULT = "auto"
+"""字卡线的 BGM 默认档。
+
+🔴 **`auto` ＝ `gen_bgm.py` 纯合成（零版权、零外部素材），⛔ 不下载来路不明的音乐**——
+这是本仓 2026-08-16 就拍过的立场（`audio_master.prepare_bgm` 的注释）：
+**一条商用短视频背一首侵权 BGM，赔的钱比整条产线省的多**。
+⚠️ 要用真实曲子就把文件路径传给 `--bgm`，⛔ 别改这个默认值去指向某个下载来的文件。
+
+🩸 **老板 2026-08-18 22:40 看 X6 12 条成片：「都没有背景音，需要添加」。**
+根因不是"没做过 BGM"——**轮播线（slideshow_video）与微电影线（compose_video）一直有**，
+`BGM_DUCK_LU=14` 还是老板 2026-08-16 对着成片实听调下来的。
+**只有字卡线漏接了。**⚠️ 这正是 `BGM_DUCK_LU` 注释里写的那条教训的第二次现身：
+**「修复只落在他点名的那个形态上」** ⇒ 同一个老板在另一个形态上又听到一次同样的问题。
+⇒ 本次接线**直接复用 `prepare_bgm`**，⛔ 不为字卡线另写一套混音——三条线必须同一个声音。"""
+
+
+def _mix_bgm(am, narr: Path, total: float, bgm: str, duck: float, tmp: Path):
+    """把 BGM 备好并返回 (ready_wav, 口播 LUFS)；`bgm` 为空/None 表示不加。
+
+    ⚠️ **⛔ 没有 sidechain**（助理 2026-08-18 提过"有人声段再压 4–6 dB"）：
+    轮播线与微电影线用的都是**静态压 14 LU**，字卡线单独上 sidechain ＝ **三条线三个声音**，
+    正是 `BGM_DUCK_LU` 注释警告过的事。要加就三条线一起加，⛔ 不在这里开分支。
+    """
+    if not bgm:
+        return None, None
+    narr_lufs = am.loudness_stats(narr)["i"]
+    ready, _ = am.prepare_bgm(bgm, total, tmp, narration_lufs=narr_lufs, duck_db=duck)
+    return ready, narr_lufs
+
+
+def mux(html_name: str, out_name: str, bgm: str = BGM_DEFAULT,
+        duck: float = None) -> str:
     """合帧 + 混音 + **母带响度归一**。分片渲完后由 wrapper 调这条路径收口。
 
     🩸 母带归一 2026-08-17 补：此前本线只把 narration 原样贴上去，成片响度就是 TTS 原始
@@ -296,6 +339,7 @@ def mux(html_name: str, out_name: str) -> str:
     （两遍法：先分析 narration 拿 measured_*，再带着测量值线性归一），⛔ 别改成先编 AAC 再补一遍。
     """
     am = _load_audio_master()
+    duck = am.BGM_DUCK_LU if duck is None else duck
     fd = HERE / ("frames_" + Path(html_name).stem)
     out = HERE / out_name
     narr = HERE / ("narration.mp3.wav" if (HERE / "narration.mp3.wav").exists() else "narration.mp3")
@@ -303,11 +347,44 @@ def mux(html_name: str, out_name: str) -> str:
     pre = am.loudness_stats(narr, target=target)
     print(f"[master] 口播 {pre['i']:.2f} LUFS → 归一到 {target:g} LUFS "
           f"（提 {target - pre['i']:+.1f} dB）", file=sys.stderr, flush=True)
-    subprocess.run([
-        "ffmpeg", "-y", "-framerate", str(FPS), "-i", str(fd / "f%05d.png"), "-i", str(narr),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "19", "-preset", "medium",
+    n_frames = len(list(fd.glob("f*.png")))
+    total = n_frames / FPS
+    with tempfile.TemporaryDirectory() as td:
+        ready, _ = _mix_bgm(am, narr, total, bgm, duck, Path(td))
+        return _encode(am, fd, narr, ready, out, out_name, pre, target)
+
+
+def _encode(am, fd, narr, bgm_ready, out: Path, out_name: str, pre: dict, target: float,
+            video_src: Path = None) -> str:
+    """最后一次编码：视频（帧目录或已成片）＋ 口播（＋BGM）→ 母带归一 → 自检。
+
+    🔴 **BGM 与母带归一必须在同一次编码里**：先编好口播再补一遍 BGM ＝ 二次编码，
+    而且母带量的就不是最终音轨了（**量具与被量对象差一层**）。
+    """
+    # 🩸 **输入段只放 `-i`，编码选项一律留到所有输入之后**：ffmpeg 把 `-i` 之前的选项
+    # 当成**下一个输入的**选项 ⇒ `-i a.mp4 -c:v copy -i b.wav` 里的 `-c:v copy` 被当成
+    # b.wav 的输入选项，退出码 8。⚠️ 命令行拼错不会写出一个坏文件，它直接失败——
+    # 但**失败信息在 stderr 里，而这一行原本 capture_output=True 把它吞了**，
+    # 看到的只有 "returned non-zero exit status 8"（见下方 _run_ffmpeg）。
+    vin = (["-i", str(video_src)] if video_src else
+           ["-framerate", str(FPS), "-i", str(fd / "f%05d.png")])
+    vopt = (["-c:v", "copy"] if video_src else
+            ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "19", "-preset", "medium"])
+    if bgm_ready:
+        # ⚠️ normalize=0 是关键：否则 amix 把口播+BGM 各压低 ~6dB（compose_video 实测过的 bug）。
+        # BGM 已由 prepare_bgm 归一到「口播 − duck」并铺满/淡化，这里直接混，⛔ 不再调音量。
+        # duration=first ⇒ 以口播为准；BGM 已按 total 裁好，⛔ 不会反过来截视频。
+        af = ["-filter_complex",
+              f"[1:a][2:a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
+              f"{am.loudnorm_filter(pre, target=target)}[a]",
+              "-map", "0:v", "-map", "[a]"]
+        ain = ["-i", str(narr), "-i", str(bgm_ready)]
+    else:
+        af = ["-af", am.loudnorm_filter(pre, target=target)]
+        ain = ["-i", str(narr)]
+    _run_ffmpeg([
+        "ffmpeg", "-y", *vin, *ain, *af, *vopt,
         # -ar/-ac 必须显式给：loudnorm 内部按 192kHz 工作，不指定会把音轨留在 192k（A3 口径 48k/双声道）
-        "-af", am.loudnorm_filter(pre, target=target),
         "-ar", str(am.SR), "-ac", "2", "-c:a", "aac", "-b:a", am.BITRATE,
         # 🩸 **⛔ 不用 `-shortest`**（2026-08-18 审稿代理实证，12 条全中）：
         # 它让输出取**最短的流**＝音频长，而视频比音频长 `TAIL`（末屏定格 1.4s）
@@ -316,7 +393,7 @@ def mux(html_name: str, out_name: str) -> str:
         # ⇒ 去掉它，输出取**最长流＝视频**，音频结束后自然静音，末屏定格与落款都完整。
         # ⚠️ 只要 `total = end + TAIL` 这条不变，视频必然比音频长，⛔ 不会反过来截视频。
         "-movflags", "+faststart", str(out),
-    ], check=True, capture_output=True)
+    ])
     v = am.verify_master(out, target=target)
     for label, passed, why in v["checks"]:
         print(f"  {'✅' if passed else '❌'} {label}" + ("" if passed else f" —— {why}"),
@@ -326,6 +403,49 @@ def mux(html_name: str, out_name: str) -> str:
     print(f"✅ {out_name} {out.stat().st_size/1048576:.1f}MB "
           f"({v['measured_lufs']:.2f} LUFS / {v['measured_tp']:.2f} dBTP)", flush=True)
     return str(out)
+
+
+def remux(src_mp4: str, out_name: str, bgm: str = BGM_DEFAULT, duck: float = None) -> str:
+    """**对已成片重混**：抽视频流原样 copy，重新混口播＋BGM 并重做母带归一。⛔ 不重渲帧。
+
+    🩸 用途：老板 2026-08-18 说 12 条成片「都没有背景音」——那批帧早删了
+    （`sweep_frames` 渲完即清），重渲 12 条要 70 分钟，重混只要几分钟。
+
+    ⚠️ **与 `--mux-only` 不是一回事**：`--mux-only` 是「分片渲完后从**帧目录**收口」，
+    ⛔ 没改它的语义——改会动到分片渲染那条在产路径。
+    """
+    am = _load_audio_master()
+    duck = am.BGM_DUCK_LU if duck is None else duck
+    src = HERE / src_mp4
+    if not src.is_file():
+        raise RuntimeError(f"要重混的成片不存在：{src}")
+    out = HERE / out_name
+    if out.resolve() == src.resolve():
+        raise RuntimeError(f"⛔ 重混的输出不能覆盖输入（{out_name}）——"
+                           f"ffmpeg 边读边写会把源片写坏，且**坏了就没有原件了**")
+    narr = HERE / ("narration.mp3.wav" if (HERE / "narration.mp3.wav").exists() else "narration.mp3")
+    if not narr.is_file():
+        raise RuntimeError(f"重混要口播原件，没找到：{narr}\n"
+                           f"⛔ 别拿成片里的音轨当口播——它已经归一过、还可能已经混了 BGM")
+    target = am.FORM_TARGETS["card"]
+    pre = am.loudness_stats(narr, target=target)
+    total = _video_seconds(src)
+    print(f"[remux] {src.name} {total:.2f}s ｜口播 {pre['i']:.2f} LUFS ｜BGM {bgm or '（无）'}",
+          file=sys.stderr, flush=True)
+    with tempfile.TemporaryDirectory() as td:
+        ready, _ = _mix_bgm(am, narr, total, bgm, duck, Path(td))
+        return _encode(am, None, narr, ready, out, out_name, pre, target, video_src=src)
+
+
+def _video_seconds(path: Path) -> float:
+    """成片时长（**读 ffprobe，⛔ 不按帧数估**——重混对的是这条片子的真实长度）。"""
+    p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=nw=1:nk=1", str(path)],
+                       capture_output=True, text=True, timeout=120)
+    try:
+        return float((p.stdout or "").strip())
+    except ValueError:
+        raise RuntimeError(f"读不到 {path.name} 的时长：{(p.stderr or '')[-300:]}")
 
 
 def render(html_name: str, out_name: str = None, shard=None, angle: str = "swiftshader",
@@ -398,7 +518,7 @@ def render(html_name: str, out_name: str = None, shard=None, angle: str = "swift
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="字卡短片逐帧渲染（默认 CPU 光栅 + 可分片并行）")
-    ap.add_argument("html", help="模板 HTML（相对本脚本所在目录）")
+    ap.add_argument("html", nargs="?", help="模板 HTML（相对本脚本所在目录）；--remux 时不需要")
     ap.add_argument("out", nargs="?", help="输出 MP4（相对本脚本所在目录）")
     ap.add_argument("--shard", nargs=2, type=int, metavar=("I", "N"),
                     help="只渲第 I/N 片（I 从 1 起），帧号保持全局连续，跳过混音")
@@ -410,17 +530,35 @@ def main(argv=None):
     ap.add_argument("--verify-frames", action="store_true", help="只校验帧目录连续性")
     ap.add_argument("--expect", type=int, help="配合 --verify-frames：期望帧数")
     ap.add_argument("--mux-only", action="store_true", help="只合帧混音（分片渲完后收口）")
+    ap.add_argument("--remux", nargs=2, metavar=("源.mp4", "输出.mp4"),
+                    help="**对已成片重混**背景音＋口播并重做母带归一，⛔ 不重渲帧。"
+                         "⚠️ 与 --mux-only 不同：那个是从帧目录收口，这个是从成片抽视频流。"
+                         "🩸 源与输出都写在这里、⛔ 不借位置参数——借了的话 "
+                         "`--remux a.mp4 b.mp4` 会把 b.mp4 当成 html，"
+                         "报出来的却是「需要 out 参数」，**把用法错说成缺参数**")
+    ap.add_argument("--bgm", default=BGM_DEFAULT,
+                    help=f"背景音：auto＝gen_bgm.py 纯合成（默认，零版权），或给音频文件路径。"
+                         f"⛔ 别把默认值改成某个下载来的文件")
+    ap.add_argument("--no-bgm", action="store_true", help="不加背景音（出纯口播片）")
+    ap.add_argument("--bgm-duck", type=float, default=None,
+                    help="BGM 低于口播多少 LU（默认走 audio_master.BGM_DUCK_LU＝14，"
+                         "老板 2026-08-16 实听调定）。⚠️ 改它要重新实听，⛔ 别凭「听起来应该」拧")
     ap.add_argument("--keep-frames", action="store_true",
                     help="渲完保留帧目录（调试用）。⚠️ 默认**成片确认可读后自动删**——"
                          "一条 3–6 分钟口播的帧是 12–25GB，磁盘共享，撑爆会连累别条线")
     a = ap.parse_args(argv)
 
+    if a.remux:
+        remux(a.remux[0], a.remux[1], bgm=("" if a.no_bgm else a.bgm), duck=a.bgm_duck)
+        return 0
+    if not a.html:
+        ap.error("需要 html 参数（除非用 --remux）")
     if a.verify_frames:
         return verify_frames(a.html, a.expect)
     if a.mux_only:
         if not a.out:
             ap.error("--mux-only 需要 out 参数")
-        mux(a.html, a.out)
+        mux(a.html, a.out, bgm=("" if a.no_bgm else a.bgm), duck=a.bgm_duck)
         print(sweep_frames(a.html, a.out, a.keep_frames), file=sys.stderr)
         return 0
     if a.shard is None and not a.out:
