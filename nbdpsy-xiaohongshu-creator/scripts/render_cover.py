@@ -915,9 +915,14 @@ def main():
                         f"可选：{fit['orn_known']}（注意是连字符不是下划线）")
     if fit.get('hero_glyph_pct_low'):
         lo, hi = fit['hero_glyph_pct_band']
-        warnings.append(f"🔴 hero 字高只占画面高 {fit['hero_glyph_pct_of_h']}%，低于 §2-b 的 {lo}–{hi}%——"
-                        f"hero 太长撑不起来。处置＝把 hero 砍成最扎心的那个短句、"
-                        f"剩下的降到 subtitle 副题层（方案 1），⛔ 不是调参数")
+        ml = fit.get('hero_max_line')
+        warnings.append(
+            f"🔴 hero 字高只占画面高 {fit['hero_glyph_pct_of_h']}%，低于 §2-b 的 {lo}–{hi}%——"
+            f"**最长那一行 {ml} 字**（上限 6，想稳在 11% 就 ≤5）。\n"
+            f"   ⇒ **重新断行，或把最长那行换成更短的词**；"
+            f"⛔ **砍总字数不解决问题**——实测 10 字拆成 3+7 只有 8.00%，"
+            f"而 10 字拆成 5+5 有 11.12%。\n"
+            f"   ⚠️ 真放不下才把次要半句降到 subtitle 副题层，⛔ 不是调参数。")
     # 上限告警**两个画幅同一句**。⛔ 别再按画幅分岔——分岔是上一版为绕开根因加的：
     # 那时 HERO_MAX 拿 0.86 反推，夹取处字高恒 14.2～14.7%，13% 在横版恒被冲破。
     # 现在 HERO_MAX 由二分实测解出，夹取处字高由构造 ≤13.00%（580 样本实扫，越线 0 个），

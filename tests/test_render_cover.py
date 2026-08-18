@@ -1240,3 +1240,32 @@ def test_竖版上限接管区间恰好是4字以内(_browser, W, H):
             f"{W}x{H} {n} 字本该被上限接管"
     assert _fit_band(_browser, _cover(5), W, H)["hero_at_max"] is False, \
         f"{W}x{H} 5 字本该由宽度接管（⚠️ 5 字是边界，字形墨迹比会影响它落在哪边）"
+
+
+# ────────── hero 字高由「最长那一行」决定（13 样本实测，2026-08-18） ──────────
+
+@pytest.mark.parametrize("lines,expect_max", [
+    (["他爱不爱你", "你答不了"], 5),      # 5+4 = 总 9 字
+    (["标签不能改", "循环可以改"], 5),    # 5+5 = 总 10 字 → 与上面字高相同
+    (["支点多", "不一定让你更稳"], 7),    # 3+7 = 总 10 字 → 🔴 但只有 8.00%
+])
+def test_hero量的是最长行不是总字数(_browser, lines, expect_max):
+    """🔴 **决定 hero 字高的是最长那一行，⛔ 不是总字数**（小红书发布线 13 样本实测）：
+    最长行 5 字→11.12%｜6 字→9.22–9.37%｜7 字→8.00%🔴｜8 字→6.25–7.01%🔴，**完美单调**。
+
+    ⚠️ 关键反例就在参数里：**总字数同为 10，5+5 有 11.12%、3+7 只有 8.00%**
+    ⇒ **「总字数 ≤12」那条规则会放过 3+7**。物理上也说得通：
+    hero 宽度固定，字号 ≈ 可用宽度 ÷ 最长行字数，短的那行只是没占满。
+    """
+    fit = _fit_band(_browser, _cover(2, hero=lines), 876, 1313)
+    assert fit["hero_max_line"] == expect_max
+
+
+def test_hero报错指向最长行而不是总长度():
+    """🩸 原报错写「把 hero 砍成最扎心的那个短句」——**会让人去砍总长度**，
+    而真正要改的是**最长那一行**：3+7 那个例子总共才 10 字、已经很短，砍总长没用。
+    ⇒ 报错精度决定人会不会走错路（本仓已第 N 次）。"""
+    src = (Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator"
+           / "scripts" / "render_cover.py").read_text(encoding="utf-8")
+    assert "最长那一行" in src and "砍总字数不解决问题" in src
+    assert "3+7" in src and "5+5" in src, "报错里要带上那对反例，否则人不知道差别在哪"

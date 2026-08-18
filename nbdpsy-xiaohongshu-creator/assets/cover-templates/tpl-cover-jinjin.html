@@ -816,6 +816,14 @@ window.__fit = function () {
     landscape_layer4_hidden: landHid4,
     hero_fs: +heroFs.toFixed(1),
     hero_lines: lines.length,
+    /* 🔴 **决定 hero 字高的是「最长那一行」的字数，⛔ 不是总字数**
+       （小红书发布线 2026-08-18，13 个真实渲染样本，完美单调）：
+         最长行 5 字 → 11.12%｜6 字 → 9.22–9.37%｜7 字 → 8.00%🔴｜8 字 → 6.25–7.01%🔴
+       **6→7 之间正好跨过 9% 下限。**
+       ⚠️ 总字数不相干：9 字(5+4) 与 10 字(5+5) 字高相同；
+          而 **10 字拆成 3+7 只有 8.00%、直接报红** ⇒ 「总字数 ≤12」那条规则会**放过它**。
+       物理上也说得通：hero 宽度固定，字号 ≈ 可用宽度 ÷ 最长行字数，短的那行只是没占满。 */
+    hero_max_line: Math.max(...lines.map(el => ((el.textContent || '').match(/[一-龥]/g) || []).length), 0),
     hero_thumb_px: +(heroFs * thumbW / W).toFixed(1),
     hero_glyph_px: +inkH.toFixed(1),
     hero_glyph_pct_of_h: +(inkH / H * 100).toFixed(2),
