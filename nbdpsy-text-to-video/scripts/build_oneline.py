@@ -331,9 +331,12 @@ def main(argv=None):
     ap.add_argument("--template", choices=sorted(TEMPLATES), default="oneline",
                 help="版式：oneline＝一行字卡（默认，每屏同一动效，刻意极简）｜"
                      "paragraph＝段落字卡（段内统一、段间变化，为 3 分钟以上长片而立）")
-    ap.add_argument("--sec-cues", type=int, default=3,
-                help="paragraph 版式：每几句算一段（默认 3）。段落边界只落在句边界上，"
-                     "⛔ 不在一句话中间换手法")
+    ap.add_argument("--sec-cues", type=int, default=6,
+                help="paragraph 版式：每几句算一段（默认 6）。段落边界只落在句边界上，"
+                     "⛔ 不在一句话中间换手法。"
+                     "⚠️ 默认值有实测依据，⛔ 别凭感觉调：真稿 68 句/185s 实测——"
+                     "3→23 段(每段 6.7s，换手法太频繁)｜6→12 段(12.9s)｜9→8 段(19.4s，沉稳)。"
+                     "口播语速真值约 3.5 汉字/秒，据此可换算自己稿子的段落时长")
     ap.add_argument("--name", default="card-oneline.html")
     ap.add_argument("--no-check", action="store_true", help="跳过像素闸（⛔ 出片前别用）")
     a = video_style.apply(ap, "card", argv)
