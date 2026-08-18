@@ -35,6 +35,14 @@ import video_style  # noqa: E402  风格档案（kind=video / form=card）→ �
 HERE = Path(__file__).parent
 TPL_DIR = HERE.parent / "assets" / "card-templates"
 TPL = TPL_DIR / "tpl-oneline.html"
+
+# 版式表。⛔ 默认仍是 oneline——加新版式**不改任何既有默认行为**（在产片子用着它）。
+# tpl-paragraph：段落字卡，2026-08-18 老板 G13「模板要撑得住 3 分钟」新立。
+#   它与 oneline 共用整条数据管线（断句/像素闸/字体闸），差别只在动效编排层。
+TEMPLATES = {
+    "oneline":   TPL_DIR / "tpl-oneline.html",
+    "paragraph": TPL_DIR / "tpl-paragraph.html",
+}
 FONT = "ZCOOLKuaiLe-Regular.ttf"
 DEPS = ["gsap.min.js", FONT]
 
@@ -255,7 +263,7 @@ def apply_max_chars(cv: dict, max_chars: int) -> dict:
     return cv
 
 
-def instantiate(screens, cv, bg, bg_name):
+def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3):
     stroke = round(cv["font"] * 0.17)
     safe_w = cv["w"] - 2 * cv["pad"]
     need = cv["font"] * cv["max_chars"] + 2 * stroke
@@ -271,8 +279,10 @@ def instantiate(screens, cv, bg, bg_name):
         "__BRAND_COLOR__": bg["brand"], "__TEX_OPACITY__": bg["tex_opacity"],
         "__PAPER_URL__": paper_url(bg["turb"]), "__BG_NAME__": bg_name,
         "__SCREENS__": json.dumps(screens, ensure_ascii=False),
+        # 段落字卡专用；oneline 模板里没有这个占位符，填了也不会有副作用
+        "__SEC_CUES__": sec_cues,
     }
-    html = TPL.read_text(encoding="utf-8")
+    html = (tpl or TPL).read_text(encoding="utf-8")
     for k, v in sub.items():
         html = html.replace(k, str(v))
     left = re.findall(r"__[A-Z_]+__", html)
@@ -318,6 +328,12 @@ def main(argv=None):
     ap.add_argument("--max-line-chars", type=int, default=12,
                 help="单屏排版拆屏上限（8–14，默认 12；书名场景可 13——整片按安全区统一反推字号，非按行缩字）。"
                      "⛔ 这是排版量具，不是写稿字数上限：写稿只管把事说清楚，装不下就多一屏")
+    ap.add_argument("--template", choices=sorted(TEMPLATES), default="oneline",
+                help="版式：oneline＝一行字卡（默认，每屏同一动效，刻意极简）｜"
+                     "paragraph＝段落字卡（段内统一、段间变化，为 3 分钟以上长片而立）")
+    ap.add_argument("--sec-cues", type=int, default=3,
+                help="paragraph 版式：每几句算一段（默认 3）。段落边界只落在句边界上，"
+                     "⛔ 不在一句话中间换手法")
     ap.add_argument("--name", default="card-oneline.html")
     ap.add_argument("--no-check", action="store_true", help="跳过像素闸（⛔ 出片前别用）")
     a = video_style.apply(ap, "card", argv)
@@ -358,7 +374,9 @@ def main(argv=None):
         if not dst.exists():
             shutil.copy(TPL_DIR / dep, dst)
     html_path = out_dir / a.name
-    html_path.write_text(instantiate(screens, cv, bg, a.bg), encoding="utf-8")
+    html_path.write_text(
+        instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues),
+        encoding="utf-8")
 
     n_over = sum(1 for s in screens if units(s["text"]) > cv["max_chars"])
     print(f"✅ {html_path}")

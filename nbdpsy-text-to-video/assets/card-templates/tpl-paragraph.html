@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- ⚠️ render_card.py 读这一行定 viewport（缺省 1080x1920）。别删、别改 name。 -->
+<meta name="render-canvas" content="__CANVAS__">
+<title>段落字卡 tpl-paragraph</title>
+<!--
+  ════════════════════════════════════════════════════════════════════════
+  tpl-paragraph · 段落字卡（第六版式，2026-08-18 立）
+  ════════════════════════════════════════════════════════════════════════
+  为什么有这个版式（老板 G13 原话）：
+    「我看电影风，就只是支持很短的时间，**多句话都重复用同一个动效**。
+      电影风现在的模板内容太贫乏了，手作风同理。」
+
+  🔴 诊断（调研实测，见 docs/2026-08-18-长时长模板调研.md）：贫乏**不是审美问题，
+     是结构问题**——五个旧模板各自只有**一条扁平时间轴**（`.add()`/`addLabel` 全为 0），
+     **没有「段落」这个中间层**。想让第 40 句和第 5 句不一样，只能手写 40 段代码；
+     内容一长，循环套同一个动效就成了**唯一可行解**。
+
+  ⇒ 本版式补的就是那个中间层。核心理念一句话：
+
+     ★★ **段内统一，段间变化。** ★★
+     重复不是错，**没有边界的重复**才是。段内重复形成节奏，段间变化形成丰富。
+     ⛔ 逐屏随机换手法＝杂乱，不是丰富（那是另一种失败，别掉进去）。
+
+  硬契约（改这个文件前先读完，前四条与 tpl-oneline 同源、⛔ 别放宽）：
+  ① **一屏只有一行字，绝不折行、绝不缩字号**。装不下＝断句，断不开＝拒渲染
+     （闸门在 build 脚本，本文件只做像素层复核）。
+  ② 本文件**不是手改文案的模板**，分屏数据/画幅/色值一律由 build 脚本填。
+  ③ GSAP 必须内置（同目录 gsap.min.js）。缺了页面不报错，只会渲染器静默超时。
+  ④ 时间轴位置参数一律走 at()——GSAP 里裸的负数位置会平移整条时间轴。
+  ⑤ 🔴 **每个 motif 都必须让字在停留期完全静止可读**。动效只在进/出两端，
+     停留期最多给极缓的呼吸（scale ≤1.5%）。**观众要读的是字，不是特效。**
+  ⑥ 🔴 **段落边界只落在句边界（cue 边界）上**，⛔ 绝不在一句话中间换手法——
+     那会让观众以为换了话题。
+  ════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  @font-face {
+    font-family:"ONELINE";
+    src:url("ZCOOLKuaiLe-Regular.ttf") format("truetype");
+    font-display:block;          /* 绝不用回退字体先画一帧 */
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:__W__px; height:__H__px; overflow:hidden; }
+  body { background:__BASE__; position:relative; }
+
+  /* 纸纹：内联 SVG feTurbulence + feColorMatrix saturate=0 去色（零外网依赖），静态一层。
+     ⛔ 没有 feDiffuseLighting——2026-08-16 试过并放弃（高通标准差 0.92＝等于没纹理）。 */
+  #paper { position:absolute; inset:0; z-index:1;
+    background-image:__PAPER_URL__;
+    background-size:__TEX_SCALE__px __TEX_SCALE__px;
+    mix-blend-mode:multiply; opacity:__TEX_OPACITY__; }
+  #vignette { position:absolute; inset:0; z-index:2; pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 42%, __VIGNETTE__ 100%); }
+
+  /* perspective 挂在舞台上，tilt 类 motif 才有透视；不挂则 rotationX 看起来只是压扁 */
+  #stage { position:absolute; inset:0; z-index:3; perspective:1400px; }
+  /* ⚠️ 宽度必须收缩到文字本身（不给 width）——像素闸量的就是这个盒子。
+     给它定宽会让每屏都量出同一个数，闸门就成了摆设。 */
+  .scr { position:absolute; left:50%; top:50%;
+    font-family:"ONELINE"; font-size:__FONT_PX__px; line-height:1.28;
+    color:__INK__; white-space:nowrap;            /* ⛔ 绝不折行 */
+    -webkit-text-stroke:__STROKE_PX__px #FFFFFF;
+    paint-order:stroke fill;
+    opacity:0; will-change:transform,opacity,filter,clip-path; }
+
+  #brand { position:absolute; left:0; right:0; bottom:__BRAND_BOTTOM__px; z-index:4;
+    text-align:center; font-family:"ONELINE"; font-size:__BRAND_PX__px;
+    letter-spacing:.18em; color:__BRAND_COLOR__; opacity:0; }
+</style>
+</head>
+<body>
+<div id="paper"></div>
+<div id="vignette"></div>
+<div id="stage"></div>
+<div id="brand">NBDpsy 心理科普</div>
+
+<script src="gsap.min.js"></script>
+<script>
+const CUES    = __CUES__;      // 句级 cues（渲染器注入），本版式只用它对总时长
+const SCREENS = __SCREENS__;   // build 脚本断句分屏后的逐屏 {text,start,end,cue}
+const SAFE_W  = __SAFE_W__;
+const STROKE  = __STROKE_PX__;
+const RISE    = __RISE__;
+const TAIL    = 1.4;           // 末屏定格
+const SEC_CUES = __SEC_CUES__; // 每段几句（段落边界只落在句边界上）
+
+const stage = document.getElementById('stage');
+const els = SCREENS.map(s => {
+  const d = document.createElement('div');
+  d.className = 'scr';
+  d.textContent = s.text;
+  stage.appendChild(d);
+  return d;
+});
+/* 居中的基准形变，不进时间轴——补间里的 y/scale 会跟它复合而不是互相覆盖 */
+gsap.set(els, { xPercent:-50, yPercent:-50 });
+
+const total = (SCREENS.length ? SCREENS[SCREENS.length - 1].end : 0) + TAIL;
+const tl = gsap.timeline({ paused:true });
+/* 位置参数护栏：GSAP 里裸负数不是"第 0 秒"，是把整条时间轴往后平移。 */
+const at = t => Math.max(0, t);
+
+const LEAD = 0.07;   // 视觉比语音早这么一点点起手，换来翻屏零空窗（0.07s 人耳无感）
+const OUT  = 0.16;   // 退场时长
+
+/* ══════════════════ ① 段落划分：边界只落在句边界上 ══════════════════
+   按 cue（句）分组，每 SEC_CUES 句一段。⛔ 不按屏数均分——那会在一句话中间
+   换手法，观众会以为换了话题（硬契约⑥）。 */
+function sectionOf(screens) {
+  const sec = [], seen = new Set();
+  let n = 0;                            // 已出现过的**句**数（不是屏数）
+  for (const s of screens) {
+    if (!seen.has(s.cue)) { seen.add(s.cue); n++; }
+    sec.push(Math.floor((n - 1) / SEC_CUES));   // 同一句的多屏必然同段
+  }
+  return sec;
+}
+const SEC = sectionOf(SCREENS);
+const SEC_COUNT = SEC.length ? SEC[SEC.length - 1] + 1 : 0;
+
+/* ══════════════════ ② 动效件库（motif）══════════════════
+   每件签名 (el, t0, hold, tOut, isLast) → 往 tl 里加补间。
+   🔴 共同约束（硬契约⑤）：停留期字必须静止可读，动效只在进/出两端。
+   ⚠️ 每件都要能适配任意 hold 时长——hold 可能只有 0.4s，也可能有 4s。 */
+const MOTIFS = {
+  /* 基准件：与 tpl-oneline 同款（纵向浮起→缓推近→上移）。留着它是为了
+     ⓐ 段落节奏需要一个"最安静"的选项；ⓑ 与旧版式视觉血缘不断。 */
+  rise(el, t0, hold, tOut, isLast) {
+    tl.fromTo(el, { opacity:0, y:RISE, scale:.988 },
+                  { opacity:1, y:0, scale:1, duration:.26, ease:'power2.out', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.014, duration:hold, ease:'none', immediateRender:false }, at(t0 + .26));
+    if (!isLast) tl.to(el, { opacity:0, y:-RISE, duration:OUT, ease:'power1.in' }, tOut);
+  },
+
+  /* 揭示件：clipPath 从左擦出。🔴 这一类旧模板一个都没有（0/7），
+     而它是字卡动效最主力的手法——"字被写出来"而不是"字飘进来"。 */
+  wipe(el, t0, hold, tOut, isLast) {
+    tl.fromTo(el, { opacity:1, clipPath:'inset(0 100% 0 0)' },
+                  { clipPath:'inset(0 0% 0 0)', duration:.34, ease:'power2.inOut', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.010, duration:hold, ease:'none', immediateRender:false }, at(t0 + .34));
+    if (!isLast) tl.to(el, { clipPath:'inset(0 0 0 100%)', duration:OUT + .06, ease:'power1.in' }, tOut);
+  },
+
+  /* 焦点件：从虚到实。用在段落起头很像"镜头对上焦"，给长片换气。
+     ⚠️ blur 是滤镜，开销比 transform 大；只在进出两端用，停留期归零。 */
+  depth(el, t0, hold, tOut, isLast) {
+    tl.fromTo(el, { opacity:0, filter:'blur(14px)', scale:1.05 },
+                  { opacity:1, filter:'blur(0px)', scale:1, duration:.38, ease:'power2.out', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.012, duration:hold, ease:'none', immediateRender:false }, at(t0 + .38));
+    if (!isLast) tl.to(el, { opacity:0, filter:'blur(10px)', duration:OUT + .04, ease:'power1.in' }, tOut);
+  },
+
+  /* 横向件：侧滑进出。与 rise 的纵向形成方向对比——**换方向是最省的变化**，
+     观众立刻感到"换了一段"，而认知负担几乎为零。 */
+  drift(el, t0, hold, tOut, isLast) {
+    tl.fromTo(el, { opacity:0, x:74, skewX:-4 },
+                  { opacity:1, x:0, skewX:0, duration:.30, ease:'power3.out', immediateRender:false }, t0);
+    tl.fromTo(el, { x:0 }, { x:-10, duration:hold, ease:'none', immediateRender:false }, at(t0 + .30));
+    if (!isLast) tl.to(el, { opacity:0, x:-74, skewX:4, duration:OUT, ease:'power1.in' }, tOut);
+  },
+
+  /* 空间件：绕 X 轴翻入（靠 #stage 的 perspective 生效）。
+     ⚠️ 角度必须小（≤16°）——大了字会变形，可读性掉得比新鲜感涨得快。 */
+  tilt(el, t0, hold, tOut, isLast) {
+    tl.fromTo(el, { opacity:0, rotationX:-16, y:RISE * .6, transformOrigin:'50% 100%' },
+                  { opacity:1, rotationX:0, y:0, duration:.32, ease:'power2.out', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.012, duration:hold, ease:'none', immediateRender:false }, at(t0 + .32));
+    if (!isLast) tl.to(el, { opacity:0, rotationX:10, duration:OUT, ease:'power1.in' }, tOut);
+  },
+
+  /* 🔴 留白件：几乎不动，只淡入淡出。**丰富 ≠ 一直在动**——长片必须有喘息处，
+     否则观众会疲劳到把"有变化"读成"很吵"。它是节奏的一部分，⛔ 不是偷懒。 */
+  still(el, t0, hold, tOut, isLast) {
+    tl.fromTo(el, { opacity:0 }, { opacity:1, duration:.30, ease:'power1.out', immediateRender:false }, t0);
+    if (!isLast) tl.to(el, { opacity:0, duration:OUT + .04, ease:'power1.in' }, tOut);
+  },
+};
+
+/* ══════════════════ ③ 变奏规则：段号 → motif ══════════════════
+   ⛔ 不随机——随机会撞车（相邻段抽到同一件），也不可复现（同一稿两次渲染不一样）。
+   规则：按 ORDER 轮转，每第 4 段插一次留白件让节奏喘气。 */
+const ORDER = ['rise', 'wipe', 'depth', 'drift', 'tilt'];
+const STILL_EVERY = 4;
+function motifFor(si) {
+  if (si > 0 && si % STILL_EVERY === 0) return 'still';
+  const k = si - Math.floor(si / STILL_EVERY);      // 扣掉留白段，轮转不跳号
+  return ORDER[k % ORDER.length];
+}
+
+/* ══════════════════ ④ 应用 ══════════════════ */
+const ENTER = { rise:.26, wipe:.34, depth:.38, drift:.30, tilt:.32, still:.30 };
+
+/* 🔴 退场提前量：**这一条是 tpl-oneline 搬不过来的地方，别照抄它**。
+   oneline 里退场与下一屏入场**同刻**是有意的——两屏同向上移，重叠读作"推进"。
+   本版式相邻段方向不同（纵向 rise 接横向 drift），同刻重叠就从"交接"变成"打架"：
+   实测首版截帧里 wipe/drift/depth 三格都能看见上一屏或下一屏的残影。
+   ⇒ 位移类 motif 把退场提前，只留人眼不察的一点交叠；
+      溶解类（rise/still）保持同刻，交叉淡入淡出本来就该重叠。
+
+   🔴 **提前量由「交接两屏的组合」决定，⛔ 不由单屏自己的 motif 决定**——这一点我改错过一次：
+   头一版让每屏按自己的 motif 提前，结果 rise→wipe 那个边界照样脏，因为**退场的是 rise
+   （提前量 0），而脏不脏取决于接它的是谁**。⇒ 判据落在**段边界**上：
+   段内＝同一 motif，保持 oneline 的同向交叠（那是推进感，不是脏）；段间＝换手法，提前退场。 */
+const BOUNDARY_ADV = .12;
+
+const usedMotifs = [];
+SCREENS.forEach((s, i) => {
+  const el = els[i], isLast = (i === SCREENS.length - 1);
+  const t0 = at(s.start - LEAD);
+  const name = motifFor(SEC[i]);
+  // 下一屏换段＝换手法 ⇒ 这一屏提前退干净，别和新手法叠在一起
+  const adv = (!isLast && SEC[i + 1] !== SEC[i]) ? BOUNDARY_ADV : 0;
+  const hold = Math.max(s.end - s.start - ENTER[name] - adv, .12);
+  MOTIFS[name](el, t0, hold, at(s.end - LEAD - adv), isLast);
+  usedMotifs[SEC[i]] = name;
+});
+
+if (SCREENS.length) {
+  const end = SCREENS[SCREENS.length - 1].end;
+  tl.fromTo('#brand', { opacity:0, y:14 },
+    { opacity:1, y:0, duration:.9, ease:'power2.out', immediateRender:false }, at(end - .35));
+}
+
+/* ── 像素层复核（与 tpl-oneline 同源）＋ 段落编排留痕 ──
+   🔴 report 里带 sections/motifs，是本仓「每道闸配一条『我这次量到了 N 个东西』的
+   正向断言」那条：绿的时候也报数，恒绿的闸门报不出这个。 */
+function report() {
+  const over = [];
+  SCREENS.forEach((s, i) => {
+    const w = els[i].offsetWidth + 2 * STROKE;
+    if (w > SAFE_W) over.push({ i, text:s.text, width:Math.round(w), limit:SAFE_W });
+  });
+  window.ONELINE_REPORT = {
+    bg:"__BG_NAME__", canvas:[__W__, __H__], font_px:__FONT_PX__,
+    screens:SCREENS.length, total, overflow:over,
+    template:"tpl-paragraph",
+    sections:SEC_COUNT, sec_cues:SEC_CUES,
+    motifs:usedMotifs.filter(Boolean),
+    motif_kinds:[...new Set(usedMotifs.filter(Boolean))].length,
+  };
+}
+
+document.fonts.load('__FONT_PX__px "ONELINE"', SCREENS.map(s => s.text).join(''))
+  .then(() => document.fonts.ready)
+  .then(() => {
+    report();
+    window.TOTAL = total;
+    window.SEEK = t => { tl.seek(Math.min(t, total - 0.001), false); };
+  });
+</script>
+</body>
+</html>
