@@ -55,7 +55,8 @@
     text-decoration:line-through; text-decoration-thickness:3px; }
   /* 事实那句：更大、更实 —— 权重差就落在这里 */
   .right .txt { font-size:__BIG__px; line-height:1.45; color:__INK__; font-weight:700; }
-  .note { margin-top:18px; font-size:__DESC__px; line-height:1.5; color:__INK2__; }
+  /* ⛔ 原有 .note（右栏补注）已删——服务号线 2026-08-18：
+     **空字段会诱人往里塞东西**。真需要补注时再加回来，⛔ 别先留着位子。 */
 </style>
 </head>
 <body>
@@ -67,7 +68,7 @@
     </div>
     <div class="col right">
       <div class="lab">__RIGHT_LABEL__</div>
-      <div class="txt">__RIGHT_TEXT__</div>__NOTE_HTML__
+      <div class="txt">__RIGHT_TEXT__</div>
     </div>
   </div>
 
@@ -79,7 +80,7 @@
     return e ? Math.round(parseFloat(getComputedStyle(e).fontSize) * 10) / 10 : null;
   };
   const layers = { 标题: px('h1'), 页码: px('.pageno'), 标签: px('.lab'),
-                   误解句: px('.wrong .txt'), 事实句: px('.right .txt'), 补注: px('.note') };
+                   误解句: px('.wrong .txt'), 事实句: px('.right .txt') };
   const CONTENT_LAYERS = __CONTENT_LAYERS__;
   const feed = {}, present = [];
   for (const [k2, v] of Object.entries(layers)) {

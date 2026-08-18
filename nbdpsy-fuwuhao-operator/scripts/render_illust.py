@@ -124,7 +124,6 @@ def instantiate(data: dict, steps: list[dict], base_no: int, page: int, pages: i
 def instantiate_compare(data: dict, strict_decor: bool = False) -> str:
     """compare 单张。⚠️ 两栏权重不对等由 CSS 的 flex 38/62 承担，⛔ 不是靠内容长短。"""
     w, r = data.get("wrong") or {}, data.get("right") or {}
-    note = r.get("note")
     m = {"__CANVAS__": f"{CANVAS['w']}x{CANVAS['h']}",
          "__W__": CANVAS["w"], "__H__": CANVAS["h"],
          "__FEED_SCALE__": round(FEED_W / CANVAS["w"], 6),
@@ -133,9 +132,8 @@ def instantiate_compare(data: dict, strict_decor: bool = False) -> str:
          "__WRONG_TEXT__": esc(w.get("text", "")),
          "__RIGHT_LABEL__": esc(r.get("label", "实际上")),
          "__RIGHT_TEXT__": esc(r.get("text", "")),
-         "__NOTE_HTML__": f'\n      <div class="note">{esc(note)}</div>' if note else "",
          "__CONTENT_LAYERS__": json.dumps(
-             (["标题"] if strict_decor else []) + ["页码", "标签", "误解句", "事实句", "补注"],
+             (["标题"] if strict_decor else []) + ["页码", "标签", "误解句", "事实句"],
              ensure_ascii=False),
          **{f"__{k}__": v for k, v in PALETTE.items()},
          **{f"__{k}__": v for k, v in SIZES.items()}}
@@ -156,7 +154,7 @@ def instantiate_define(data: dict, strict_decor: bool = False) -> str:
          "__W__": CANVAS["w"], "__H__": CANVAS["h"],
          "__FEED_SCALE__": round(FEED_W / CANVAS["w"], 6),
          "__TERM__": esc(data.get("term", "")), "__PAGENO_HTML__": "",
-         "__PHENOM__": esc(data.get("phenom", "")),
+         "__PHENOMENON__": esc(data.get("phenomenon", "")),
          "__HIT__": esc(data.get("hit", "")),
          "__ANTIDOTE_HTML__": f'\n  <div class="antidote">{esc(ant)}</div>' if ant else "",
          "__CONTENT_LAYERS__": json.dumps(
@@ -202,6 +200,9 @@ def gate(rep: dict, tag: str) -> list[str]:
         bad.append(f"{tag}：两栏宽度比只有 {rep['asymmetry']}——**做成对称天平了**。"
                    f"⛔ 心理科普里出现的是**纠正**不是对等比较；对称会读成"
                    f"「两种观点各有道理」，正好是反效果")
+    if rep.get("missing_layers"):
+        bad.append(f"{tag}：必需层取不到 {rep['missing_layers']}——"
+                   f"多半是 class 名与 CSS 选择器对不上。⛔ 这不是「达标」，是**没量到**")
     if rep.get("hit_over_phenom") is not None and rep["hit_over_phenom"] < 1.15:
         bad.append(f"{tag}：命中句只比现象句重 {rep['hit_over_phenom']} 倍——"
                    f"**「认出自己」那一下被淹没在描述里了**。⛔ 别把两半合成一段")

@@ -43,7 +43,7 @@
     margin-bottom:30px; }
 
   /* 前半：描述现象——读者点头的那半 */
-  .phenom { font-size:__DESC__px; line-height:1.55; color:__INK2__; margin-bottom:26px; }
+  .phenomenon { font-size:__DESC__px; line-height:1.55; color:__INK2__; margin-bottom:26px; }
 
   /* 🔴 后半：命中处境——读者愣一下的那半。单独成块、加重、留白隔开。
      ⛔ 别把它和前半合成一段：合了以后它就淹没在描述里，
@@ -58,7 +58,7 @@
 </head>
 <body>
   <div class="term">__TERM__</div>__PAGENO_HTML__
-  <div class="phenom">__PHENOM__</div>
+  <div class="phenomenon">__PHENOMENON__</div>
   <div class="hit">__HIT__</div>__ANTIDOTE_HTML__
 
 <script>
@@ -68,7 +68,7 @@
     const e = document.querySelector(sel);
     return e ? Math.round(parseFloat(getComputedStyle(e).fontSize) * 10) / 10 : null;
   };
-  const layers = { 词: px('.term'), 页码: px('.pageno'), 现象句: px('.phenom'),
+  const layers = { 词: px('.term'), 页码: px('.pageno'), 现象句: px('.phenomenon'),
                    命中句: px('.hit'), 解毒句: px('.antidote') };
   const CONTENT_LAYERS = __CONTENT_LAYERS__;
   const feed = {}, present = [];
@@ -84,7 +84,12 @@
     font_px: layers, feed_px: feed, content_layers: CONTENT_LAYERS,
     min_feed_px: present.length ? Math.min(...present) : null,
     // 🔴 命中句必须比现象句重——⛔ 一样大就等于把「认出自己」那一下淹没在描述里
-    hit_over_phenom: Math.round(layers.命中句 / layers.现象句 * 100) / 100,
+    /* 🔴 必需层缺席要报出来，⛔ 别让 inf/NaN 混进比值——首版改 class 名时 CSS 没跟着改，
+       现象句丢了样式、取到 null，比值成了 Infinity，而 `inf < 1.15` 为假 ⇒ **闸门放行**。
+       ⚠️ 这就是「没做」与「做了没问题」没分开：取不到 ≠ 比值达标。 */
+    missing_layers: ['现象句', '命中句'].filter(n => layers[n] === null),
+    hit_over_phenom: (layers.命中句 && layers.现象句)
+      ? Math.round(layers.命中句 / layers.现象句 * 100) / 100 : null,
     has_antidote: !!document.querySelector('.antidote'),
     overflow: body.scrollHeight > body.clientHeight,
     content_bottom: Math.round(last.getBoundingClientRect().bottom),
