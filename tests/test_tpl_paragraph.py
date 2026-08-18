@@ -158,3 +158,7 @@ def test_背景层定义里带着为什么(  ):
     assert "feDiffuseLighting" in bo.BG_LAYERS_CSS, "少了「⛔ 没有 feDiffuseLighting」那条路标"
     assert "彩色噪点" in bo.BG_LAYERS_CSS, "少了「别去掉去色」那条路标"
     assert "四角压暗" in bo.BG_LAYERS_CSS, "少了 vignette 的存在理由"
+    # 纸感层（G15）的两条坑，同样是踩出来的，⛔ 别让它们被"顺手精简"掉
+    assert "multiply" in bo._FIBER_CSS, "少了「纸感不能并进 #paper」那条路标（multiply 会压暗底色）"
+    assert "linearRGB" in bo._FIBER_CSS, "少了「SVG filter 默认 linearRGB」那条路标——没它中性层永远调不准"
+    assert "0.5146" in bo.neutral_turb.__doc__, "少了「中心不是 0.5」的由来，会被顺手改回去"

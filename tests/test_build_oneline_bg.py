@@ -31,11 +31,54 @@ def test_miwen档参数与老板批的候选B逐字段一致():
     assert bg["brand"] == "rgba(90,72,52,.50)" == bo.BG["liaoyu"]["brand"]
 
 
-def test_miwen是新片首选档而现有两档原样保留():
-    """加档不许动老档——在产片子还用着 liaoyu / kepu。"""
-    assert set(bo.BG) == {"liaoyu", "kepu", "miwen"}
+def test_加档不许动老档():
+    """加档不许动老档——在产片子还用着它们。"""
+    assert set(bo.BG) == {"liaoyu", "kepu", "miwen", "xianwen"}
     assert bo.BG["kepu"]["base"] == "#EDEFF1"
     assert bo.BG["liaoyu"]["base"] == "#E8D8C4"
+
+
+def test_xianwen只加纹理颜色四项与miwen完全相同():
+    """G15 老板拍板「新增一档、老片不变」，且只授权改纸感——**颜色是 G10 批过的**。
+
+    ⛔ 谁把 xianwen 的颜色调一下，就等于绕过 G10 重新定了一次颜色。
+    """
+    mi, xian = bo.BG["miwen"], bo.BG["xianwen"]
+    for k in ("base", "ink", "vignette", "brand", "tex_opacity", "tex_scale", "turb"):
+        assert xian[k] == mi[k], f"xianwen 的 {k} 与 miwen 不同——这一档只许改纹理"
+    assert xian["fiber"] == dict(freq="0.10 0.40", octaves=5, seed=31, k=0.85, tile=280)
+    assert xian["crease"] == dict(freq="0.008", octaves=3, seed=5, k=0.55, size=900, tile=900)
+
+
+def test_纸感层只长在配了它的档上():
+    """🩸「老片不变」的代码级保证：没配 fiber/crease 的档，背景层产出必须与加纸感前一致。
+
+    背景层是两个版式共用的统一生成函数——**无条件加纸感就会把 miwen 这些在产档一起改掉**。
+    """
+    for name in ("liaoyu", "kepu", "miwen"):
+        css, html = bo.bg_layers(bo.BG[name])
+        assert "mix-blend-mode:soft-light" not in css, f"{name} 不该有纸感层"
+        assert "fiber" not in html and "crease" not in html
+        assert css == bo.BG_LAYERS_CSS and html == bo.BG_LAYERS_HTML
+    css, html = bo.bg_layers(bo.BG["xianwen"])
+    # ⛔ 别数裸的 "soft-light"——注释里也写着这个词，会数出 6 次（2026-08-18 实撞）
+    assert css.count("mix-blend-mode:soft-light") == 2, "xianwen 该有 fiber+crease 两层"
+    assert '<div id="fiber"></div>' in html and '<div id="crease"></div>' in html
+    # 层序：压角永远在纸感之上，否则四角压暗会被纸感盖住
+    assert html.index('id="fiber"') < html.index('id="vignette"')
+
+
+def test_中性噪声的两个坑不许回退():
+    """两条都是实测撞出来的，回退任一条纸感层都会失效（见 neutral_turb docstring）。
+
+    ⚠️ 产物是 URL-encode 过的，得按编码后的样子找：`'`→`%27`、`=`→`%3D`（2026-08-18 实撞）。
+    """
+    from urllib.parse import unquote
+    svg = unquote(bo.neutral_turb("0.10 0.40", 5, 31, 0.85))
+    assert "sRGB" in svg, "filter 掉了 color-interpolation-filters='sRGB' → 中性点会偏到 187"
+    assert "feFuncA" in svg, "alpha 没拉满 → 半透明噪声，soft-light 会压暗底色"
+    # 中心 0.5146（⛔ 不是 0.5）：k=1 时 intercept 应为 0.0146
+    assert "intercept='0.0146'" in unquote(bo.neutral_turb("0.1", 3, 1, 1.0))
 
 
 def test_miwen参数真的落进了html():

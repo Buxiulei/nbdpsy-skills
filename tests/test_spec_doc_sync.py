@@ -153,6 +153,8 @@ def test_档位表的底色墨色与turb与代码逐项相等(md):
     """⚠️ 按数值比：源码 `0.80` 在 Python 里是 `0.8`，字符串比会报假红。"""
     doc = _parse_bg_table(md)
     for key, code in bo.BG.items():
+        # ⛔ 别写成 doc[key]：漏行时抛 KeyError，报错不可操作（2026-08-18 实撞）
+        assert key in doc, f"spec 档位表里没有 `{key}` 那一行——加了背景档要补文档表格"
         d = doc[key]
         assert d["base"].upper() == code["base"].upper(), f"{key} 底色：文档 {d['base']} ≠ 代码 {code['base']}"
         assert d["ink"].upper() == code["ink"].upper(), f"{key} 墨色：文档 {d['ink']} ≠ 代码 {code['ink']}"
@@ -175,11 +177,14 @@ def test_画幅表的四个数与公式算出来的相等(md):
 
 def test_改一个数就必须红_否则说明尺子没在读(md):
     """把文档里的 `.24` 改成 `.99`，比对必须失败。不失败＝这道闸是恒绿的摆设。"""
-    mutated = md.replace("`.24 / 5 / 17 / .85`", "`.99 / 5 / 17 / .85`", 1)
+    # ⚠️ 变异目标必须在表里唯一：`.24 / 5 / 17 / .85` 现在 miwen 和 xianwen 两行都有，
+    # 拿它做变异会改到第一行、却去查第二行（2026-08-18 实撞）。liaoyu 那组是唯一的。
+    assert md.count("`.80 / 4 / 7 / .55`") == 1, "变异目标不再唯一，换一个唯一的"
+    mutated = md.replace("`.80 / 4 / 7 / .55`", "`.99 / 4 / 7 / .55`", 1)
     assert mutated != md, "变异没生效（表格文案变了？），这条元测试本身要更新"
     doc = _parse_bg_table(mutated)
-    assert doc["miwen"]["turb"]["freq"] == 0.99, "尺子没读到被改的那个数——parse 规则已失效"
-    assert doc["miwen"]["turb"] != bo.BG["miwen"]["turb"]
+    assert doc["liaoyu"]["turb"]["freq"] == 0.99, "尺子没读到被改的那个数——parse 规则已失效"
+    assert doc["liaoyu"]["turb"] != bo.BG["liaoyu"]["turb"]
 
 
 def test_画幅表被改也必须红(md):

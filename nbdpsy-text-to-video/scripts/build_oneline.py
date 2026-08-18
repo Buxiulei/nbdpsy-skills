@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """一行字卡（tpl-oneline）实例化 + 单行硬闸门。
 
-  build_oneline.py --cues narration.mp3.cues.json --bg miwen --canvas 3:4 --out 工作目录/
+  build_oneline.py --cues narration.mp3.cues.json --bg xianwen --canvas 3:4 --out 工作目录/
 
 产出 `<out>/card-oneline.html`（连同 gsap.min.js、字体一并就位），随后照常：
 
@@ -92,6 +92,23 @@ BG = {
         vignette="rgba(120,98,70,.18)", brand="rgba(90,72,52,.50)",
         tex_opacity=1.0, tex_scale=320,
         turb=dict(freq=0.24, octaves=5, seed=17, alpha=0.85),
+    ),
+    # 🔴 老板 2026-08-18 G15 拍板：在 miwen 基础上「纸张质感更多一些」，
+    # 走**新增一档、老片不变**（⛔ 所以 miwen 上面那七个字段一个字节都不许动）。
+    # 颜色四项与 miwen 完全相同——**这一档改的只有纹理**，颜色是 G10 批过的，⛔ 别顺手调。
+    # 纸感＝在 miwen 的颗粒之上叠两层中性 soft-light：fiber（纤维，x/y 频率不等＝有走向）
+    # ＋ crease（微皱，低频大尺度起伏）。实测：底色最大偏移 0.11/255（＝实质不变，
+    # ⛔ 不是"一个字节没动"，别这么写）、高通 σ 5.86→6.83、纤维方向性 1.00→1.24。
+    # ⚠️ 纤维再往上调会像织物不像纸（oct=2＋极端各向异性能到 2.51，但目视是布纹）——
+    #    要"更多纸感"时得在「更明显」与「像纸」之间选，⛔ 别闷头往上加。
+    "xianwen": dict(  # 纤纹：miwen ＋ 纸纤维与微皱
+        label="纤纹（浅米白·纸纤维）",
+        base="#F0E9DC", ink="#241E17",
+        vignette="rgba(120,98,70,.18)", brand="rgba(90,72,52,.50)",
+        tex_opacity=1.0, tex_scale=320,
+        turb=dict(freq=0.24, octaves=5, seed=17, alpha=0.85),
+        fiber=dict(freq="0.10 0.40", octaves=5, seed=31, k=0.85, tile=280),
+        crease=dict(freq="0.008", octaves=3, seed=5, k=0.55, size=900, tile=900),
     ),
 }
 
@@ -260,6 +277,60 @@ BG_LAYERS_CSS = """  /* 纸纹：内联 SVG feTurbulence + feColorMatrix saturat
 BG_LAYERS_HTML = """<div id="paper"></div>
 <div id="vignette"></div>"""
 
+# 纸感层（纤维/微皱）。**只有配了 fiber/crease 的档才长出来**——⛔ 不是所有档都加，
+# 否则 miwen 这些在产档会跟着变，「老片重渲不变」就破了（G15 老板选的正是"新增档、老片不变"）。
+_FIBER_CSS = """  /* 纸感层：中性噪声 + soft-light，只加起伏、不动底色（G15，2026-08-18）。
+     🩸 两个坑，⛔ 别再走回去：
+     ① **不能并进 #paper**：#paper 整层是 multiply，而 multiply 层里任何非白像素都必然压暗底色
+        （实测把中性噪声并进它的多重背景，底色掉 65/255）。所以纸感必须是独立层 + soft-light。
+     ② **SVG filter 默认在 linearRGB 运算**：要"显示上 128 灰"，按 slope=.5/intercept=.25 算出来
+        的却是 187（0.5^(1/2.2)≈0.73）。必须 color-interpolation-filters='sRGB'，否则中性层
+        怎么都调不准——而现象只是"调不准"，根本看不出是色彩空间的事。 */
+  #%(id)s { position:absolute; inset:0; z-index:1;
+    background-image:%(url)s;
+    background-size:%(tile)dpx %(tile)dpx;
+    mix-blend-mode:soft-light; }"""
+
+
+def neutral_turb(freq, octaves, seed, k, size=240):
+    """「显示上均值 128 灰、不透明」的湍流——soft-light 叠它才真正不改底色。
+
+    中心 0.5146 而非 0.5：soft-light 叠在噪声上并非严格中性，这是实测两点线性外推出的零点
+    （默认 0.5 时底色掉 1.72/255，用 0.5146 后偏移 0.11/255）。⛔ 别"顺手"改回 0.5。
+    k 只控制强弱：RGB 线性变换 slope=k、intercept=中心-0.5k，均值锁死，不搬移中心。
+    """
+    b = 0.5146 - 0.5 * k
+    fn = "".join(f"<feFunc{c} type='linear' slope='{k}' intercept='{b:.4f}'/>" for c in "RGB")
+    svg = (f"<svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}'>"
+           f"<filter id='n' color-interpolation-filters='sRGB'>"
+           f"<feTurbulence type='fractalNoise' baseFrequency='{freq}' "
+           f"numOctaves='{octaves}' seed='{seed}'/>"
+           "<feColorMatrix type='saturate' values='0'/>"
+           f"<feComponentTransfer>{fn}<feFuncA type='table' tableValues='1 1'/></feComponentTransfer>"
+           "</filter>"
+           f"<rect width='{size}' height='{size}' filter='url(#n)'/></svg>")
+    return 'url("data:image/svg+xml,' + quote(svg, safe="") + '")'
+
+
+def bg_layers(bg):
+    """按档生成背景层的 CSS 与 div。没配纸感的档，产出与加纸感之前**逐字节相同**。"""
+    css, html = [BG_LAYERS_CSS], [BG_LAYERS_HTML]
+    extra = []
+    for key in ("fiber", "crease"):
+        layer = bg.get(key)
+        if not layer:
+            continue
+        css.append(_FIBER_CSS % dict(
+            id=key, tile=layer["tile"],
+            url=neutral_turb(layer["freq"], layer["octaves"], layer["seed"],
+                             layer["k"], layer.get("size", 240)),
+        ))
+        extra.append(f'<div id="{key}"></div>')
+    if extra:      # 纸感层夹在 #paper 与 #vignette 之间（压角永远在最上）
+        html = [BG_LAYERS_HTML.replace('<div id="vignette"></div>',
+                                       "\n".join(extra) + '\n<div id="vignette"></div>')]
+    return "\n".join(css), "\n".join(html)
+
 
 # ────────────────────────── 实例化 ──────────────────────────
 
@@ -295,8 +366,7 @@ def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3):
     sub = {
         # ⚠️ 必须排在最前：它展开后内部仍含 __PAPER_URL__/__TEX_SCALE__ 等，
         # 靠后面的条目接着替换（dict 保序）。放后面就会留下没填的占位符。
-        "__BG_LAYERS_CSS__": BG_LAYERS_CSS,
-        "__BG_LAYERS_HTML__": BG_LAYERS_HTML,
+        **dict(zip(("__BG_LAYERS_CSS__", "__BG_LAYERS_HTML__"), bg_layers(bg))),
         "__CANVAS__": f"{cv['w']}x{cv['h']}", "__W__": cv["w"], "__H__": cv["h"],
         "__FONT_PX__": cv["font"], "__STROKE_PX__": stroke, "__SAFE_W__": safe_w,
         "__RISE__": cv["rise"], "__BRAND_PX__": cv["brand_px"],
