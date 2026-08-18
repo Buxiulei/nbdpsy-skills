@@ -3,6 +3,17 @@
 
     check_collage_script.py --script script-1.txt [--focus 3] [--speed 3.5]
 
+🔴 **老板 2026-08-18 原话（继 G9 之后第二次强调 ⇒ 第一次没落实到位）**：
+**「不能因为字数限制而缩减文字，导致完全看不懂在说啥！口播稿长就长一些！」**
+
+⇒ **写稿阶段 ⛔ 不给任何字数／句数／时长上限**（与 oneline「写稿不给 12 字」同一条原则，
+**扩到所有版式**）。数字上限**只活在渲染层**，写稿人看不到、也不该看到。
+⚠️ **预检只报「哪一句拆不开」，⛔ 不报「太长」。**
+
+🩸 **半小时前拍的「≤11 句／30–40s」已作废**——它们本来就属于写稿阶段的数字上限。
+本脚本现在**只查渲染层能不能承受**：每屏停留 ≥3.5s（印章屏 ≥4.5s）／印章屏首段单看无害／
+索引合法。⛔ 不再查句数、不再查总时长、不再查逐句字数。
+
 ## 明文规格（助理 2026-08-18 拍板；⛔ 此前只有"观察值不是指标"）
 
 | 项 | 值 |
@@ -44,10 +55,8 @@ import re
 import sys
 from pathlib import Path
 
-MAX_SENTS = 11
 HOLD_MIN = 3.5
 HOLD_FOCUS = 4.5
-DUR_RANGE = (30.0, 40.0)
 SPEED = 3.5
 """口播语速真值（汉字/秒），运营线实测。⛔ 别用 4.5 估——实测偏 29%。
 ⚠️ 它让「这句会停几秒」在**交稿前**就能算出来，不用先烧 TTS。"""
@@ -81,10 +90,6 @@ def check(lines: list[str], focus: int | None, speed: float = SPEED) -> dict:
     if n == 0:
         return {"ok": False, "fails": ["稿件没有句子——⛔ 这不是「空稿」，是没读到"],
                 "warns": [], "rows": [], "n": 0, "total": 0.0}
-    if n > MAX_SENTS:
-        fails.append(f"共 {n} 句 > 上限 {MAX_SENTS} 句"
-                     f"——⚠️ 上限不是拍的：{DUR_RANGE[1]:.0f}s ÷ {HOLD_MIN}s/屏 反推出来的")
-
     total = 0.0
     for i, ln in enumerate(lines):
         h = hanzi(ln)
@@ -96,8 +101,8 @@ def check(lines: list[str], focus: int | None, speed: float = SPEED) -> dict:
             fails.append(
                 f"第 {i + 1} 句「{ln[:14]}」{h} 字 ⇒ 约停 {hold}s < {need}s"
                 f"{'（印章句）' if is_focus else ''}\n"
-                f"    ⇒ 把话说长一点（**⛔ 不是把别的句子说短**）；"
-                f"若整篇都偏短，那是语速问题，重跑 TTS 放慢或加句间停顿")
+                f"    ⇒ **把这一句铺成多屏**（解耦后卡片只显关键词，一句本来就能铺多屏）；\n"
+                f"    ⛔ 别改稿子迁就排版——老板 2026-08-18：「口播稿长就长一些！」")
         if is_focus and any(c in ln for c in COMMA):
             head = re.split("[" + re.escape(COMMA) + "]", ln)[0]
             extra = "（且含转折/否定词，**风险更高**）" if any(w in ln for w in TURN) else ""
@@ -110,10 +115,7 @@ def check(lines: list[str], focus: int | None, speed: float = SPEED) -> dict:
         rows.append({"i": i + 1, "hanzi": h, "hold": hold, "focus": is_focus, "text": ln})
 
     total = round(total, 1)
-    if not (DUR_RANGE[0] <= total <= DUR_RANGE[1]):
-        (fails if total > DUR_RANGE[1] else warns).append(
-            f"预估总时长 {total}s 不在 {DUR_RANGE[0]:.0f}–{DUR_RANGE[1]:.0f}s 内"
-            f"（按语速 {speed} 汉字/秒；⚠️ 这是**估算**，真值以 TTS 为准）")
+    # ⛔ 只报数，不判上下限——写稿阶段不设时长上限（老板 2026-08-18）
     if focus is not None and not (0 <= focus < n):
         fails.append(f"印章句索引 {focus} 越界（共 {n} 句，0 起）")
 
@@ -149,7 +151,7 @@ def main(argv=None) -> int:
         for f in res["fails"]:
             print(f"  · {f}", file=sys.stderr)
         return 1
-    print("\n✅ 全过（句数/停留/总时长/印章句）", file=sys.stderr)
+    print("\n✅ 全过（停留/印章句/索引；⛔ 句数与总时长已不设上限）", file=sys.stderr)
     return 0
 
 

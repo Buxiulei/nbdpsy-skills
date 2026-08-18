@@ -24,7 +24,7 @@ description: >-
 - **「长文播客」**——长文 → 一男一女对谈播客视频（声音+字幕为主，HTML 播放器画面录屏，
   黑底大字幕+波形+栏目名）。规格见 `references/podcast-video-spec.md`（含**播放器主题两档：深夜电台·默认／纸上对谈**，`record_podcast.py --theme` 切换）。
 - **「字卡短片」**（2026-08-11 老板验收入库）——笔记文案 → 口播驱动的 GSAP 动效字卡竖版短片
-  （30–40 秒，逐帧渲染帧级音画同步，四个版式模板：basic 品牌动效/camera 电影运镜/collage 手作拼贴/
+  （⚠️ 时长由内容定、**写稿阶段不设上限**（见 narration-spec 首行老板原话）；逐帧渲染帧级音画同步，四个版式模板：basic 品牌动效/camera 电影运镜/collage 手作拼贴/
   kinetic 动力学文字）。**边际成本 ≈¥0.2/条、改字 1 分钟重出**，三形态里量产成本最低。
   规格与工程坑清单见 `references/card-video-spec.md`，模板在 `assets/card-templates/`，
   渲染 `scripts/render_card.py`（默认 CPU 光栅与存量批次像素一致；⚠️ GPU 会改像素，显式
