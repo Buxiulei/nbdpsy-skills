@@ -47,7 +47,8 @@ from pathlib import Path
 HERE = Path(__file__).parent
 TPL_DIR = HERE.parent / "assets" / "illust-templates"
 TEMPLATES = {"steps": TPL_DIR / "tpl-steps.html",
-             "compare": TPL_DIR / "tpl-compare.html"}
+             "compare": TPL_DIR / "tpl-compare.html",
+             "define": TPL_DIR / "tpl-define.html"}
 
 # 画幅：⛔ 别信规格里的「16:9」——那是出图 API 的参数名，实产 42 张实测全是 3:2、零例外。
 CANVAS = dict(w=1313, h=876)
@@ -148,6 +149,31 @@ def instantiate_compare(data: dict, strict_decor: bool = False) -> str:
     return html
 
 
+def instantiate_define(data: dict, strict_decor: bool = False) -> str:
+    """define 单张。🔴 命中句（后半）必须比现象句（前半）重——⛔ 别合成一段。"""
+    ant = data.get("antidote")
+    m = {"__CANVAS__": f"{CANVAS['w']}x{CANVAS['h']}",
+         "__W__": CANVAS["w"], "__H__": CANVAS["h"],
+         "__FEED_SCALE__": round(FEED_W / CANVAS["w"], 6),
+         "__TERM__": esc(data.get("term", "")), "__PAGENO_HTML__": "",
+         "__PHENOM__": esc(data.get("phenom", "")),
+         "__HIT__": esc(data.get("hit", "")),
+         "__ANTIDOTE_HTML__": f'\n  <div class="antidote">{esc(ant)}</div>' if ant else "",
+         "__CONTENT_LAYERS__": json.dumps(
+             (["词"] if strict_decor else []) + ["页码", "现象句", "命中句", "解毒句"],
+             ensure_ascii=False),
+         **{f"__{k}__": v for k, v in PALETTE.items()},
+         **{f"__{k}__": v for k, v in SIZES.items()}}
+    html = TEMPLATES["define"].read_text(encoding="utf-8")
+    for k, v in m.items():
+        html = html.replace(k, str(v))
+    import re
+    left = sorted(set(re.findall(r"__[A-Z_0-9]+__", html)))
+    if left:
+        sys.exit(f"❌ 模板还有没填的占位符：{left}")
+    return html
+
+
 def render(html_path: Path, png_path: Path) -> dict:
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -176,6 +202,9 @@ def gate(rep: dict, tag: str) -> list[str]:
         bad.append(f"{tag}：两栏宽度比只有 {rep['asymmetry']}——**做成对称天平了**。"
                    f"⛔ 心理科普里出现的是**纠正**不是对等比较；对称会读成"
                    f"「两种观点各有道理」，正好是反效果")
+    if rep.get("hit_over_phenom") is not None and rep["hit_over_phenom"] < 1.15:
+        bad.append(f"{tag}：命中句只比现象句重 {rep['hit_over_phenom']} 倍——"
+                   f"**「认出自己」那一下被淹没在描述里了**。⛔ 别把两半合成一段")
     m = rep["min_feed_px"]
     if m is not None and m < MIN_FEED_PX:
         # ⚠️ 只在内容层里挑最差的那个——⛔ 别把装饰层报出来当元凶（那是假红）
@@ -208,23 +237,27 @@ def main(argv=None) -> int:
     if data.get("layout") not in TEMPLATES:
         print(f"❌ layout 必须是 {sorted(TEMPLATES)}，拿到 {data.get('layout')!r}", file=sys.stderr)
         return 2
-    if data["layout"] == "compare":
+    if data["layout"] in ("compare", "define"):
+        lay = data["layout"]
+        maker = instantiate_compare if lay == "compare" else instantiate_define
         out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
-        hp = out / "illust-compare.html"
-        hp.write_text(instantiate_compare(data, a.strict_decor), encoding="utf-8")
-        rep = render(hp, out / "illust-compare.png")
+        hp = out / f"illust-{lay}.html"
+        hp.write_text(maker(data, a.strict_decor), encoding="utf-8")
+        rep = render(hp, out / f"illust-{lay}.png")
         rep["page"] = 1
-        fails = gate(rep, "compare")
+        fails = gate(rep, lay)
         print(json.dumps({"ok": not fails, "pages": 1, "reports": [rep],
                           "fails": fails}, ensure_ascii=False, indent=2))
-        print(f"  两栏宽度比 {rep['asymmetry']}｜事实/误解字号比 {rep['fact_over_wrong_font']}"
-              f"｜手机正文最小字号 {rep['min_feed_px']}px", file=sys.stderr)
+        extra = (f"两栏宽度比 {rep['asymmetry']}｜事实/误解字号比 {rep['fact_over_wrong_font']}"
+                 if lay == "compare" else
+                 f"命中/现象字号比 {rep['hit_over_phenom']}｜解毒句 {'有' if rep['has_antidote'] else '无'}")
+        print(f"  {extra}｜手机正文最小字号 {rep['min_feed_px']}px", file=sys.stderr)
         if fails:
             print("\n⛔ 闸门不过：", file=sys.stderr)
             for f in fails:
                 print(f"  · {f}", file=sys.stderr)
             return 1
-        print("\n✅ 全过（溢出闸 + 字号下限闸 + 不对等闸）", file=sys.stderr)
+        print(f"\n✅ 全过（{lay}：溢出闸 + 字号下限闸 + 形态闸）", file=sys.stderr)
         return 0
 
     steps = data.get("steps") or []

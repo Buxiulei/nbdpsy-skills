@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="render-canvas" content="__CANVAS__">
+<title>定义插图 tpl-define</title>
+<!--
+  ════════════════════════════════════════════════════════════════════════
+  tpl-define · 公众号正文「一个词的展开」插图（2026-08-18 立）
+  ════════════════════════════════════════════════════════════════════════
+  🔴 **⛔ 不是名词解释卡。**服务号线原话：**心理科普定义一个词，目的不是让人记住
+     定义，是让人认出「这说的是我」。**⇒ 版式核心是「**词 + 它是什么体验**」，
+     ⛔ 不是「词 + 学术定义」。
+
+  🔴 **体验分两半，视觉权重必须不同**（服务号线 2026-08-18 逐字指出）：
+     - **前半＝描述现象** → 读者会**点头**（「对，是这样」）
+     - **后半＝命中处境** → 读者会**愣一下**（「……这说的是我」）
+     ⇒ **后半句才是「让人认出自己」的那一下**，所以它单独成块、加重。
+     ⚠️ **版面装不下时，⛔ 宁可砍前半句的修饰，也要留住后半句。**
+        （真实素材里那句是「难受是真的，你却找不到配得上它的理由，
+          于是责怪自己『这点事至于吗』」。）
+
+  ⭕ **第三层＝解毒句**（可选）：防止读者把「被命名」理解成「被诊断」。
+     缺席合法——⛔ 没有就不渲，别留空块。
+
+  与 steps/compare 同源的硬约束：3:2 画幅｜字号下限 ≥11px@375｜accent 用色块不用细线｜
+  页码是功能层不是装饰层。
+  ════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:__W__px; height:__H__px; overflow:hidden;
+    font-family:"Noto Sans CJK SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif; }
+  body { background:__BASE__; position:relative; padding:__PAD__px __PADX__px; }
+
+  .pageno { position:absolute; top:__PAD__px; right:__PADX__px;
+    font-size:__DESC__px; font-weight:700; color:__INK__;
+    background:__HINT__; padding:8px 20px; border-radius:10px; }
+
+  /* 词：色块承托，⛔ 不用描边（细线在信息流尺寸会被抹平） */
+  .term { display:inline-block; background:__ACCENT__; color:#fff;
+    font-size:__H1__px; font-weight:700; padding:12px 30px; border-radius:16px;
+    margin-bottom:30px; }
+
+  /* 前半：描述现象——读者点头的那半 */
+  .phenom { font-size:__DESC__px; line-height:1.55; color:__INK2__; margin-bottom:26px; }
+
+  /* 🔴 后半：命中处境——读者愣一下的那半。单独成块、加重、留白隔开。
+     ⛔ 别把它和前半合成一段：合了以后它就淹没在描述里，
+     而它才是「让人认出这说的是我」的那一下。 */
+  .hit { font-size:__BIG__px; line-height:1.45; color:__INK__; font-weight:700;
+    background:__ACCENT_SOFT__; border-radius:16px; padding:26px 30px; }
+
+  /* 第三层：解毒句。柔和、次要——它的作用是解除误读，⛔ 不该抢戏 */
+  .antidote { margin-top:24px; font-size:__DESC__px; line-height:1.5; color:__MUTED__; }
+  .antidote::before { content:"— "; }
+</style>
+</head>
+<body>
+  <div class="term">__TERM__</div>__PAGENO_HTML__
+  <div class="phenom">__PHENOM__</div>
+  <div class="hit">__HIT__</div>__ANTIDOTE_HTML__
+
+<script>
+(function () {
+  const k = __FEED_SCALE__;
+  const px = sel => {
+    const e = document.querySelector(sel);
+    return e ? Math.round(parseFloat(getComputedStyle(e).fontSize) * 10) / 10 : null;
+  };
+  const layers = { 词: px('.term'), 页码: px('.pageno'), 现象句: px('.phenom'),
+                   命中句: px('.hit'), 解毒句: px('.antidote') };
+  const CONTENT_LAYERS = __CONTENT_LAYERS__;
+  const feed = {}, present = [];
+  for (const [k2, v] of Object.entries(layers)) {
+    if (v === null) continue;
+    feed[k2] = Math.round(v * k * 10) / 10;
+    if (CONTENT_LAYERS.includes(k2)) present.push(feed[k2]);
+  }
+  const body = document.body, hit = document.querySelector('.hit');
+  const last = document.querySelector('.antidote') || hit;
+  window.ILLUST_REPORT = {
+    layout: "define", canvas: [__W__, __H__], feed_scale: k,
+    font_px: layers, feed_px: feed, content_layers: CONTENT_LAYERS,
+    min_feed_px: present.length ? Math.min(...present) : null,
+    // 🔴 命中句必须比现象句重——⛔ 一样大就等于把「认出自己」那一下淹没在描述里
+    hit_over_phenom: Math.round(layers.命中句 / layers.现象句 * 100) / 100,
+    has_antidote: !!document.querySelector('.antidote'),
+    overflow: body.scrollHeight > body.clientHeight,
+    content_bottom: Math.round(last.getBoundingClientRect().bottom),
+  };
+})();
+</script>
+</body>
+</html>
