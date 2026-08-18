@@ -68,6 +68,25 @@ def _stem(why: str, cite: str | None) -> str:
     return re.sub(r"[「」『』\"'，。、；：！？…—\-\s（）()]+", "", s)
 
 
+def _speech_in(cues: list[dict], a: float, b: float) -> str:
+    """[a,b) 这段时间里念的口播原文（拼接命中的 cue）。解耦模式下它才是"内容"。"""
+    return "".join(c.get("text", "") for c in cues
+                   if float(c.get("end", 0)) > a and float(c.get("start", 0)) < b)
+
+
+def _on_boundary(cues: list[dict], t: float, tol: float = 0.12) -> bool:
+    """t 是否落在语义边界（某个 cue 的起点或终点）附近。
+
+    🩸 审稿代理 2026-08-18：**卡片切换点必须落在语义边界，⛔ 不在一句话中间切**
+    ——中途切换会让观众以为话题变了，而口播还在同一句里。
+    """
+    for c in cues:
+        for edge in (float(c.get("start", 0)), float(c.get("end", 0))):
+            if abs(t - edge) <= tol:
+                return True
+    return False
+
+
 def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
     fails, warns, rows = [], [], []
     screens = plan.get("screens") or []
@@ -80,10 +99,30 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
     for s in screens:
         i = s.get("i")
         tag = f"#{i:02d}" if isinstance(i, int) else "#??"
-        text = s.get("text", "")
+        # 🔴 解耦模式（collage）：卡片文字 ≠ 口播文字
+        #    `card` = 卡片上显示的关键词/短语；`covers` = 它覆盖的口播时段
+        #    ⇒ **相关性判据要对着口播原文判**，⛔ 不是对着卡片自己的字判
+        #      （卡片是从口播提炼的，拿它自比等于自证）。
+        card, covers = s.get("card"), s.get("covers")
+        decoupled = card is not None and covers is not None
+        if decoupled:
+            a, b = float(covers[0]), float(covers[1])
+            speech = _speech_in(cues, a, b)
+            text = speech
+            # ⑦ 卡片必须回贴口播：覆盖时段里得真有话在念
+            if not speech.strip():
+                fails.append(f"{tag}：covers {covers} 这段时间没有口播——卡片贴在了空白上")
+            # ⑧ 切换点必须落在语义边界
+            if not _on_boundary(cues, a):
+                fails.append(
+                    f"{tag}：切换点 {a}s 不在语义边界上（句号/分句）——"
+                    f"⛔ 别在一句话中间切卡片，观众会以为话题变了而口播还在同一句里")
+        else:
+            text = s.get("text", "")
 
         # ① 文本一致：plan 的屏文本必须能在 cues 里找到（⛔ 别让 LLM 顺手改词）
-        if not any(text and text in ct for ct in cue_texts):
+        #    ⚠️ 解耦模式跳过——那时 text 是从 cues 拼出来的，自比无意义
+        if not decoupled and not any(text and text in ct for ct in cue_texts):
             fails.append(f"{tag}：屏文本「{text}」在 cues 里找不到——⛔ 计划不许改动稿子的字")
 
         # ② 三个闭集
@@ -122,19 +161,29 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
                 f"    重跑 TTS 放慢或加句间停顿，⛔ 别在排版层硬撑")
         rows.append({"tag": tag, "hold": hold, "semantic": s.get("semantic"),
                      "motif": s.get("motif"), "emphasis": emph, "cite": cite,
-                     "text": text, "why": why})
+                     "text": text, "why": why, "card": card, "covers": covers})
 
     return {"ok": not fails, "fails": fails, "warns": warns, "rows": rows,
             "screens": len(screens), "hold_min": hold_min}
 
 
 def to_md(res: dict) -> str:
-    """人读的一屏一行（给内容审稿 agent）。"""
+    """人读的一屏一行（给内容审稿 agent）。
+
+    🔴 解耦模式下**必须把「卡片文字 ↔ 它覆盖时段的口播原文」并排列出**
+    （审稿代理 2026-08-18 定为必交材料）：**解耦解决了电报体，却引入了新风险——
+    卡片与当时念的话对不上，那比装饰性无关更糟**（观众会以为自己听漏了）。
+    ⇒ 并排列出来，人一眼就能判"这张卡是不是这段话的关键词"。
+    """
     out = []
     for r in res["rows"]:
         out.append(f"{r['tag']}  {r['hold']}s  {r['semantic']}  {r['motif']}"
                    f"  强调「{r['emphasis'] or '—'}」")
-        out.append(f"      「{r['text']}」")
+        if r.get("card") is not None:
+            out.append(f"      卡片：「{r['card']}」   覆盖 {r['covers']}")
+            out.append(f"      口播：「{r['text']}」   ← 这段时间真正念的话")
+        else:
+            out.append(f"      「{r['text']}」")
         out.append(f"      why: {r['why']}   [引用:{r['cite'] or '⛔无'}]")
     return "\n".join(out)
 

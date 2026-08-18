@@ -93,3 +93,40 @@ def test_端到端退出码(tmp_path):
     p.write_text(json.dumps({"screens": [_scr(why="气氛转折所以漂移")]}, ensure_ascii=False),
                  encoding="utf-8")
     assert run().returncode == 1
+
+
+# ────────── 解耦模式（collage）：卡片文字 ≠ 口播文字 ──────────
+# 🩸 解耦解决了「电报体」，却引入新风险（审稿代理 2026-08-18）：
+# **卡片与当时念的话对不上，比装饰性无关更糟**——观众会以为自己听漏了。
+
+def _dec(**over):
+    d = {"i": 0, "card": "不代表能停药", "covers": [0, 4.0], "start": 0, "end": 4.0,
+         "semantic": "反驳", "motif": "wipe", "emphasis": "不代表", "relation": "开场",
+         "why": "「不代表」是把前半句划掉重写，wipe 演这个动作"}
+    d.update(over)
+    return d
+
+
+def test_解耦模式相关性对着口播原文判():
+    """🔴 ⛔ 不是对着卡片自己的字判——卡片是从口播提炼的，拿它自比等于自证。"""
+    r = cp.check({"screens": [_dec()]}, CUES)
+    assert r["ok"], r["fails"]
+    assert r["rows"][0]["text"] == "感觉好了不代表能停药", "text 应是覆盖时段的口播原文"
+
+
+def test_卡片切换点必须落在语义边界():
+    """⛔ 别在一句话中间切——观众会以为话题变了，而口播还在同一句里。"""
+    r = cp.check({"screens": [_dec(covers=[1.7, 4.0], start=1.7)]}, CUES)
+    assert not r["ok"] and "不在语义边界" in r["fails"][0]
+
+
+def test_卡片不许贴在没有口播的时段上():
+    r = cp.check({"screens": [_dec(covers=[20.0, 24.0], start=20.0, end=24.0)]}, CUES)
+    assert any("没有口播" in f for f in r["fails"]), "卡片贴在空白上却没报"
+
+
+def test_审稿材料必须并排列出卡片与口播():
+    """🔴 这是审稿必交材料：人一眼就能判「这张卡是不是这段话的关键词」。"""
+    md = cp.to_md(cp.check({"screens": [_dec()]}, CUES))
+    assert "卡片：「不代表能停药」" in md
+    assert "口播：「感觉好了不代表能停药」" in md and "这段时间真正念的话" in md
