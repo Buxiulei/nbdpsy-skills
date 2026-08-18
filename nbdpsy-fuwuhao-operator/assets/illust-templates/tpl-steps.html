@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- 画幅由渲染脚本按 CANVAS 填；⛔ 别改 name -->
+<meta name="render-canvas" content="__CANVAS__">
+<title>步骤插图 tpl-steps</title>
+<!--
+  ════════════════════════════════════════════════════════════════════════
+  tpl-steps · 公众号正文步骤插图（2026-08-18 立）
+  ════════════════════════════════════════════════════════════════════════
+  ⛔ 这不是封面。公众号封面走 `still-life`（2.35:1、**图内零文字**）；
+     本模板是**正文插图**，有文字、画幅 3:2。
+
+  ## 硬约束（都是服务号线拿真稿定的，⛔ 别凭观感改）
+
+  ① **画幅 1313×876（3:2）**。⛔ 别信规格里的「16:9」——那是出图 API 的参数名，
+     实产 42 张实测全是 3:2、零例外。
+  ② 🔴 **每张 2 步**，⛔ 不是 3–4 步。4 步/张实测：正文缩到手机宽只有 7.1px、
+     反例 6.3px，**读者截图保存后最要紧的那层是糊的**。
+  ③ 🔴 **字号下限（读者在手机正文里看到的才算数）**：
+     `@375px 正文宽（≈0.286 倍）下，最小的那层 ≥11px；层间差 ≤1 档`。
+     ⛔ 别再出现 7.1px 对 12.6px 那种断层。**元素个数由这条反推，⛔ 不是先定个数再缩字。**
+  ④ 🔴 **反例槽位允许缺席**。真稿四步里第 3 步「注意力只放在左、右、左、右上」
+     是正向引导不是禁止。⛔ 别强制每步都有——**逼写稿人硬造一条禁令，比没有禁令更糟：
+     读者会把硬造的「别做 X」当成真的风险提示。**
+  ⑤ 🔴 **反例与展开句同号，⛔ 不更大**。它是**修正**不是**主体**：比展开句大，
+     读者会先撞上「别把手指朝向胳膊」再回头找「那该朝哪」——**防错变成制造困惑**。
+     判据（服务号线原话）：**信息的重要性决定它能不能被砍，视觉层级决定它什么时候被读到
+     ——这两件事不该用同一个旋钮（字号）去调。**
+     ⇒ 可辨识性**靠形不靠大**：底块 + 内边距 + 行距，⛔ 不靠放大字号。
+  ⑥ **accent 用色块，⛔ 不用细线**——细线缩到信息流尺寸会被抹平（实测 0 像素）。
+  ════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:__W__px; height:__H__px; overflow:hidden;
+    font-family:"Noto Sans CJK SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif; }
+  body { background:__BASE__; position:relative; padding:__PAD__px __PADX__px; }
+
+  h1 { font-size:__H1__px; font-weight:700; color:__INK__; letter-spacing:.01em; margin-bottom:10px; }
+  .sub { font-size:__SUB__px; color:__MUTED__; margin-bottom:38px; }
+
+  .steps { display:flex; flex-direction:column; gap:__GAP__px; }
+  .step  { display:flex; align-items:flex-start; gap:26px; }
+
+  /* 序号＝色块（约束⑥）。⛔ 别改成描边圆圈：细线在信息流尺寸下会消失 */
+  .num { flex:0 0 auto; width:__NUM__px; height:__NUM__px; border-radius:__NUMR__px;
+    background:__ACCENT__; color:#fff; font-size:__NUMF__px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; }
+
+  .body { flex:1 1 auto; padding-top:2px; }
+  .name { font-size:__NAME__px; font-weight:700; color:__INK__; line-height:1.25; margin-bottom:8px; }
+  .desc { font-size:__DESC__px; color:__INK2__; line-height:1.5; }
+
+  /* 反例：与 .desc 同号（约束⑤），靠底块+内边距+行距做层级，⛔ 不靠字号 */
+  .dont { display:inline-block; margin-top:16px; padding:12px 24px; border-radius:12px;
+    background:__HINT__; color:__INK__; font-size:__DESC__px; line-height:1.4; }
+  .dont::before { content:"✕ "; font-weight:700; }
+</style>
+</head>
+<body>
+  <h1>__TITLE__</h1>
+  <div class="sub">__SUBTITLE__</div>
+  <div class="steps">__STEPS_HTML__</div>
+
+<script>
+/* 字号下限自检（约束③）：渲染脚本读 window.ILLUST_REPORT 判成败。
+   🔴 报的是**读者在手机正文里看到的字号**，⛔ 不是原图字号——原图 40px 好看，
+   缩到 0.286 倍只剩 11.4px，判据必须落在后者上。 */
+(function () {
+  const k = __FEED_SCALE__;                       // 手机正文宽 / 画布宽
+  const px = sel => {
+    const e = document.querySelector(sel);
+    return e ? Math.round(parseFloat(getComputedStyle(e).fontSize) * 10) / 10 : null;
+  };
+  const layers = { 标题: px('h1'), 副题: px('.sub'), 动作名: px('.name'),
+                   展开句: px('.desc'), 反例: px('.dont') };
+  /* 🔴 **闸门只守「读者照着做需要读的三层」**——⛔ 标题/副题不参与下限判定。
+     首版把五层全纳进来，结果「副题 6.9px」报红：**取样范围比要守的东西宽＝假红**。
+     而它更坏的一点是**处置建议不成立**——报错让人「减少每张步数」，
+     可副题字号与步数无关，照做也解决不了 ⇒ 人只会困惑，或者干脆绕过闸门。
+     ⚠️ 装饰层的字号仍然照报（供人参考），只是不判。 */
+  const CONTENT_LAYERS = __CONTENT_LAYERS__;   // 由脚本填（--strict-decor 时含装饰层）
+  const feed = {}, present = [];
+  for (const [k2, v] of Object.entries(layers)) {
+    if (v === null) continue;                     // ⚠️ 缺席的层（如整张无反例）不参与判定
+    feed[k2] = Math.round(v * k * 10) / 10;
+    if (CONTENT_LAYERS.includes(k2)) present.push(feed[k2]);
+  }
+  const body = document.body;
+  window.ILLUST_REPORT = {
+    layout: "steps", canvas: [__W__, __H__], feed_scale: k,
+    font_px: layers, feed_px: feed,
+    content_layers: CONTENT_LAYERS,
+    min_feed_px: present.length ? Math.min(...present) : null,   // ⚠️ 只统计内容层
+    steps: document.querySelectorAll('.step').length,
+    dont_slots: document.querySelectorAll('.dont').length,   // 允许 < steps（约束④）
+    overflow: body.scrollHeight > body.clientHeight,
+    content_bottom: Math.round(
+      (document.querySelector('.steps').lastElementChild || body).getBoundingClientRect().bottom),
+  };
+})();
+</script>
+</body>
+</html>
