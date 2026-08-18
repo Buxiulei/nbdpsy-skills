@@ -174,18 +174,62 @@ EN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9''\-]*(?:\s+[A-Za-z][A-Za-z0-9''\-]*)*
 **第 2 屏单看是个不存在的刊名**——⚠️ 比"读着别扭"严重得多，那是**编造了一个刊物**。"""
 
 
-NUM_TOKEN = re.compile(r"\d[\d\-–—]*")
-"""🔴 **数字串与英文专名同等保护**（2026-08-18 验专名屏时顺带抓到）。
+NUM_TOKEN = re.compile(r"[\dA-Za-z%％][\dA-Za-z.:/%％\-–—]*")
+"""🔴 **含数字的连续串不可分割**（2026-08-18 验专名屏时抓到，当晚按助理清单扩全）。
 
 ⚠️ 危害比刊名更大：`请打 12356` 若被劈成「请打 123」「56」，
 **读者看到的是一个错的危机热线号码**——刊名说错是学术不严谨，热线说错是有人打不通。
-⛔ 所以纯数字虽然不是"专名"，但走同一条不可分割规则。"""
+
+🩸 **本批 5 条科普的 12356 没被劈是侥幸**——它们恰好写成「热线，12356」让号码单独成屏。
+⇒ ⛔ 别拿"这批没出事"当"规则够用"。
+
+覆盖：手机号／身份证／PMID／DOI（`10.1001/jama.2024.1234`）／百分比（`35.5%`）／
+区间（`10-20`）。⚠️ 匹配后**还要含至少一个数字**才算数——纯字母归 `EN_TOKEN` 管。"""
+
+CN_DIGIT = "〇零一二两三四五六七八九十百千万亿半"
+CN_UNIT = "年月日号时分秒点元角块毛个次件位岁倍成条页章章节米克斤里%％"
+CN_LINK = "到至多余"
+CN_NUM_TOKEN = re.compile(f"[{CN_DIGIT}]+(?:[{CN_UNIT}{CN_LINK}][{CN_DIGIT}]*)*")
+"""🔴 **中文数量串同样不可分割**（助理 2026-08-18 清单：中文日期／金额区间／时长）。
+
+实证反例（切开后**数值就变了**，不是"读着别扭"）：
+「二〇二六年八月」→「二〇二」「六年八月」｜「四百到六百元」→「四百」「到六百元」｜
+「三分零五秒」→「三分」「零五秒」。
+
+⚠️ **误伤面是有意压小的**：只保护 ≥2 字的串，所以「不一样」（只匹配单字「一」）不受影响；
+「一个」「十分」「一次」这类会被保护，但**保护的只是它内部那一刀**（「一｜个」），
+串两侧照常可断 ⇒ 影响面实测 809 句里断不开 63→63 处、软断 146→144 处。
+⛔ 别把连接词扩到「和/或」——那两个更常是并列连词，扩了会大面积禁掉合法断点。"""
+
+
+# 数字内部的 `.` `:` `/` **不是句读**：`3.2 个百分点`「下降了 3」「2 个百分点」＝数值变了。
+# 🩸 这是**在产的坑**：HARD 里就有 `.` `:`，`split_cue` 第一步的硬切根本轮不到保护区间，
+#    `display()` 还会把它整个丢掉（`10.1001` → `101001` ⇒ **DOI 被改了**）。
+# ⇒ 硬切之前先把这几个字符藏进私用区，还原在 display 之后。
+# ⚠️ 只保护**数字参与**的那一侧，所以英文缩写里的点（`e.g.`）照旧当句读——⛔ 别放宽成两侧字母。
+_NUM_PUNCT = re.compile(r"(?<=\d)[.:/](?=[\dA-Za-z])|(?<=[\dA-Za-z])[.:/](?=\d)")
+_PUA = {".": "\ue001", ":": "\ue002", "/": "\ue003"}   # 私用区，⛔ 正文不可能出现
+_PUA_BACK = {v: k for k, v in _PUA.items()}
+
+
+def _hide_num_punct(text: str) -> str:
+    return _NUM_PUNCT.sub(lambda m: _PUA[m.group()], text)
+
+
+def _show_num_punct(text: str) -> str:
+    return "".join(_PUA_BACK.get(c, c) for c in text)
 
 
 def _protected_spans(seg: str):
-    """不可切区间 [start, end)：英文词组 ＋ 数字串 ＋ 正反问结构。"""
+    """不可切区间 [start, end)：英文词组 ＋ 含数字串 ＋ 中文数量串 ＋ 正反问结构。
+
+    ⚠️ 都只收 **≥2 字**的匹配——单字保护没有意义（一个字里本来就没有可切的位置），
+    而收单字会把「不一样」的「一」这种也算进来，⛔ 白白禁掉一堆合法断点。
+    """
     spans = [(m.start(), m.end()) for m in EN_TOKEN.finditer(seg) if m.end() - m.start() > 1]
-    spans += [(m.start(), m.end()) for m in NUM_TOKEN.finditer(seg) if m.end() - m.start() > 1]
+    spans += [(m.start(), m.end()) for m in NUM_TOKEN.finditer(seg)
+              if m.end() - m.start() > 1 and any(c.isdigit() for c in m.group())]
+    spans += [(m.start(), m.end()) for m in CN_NUM_TOKEN.finditer(seg) if m.end() - m.start() > 1]
     spans += [(m.start(), m.end()) for m in AB_QUESTION.finditer(seg)]
     return spans
 MIN_SOFT = 3      # 软断点切出来的碎片不得短于此（避免"都被""而是"这种孤儿行）
@@ -300,9 +344,11 @@ def soft_split(seg: str, cap: int):
     out, i = [], 0
     while i < n:
         j = best[i][2]
-        out.append(seg[i:j])
+        # ⚠️ 必须 strip：切点落在空格旁边时片段会带首尾空格，屏上就是一块歪掉的留白。
+        # strip 只会让片段更短，⛔ 不可能反过来撑破 cap。
+        out.append(seg[i:j].strip())
         i = j
-    return out
+    return [x for x in out if x]
 
 
 # ────────────────────── 专名屏例外（助理 2026-08-18 拍板 A） ──────────────────────
@@ -415,10 +461,12 @@ def split_cue(text: str, cap: int, allow_proper: bool = True):
     `allow_proper=False` 关掉专名屏例外（段落版式用）：⚠️ 关掉后它**照旧报"断不开"**，
     ⛔ 不会静默地把一屏塞爆。
     """
-    parts = [p for p in re.split("[" + re.escape("".join(HARD)) + "]", text)]
+    # ⚠️ 先把数字内部的 . : / 藏起来再硬切——否则「下降了 3.2 个百分点」会被切成
+    # 「下降了 3」「2 个百分点」，而 display() 还会把那个点整个丢掉（**数值就变了**）。
+    parts = [p for p in re.split("[" + re.escape("".join(HARD)) + "]", _hide_num_punct(text))]
     screens, fails, softs, propers = [], [], [], []
     for raw in parts:
-        seg = display(raw)
+        seg = _show_num_punct(display(raw))
         if not seg:
             continue
         if units(seg) <= cap:
