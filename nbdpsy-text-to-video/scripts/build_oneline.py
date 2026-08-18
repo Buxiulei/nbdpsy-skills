@@ -45,6 +45,15 @@ TEMPLATES = {
 }
 FONT = "ZCOOLKuaiLe-Regular.ttf"
 DEPS = ["gsap.min.js", FONT]
+# 🩸 render_card.py 也必须拷进工作目录（2026-08-18 冒烟抓到，差点让 12 条批量全废）：
+# 它用 `Path(__file__).parent` 找 `narration.mp3.cues.json` 与音频，而 spec 示例写的是
+# `cd 工作目录 && python3 render_card.py` ——**暗含脚本已在工作目录**。
+# 此前只拷 gsap 与字体 ⇒ **照规格抄命令的人必然 FileNotFoundError**，
+# ⚠️ 而且死在 TTS 配额烧完之后（渲染是产线最后一步）。
+# ⇒ 与既往批次「每条视频各带一份脚本副本」的做法一致，由本脚本一并备好。
+# ⛔ 没改 render_card.py 的路径基准：存量批次的目录结构都假设「脚本在工作目录」，
+#    改成按 cwd 找会动到所有历史工作区。
+SCRIPT_DEPS = ["render_card.py"]
 
 # ────────────────────────── 画幅档（加档＝加一条，不动规则） ──────────────────────────
 # max_chars 两档默认 12——版式规则不是画幅参数，⛔ 更不是写稿字数上限（见文件头）。
@@ -472,6 +481,10 @@ def main(argv=None):
         dst = out_dir / dep
         if not dst.exists():
             shutil.copy(TPL_DIR / dep, dst)
+    for dep in SCRIPT_DEPS:          # 来源是 scripts/ 不是模板目录
+        dst = out_dir / dep
+        if not dst.exists():
+            shutil.copy(HERE / dep, dst)
     html_path = out_dir / a.name
     html_path.write_text(
         instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues),

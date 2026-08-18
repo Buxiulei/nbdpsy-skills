@@ -31,6 +31,18 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [2.10.1] — 2026-08-18
+
+- 🩸 **修一条会让整批全废的缝（跑批前冒烟抓到）**：`render_card.py` 用 `Path(__file__).parent` 找 `narration.mp3.cues.json` 与音频，而 `card-video-spec.md` 示例写的是 `cd 工作目录 && python3 render_card.py`——**暗含脚本已在工作目录**；但 `build_oneline.py` 此前只拷 gsap 与字体，**不拷 `render_card.py`** ⇒ **照规格抄命令的人必然 `FileNotFoundError`**，⚠️ **而且死在 TTS 配额烧完之后**（渲染是产线最后一步）。
+- ⇒ 选了「**build_oneline 一并拷脚本副本**」而非「改 `render_card` 的路径基准」：**既往批次本来就是每条视频各带一份副本**（那两个重名文件就是这么来的），⛔ 改成按 cwd 找会动到所有历史工作区。已加测试 `test_工作目录必须自带render_card副本`，并**端到端验过**——照 spec 原句跑通、分片渲染正常。
+- 🔴 **这是「文档与代码各自都对、合起来必炸」的又一例**，也正是常设「零上下文干跑」工序要抓的那一类。⚠️ 附一条我自己的记录：**我今天做 G13 真片时手动拷了 `render_card.py` 进工作目录，绕过了这个坑却没意识到那是规格里没有的一步** ⇒ **熟练的人会无意识地补上缺失步骤，于是缺口在他手里永远不暴露。**
+- `define` 字段 `phenom` → `phenomenon`：**缩写只在「补全后仍是同一个词」时才安全**（`phenom` 可能是 phenomenon 也可能是 phenomena，而这些 JSON 是写稿人手写的，**猜错不报错、只会把内容填错格子**）。同时删 `compare` 的 `note?` 空字段——**空字段会诱人往里塞东西**。
+- 🩸 **改字段名时撞出一个真实假绿**：replace 把 `class="phenom"` 也连带改了，CSS 选择器没跟着改 ⇒ 现象句丢样式、JS 取到 `null` ⇒ 比值成 `Infinity`，而 **`inf < 1.15` 为假 ⇒ 闸门报「✅ 全过」**。⇒ 补 `missing_layers` 防护（必需层取不到直接报「**这不是达标，是没量到**」）并证伪过。**这是「没做 ≠ 做了没问题」在数值层的化身：取不到 ≠ 比值达标。**
+
+全量 1767 passed。
+
+---
+
 ## [2.10.0] — 2026-08-18
 
 - **公众号正文插图产线（HTML 确定性渲染）**：`render_illust.py` ＋ 三个版式 `tpl-steps` / `tpl-compare` / `tpl-define`。⛔ 不走出图 API——插图是**排版问题不是绘画问题**；图内要中文短标注（AI 出图写中文不可控）；而且**老板现在充不了 OpenAI**，那条路眼下不通。围栏 JSON 与 `gen_gzh_images.py` 同族（插图用 `layout` 键）。

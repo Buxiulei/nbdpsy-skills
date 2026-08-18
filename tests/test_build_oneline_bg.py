@@ -95,3 +95,23 @@ def test_miwen参数真的落进了html():
     assert "color:rgba(90,72,52,.50)" in html      # 落款
     # 纹理层的 multiply 是真模板与候选预览页的唯一差别，掉了会整体变浅
     assert "mix-blend-mode:multiply" in html
+
+
+def test_工作目录必须自带render_card副本(tmp_path):
+    """🩸 2026-08-18 冒烟抓到的缝，差点让 12 条批量全废：
+    `render_card.py` 用 `Path(__file__).parent` 找 cues 与音频，而 spec 示例写
+    `cd 工作目录 && python3 render_card.py`——**暗含脚本已在工作目录**。
+    此前只拷 gsap 与字体 ⇒ 照规格抄命令的人必然 FileNotFoundError，
+    ⚠️ 而且死在 TTS 配额烧完之后。**文档与代码各自都对，合起来必炸。**
+    """
+    import json, subprocess, sys
+    cues = tmp_path / "c.json"
+    cues.write_text(json.dumps([{"text": "感觉好了不代表能停药", "start": 0, "end": 2.3}],
+                               ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "wd"
+    r = subprocess.run([sys.executable, str(SCRIPTS / "build_oneline.py"),
+                        "--cues", str(cues), "--bg", "miwen", "--canvas", "3:4",
+                        "--out", str(out), "--no-check"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    for need in ("card-oneline.html", "gsap.min.js", "render_card.py"):
+        assert (out / need).exists(), f"工作目录缺 {need}——照 spec 抄命令会当场炸"
