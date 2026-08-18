@@ -422,14 +422,68 @@ def pixel_check(path: Path):
     return rep
 
 
+def precheck(path: Path, cap: int) -> int:
+    """跑批前离线预检：不烧 TTS 配额就知道有几处断不开。
+
+    🩸 2026-08-18 立。起因：某线自造了一份预检，报 17 处断不开，**真闸只报 2 处**——
+    **两把尺不同源**。⇒ 本函数**直接调用真闸用的那两个函数**：
+    切句用 `tts_gen._split_sentences`（TTS 的统一单元），拆屏用本模块的 `split_cue`。
+    ⛔ **别再另写一份"预检版"逻辑**——预检与真闸不同源，等于没预检。
+    """
+    sys.path.insert(0, str(HERE))
+    import tts_gen                                  # 与真链路同一把切句尺
+    text = path.read_text(encoding="utf-8")
+    body = "\n".join(ln for ln in text.splitlines()
+                      if not ln.lstrip().startswith(("#", "<!--", ">")))
+    sents = tts_gen._split_sentences(body)
+    if not sents:
+        print(f"❌ {path} 没切出句子（要有 。！？ 断句）——⛔ 这不是「稿子没问题」，是没读到",
+              file=sys.stderr)
+        return 2
+
+    fails, softs, screens = [], [], 0
+    for i, sent in enumerate(sents, 1):
+        texts, f, sf = split_cue(sent, cap)
+        screens += len(texts)
+        for x in f:
+            x["sent_no"] = i
+            x["sent"] = sent
+        fails.extend(f)
+        softs.extend(dict(sent_no=i, **x) for x in sf)
+
+    print(f"  {len(sents)} 句 → {screens} 屏（上限 {cap} 字/屏）", file=sys.stderr)
+    if softs:
+        print(f"\n⚠️ 无标点处自动软断 {len(softs)} 处（断点归写稿人裁决，认可就把逗号补进稿子）：",
+              file=sys.stderr)
+        for x in softs[:8]:
+            print(f"  · 第 {x['sent_no']} 句：{'｜'.join(x['pieces'])}", file=sys.stderr)
+        if len(softs) > 8:
+            print(f"  …另有 {len(softs) - 8} 处", file=sys.stderr)
+    if fails:
+        print(f"\n⛔ {len(fails)} 处**断不开**（真跑会拒绝出片，⚠️ 而那时 TTS 配额已经花掉）：",
+              file=sys.stderr)
+        for x in fails:
+            print(f"  · 第 {x['sent_no']} 句「{x['seg']}」（{x['chars']:.1f} 字）", file=sys.stderr)
+            print(f"    建议断点：{x['suggest'][0] if x['suggest'] else '（无）'}", file=sys.stderr)
+        return 1
+    print("\n✅ 全部可拆，跑批不会被单行闸拦下", file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="一行字卡实例化（含单行硬闸门）")
-    ap.add_argument("--cues", required=True, help="tts_gen --timed 产出的 *.cues.json")
+    ap.add_argument("--cues", help="tts_gen --timed 产出的 *.cues.json")
+    ap.add_argument("--precheck", metavar="稿.txt",
+                    help="离线预检：**不烧 TTS 配额**就查有几处断不开。"
+                         "⚠️ 与真闸**同源**（切句用 tts_gen._split_sentences、拆屏用 split_cue），"
+                         "⛔ 别另写一份预检版逻辑——不同源等于没预检")
     # --bg / --canvas 不用 required=True：风格档案（--style）也能给。缺了照旧报错退出，
     # 只是把「argparse 报缺参数」换成下面那句人话——⛔ 绝不给它们编一个默认值悄悄出片
     ap.add_argument("--bg", choices=sorted(BG))
     ap.add_argument("--canvas", choices=sorted(CANVAS))
-    ap.add_argument("--out", required=True, help="工作目录（card-oneline.html 落这里）")
+    # ⚠️ 不能 required=True：--precheck 根本不产出文件。缺了在下面按人话报，
+    # ⛔ 别让 argparse 顶回一句 usage——那看不出「是不是预检也要传」。
+    ap.add_argument("--out", help="工作目录（card-oneline.html 落这里）；--precheck 时不需要")
     ap.add_argument("--max-line-chars", type=int, default=12,
                 help="单屏排版拆屏上限（8–14，默认 12；书名场景可 13——整片按安全区统一反推字号，非按行缩字）。"
                      "⛔ 这是排版量具，不是写稿字数上限：写稿只管把事说清楚，装不下就多一屏")
@@ -445,6 +499,12 @@ def main(argv=None):
     ap.add_argument("--name", default="card-oneline.html")
     ap.add_argument("--no-check", action="store_true", help="跳过像素闸（⛔ 出片前别用）")
     a = video_style.apply(ap, "card", argv)
+    if a.precheck:
+        return precheck(Path(a.precheck), a.max_line_chars)
+    if not a.cues:
+        sys.exit("❌ 缺 --cues（或用 --precheck 做离线预检）")
+    if not a.out:
+        sys.exit("❌ 缺 --out（工作目录）。⚠️ 只有 --precheck 不需要它")
     missing = [f"--{k}" for k in ("bg", "canvas") if getattr(a, k) is None]
     if missing:
         sys.exit(f"❌ 缺 {' 和 '.join(missing)}：命令行给，或用 --style 喂一套带 oneline 段的"

@@ -115,3 +115,54 @@ def test_工作目录必须自带render_card副本(tmp_path):
     assert r.returncode == 0, r.stderr
     for need in ("card-oneline.html", "gsap.min.js", "render_card.py"):
         assert (out / need).exists(), f"工作目录缺 {need}——照 spec 抄命令会当场炸"
+
+
+# ────────── 离线预检：跑批前不烧 TTS 配额就知道有几处断不开 ──────────
+# 🩸 2026-08-18 立。起因：某线自造了一份预检，报 17 处断不开、**真闸只报 2 处**
+# ——**两把尺不同源**。⇒ 预检必须**直接调用真闸用的那两个函数**。
+
+def test_预检与真闸必须同源(tmp_path):
+    """🔴 这条测的不是"预检能跑"，是**预检和真闸读数一样**。
+    ⛔ 另写一份"预检版"拆屏逻辑＝没预检——它会在你最需要它的时候报出不同的数。"""
+    import json
+    import subprocess
+    import sys as _s
+    _s.path.insert(0, str(SCRIPTS))
+    import tts_gen
+
+    txt = ("感觉好了不代表能停药。药名一样但人不一样。"
+           "有一本期刊叫 Psychotherapy and Psychosomatics 上面登过这个研究。")
+    src = tmp_path / "s.txt"
+    src.write_text(txt, encoding="utf-8")
+    sents = tts_gen._split_sentences(txt)
+    t, cues = 0.0, []
+    for s in sents:
+        d = 0.32 + len(s) * 0.19
+        cues.append({"text": s, "start": round(t, 3), "end": round(t + d, 3)})
+        t += d
+    cf = tmp_path / "c.json"
+    cf.write_text(json.dumps(cues, ensure_ascii=False), encoding="utf-8")
+
+    run = lambda *a: subprocess.run([_s.executable, str(SCRIPTS / "build_oneline.py"), *a],
+                                    capture_output=True, text=True)
+    real = run("--cues", str(cf), "--bg", "miwen", "--canvas", "3:4",
+               "--max-line-chars", "13", "--out", str(tmp_path / "o"), "--no-check")
+    pre = run("--precheck", str(src), "--max-line-chars", "13")
+    n_real = real.stderr.count("断不开的片段")
+    n_pre = pre.stderr.count("· 第")
+    assert n_real == n_pre == 1, f"真闸 {n_real} 处 vs 预检 {n_pre} 处——两把尺不同源"
+    assert pre.returncode == 1, "有断不开却退出 0——闸门没起作用"
+
+
+def test_预检不该要求out参数(tmp_path):
+    """🩸 首版 `--out` 是 required=True，**预检根本不产出文件却被它挡住**，
+    argparse 只顶回一句 usage——看不出「是不是预检也要传」。
+    ⚠️ 我差点据此判「预检与真闸不同源」，真因是**我的测试命令缺参数**。"""
+    import subprocess
+    import sys as _s
+    src = tmp_path / "s.txt"
+    src.write_text("感觉好了不代表能停药。药名一样但人不一样。", encoding="utf-8")
+    r = subprocess.run([_s.executable, str(SCRIPTS / "build_oneline.py"),
+                        "--precheck", str(src)], capture_output=True, text=True)
+    assert r.returncode == 0, f"预检不该要求 --out：{r.stderr[-300:]}"
+    assert "全部可拆" in r.stderr
