@@ -38,8 +38,17 @@
     font-family:"Noto Sans CJK SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif; }
   body { background:__BASE__; position:relative; padding:__PAD__px __PADX__px; }
 
-  h1 { font-size:__H1__px; font-weight:700; color:__INK__; letter-spacing:.01em; margin-bottom:10px; }
-  .sub { font-size:__SUB__px; color:__MUTED__; margin-bottom:38px; }
+  h1 { font-size:__H1__px; font-weight:700; color:__INK__; letter-spacing:.01em;
+    margin-bottom:38px; padding-right:200px; }   /* 给右上角页码让位 */
+
+  /* 🔴 页码是**功能层不是装饰层**，必须守住字号下限。
+     服务号线 2026-08-18 原话：读者在手机上读不出「还有第 2 张」，
+     **就会以为四步只有两步——照着做完两步就停了**。⇒ 那不是美观问题，是**内容缺失**。
+     ⚠️ 所以它进 CONTENT_LAYERS 参与判定，⛔ 不许当装饰放行。
+     （原先那行副题「情绪上头时…」已删——前半装饰、后半功能，装饰那半不承载必要信息。） */
+  .pageno { position:absolute; top:__PAD__px; right:__PADX__px;
+    font-size:__DESC__px; font-weight:700; color:__INK__;
+    background:__HINT__; padding:8px 20px; border-radius:10px; }
 
   .steps { display:flex; flex-direction:column; gap:__GAP__px; }
   .step  { display:flex; align-items:flex-start; gap:26px; }
@@ -60,8 +69,7 @@
 </style>
 </head>
 <body>
-  <h1>__TITLE__</h1>
-  <div class="sub">__SUBTITLE__</div>
+  <h1>__TITLE__</h1>__PAGENO_HTML__
   <div class="steps">__STEPS_HTML__</div>
 
 <script>
@@ -74,14 +82,14 @@
     const e = document.querySelector(sel);
     return e ? Math.round(parseFloat(getComputedStyle(e).fontSize) * 10) / 10 : null;
   };
-  const layers = { 标题: px('h1'), 副题: px('.sub'), 动作名: px('.name'),
+  const layers = { 标题: px('h1'), 页码: px('.pageno'), 动作名: px('.name'),
                    展开句: px('.desc'), 反例: px('.dont') };
   /* 🔴 **闸门只守「读者照着做需要读的三层」**——⛔ 标题/副题不参与下限判定。
      首版把五层全纳进来，结果「副题 6.9px」报红：**取样范围比要守的东西宽＝假红**。
      而它更坏的一点是**处置建议不成立**——报错让人「减少每张步数」，
      可副题字号与步数无关，照做也解决不了 ⇒ 人只会困惑，或者干脆绕过闸门。
      ⚠️ 装饰层的字号仍然照报（供人参考），只是不判。 */
-  const CONTENT_LAYERS = __CONTENT_LAYERS__;   // 由脚本填（--strict-decor 时含装饰层）
+  const CONTENT_LAYERS = __CONTENT_LAYERS__;   // 含「页码」——它是功能层   // 由脚本填（--strict-decor 时含装饰层）
   const feed = {}, present = [];
   for (const [k2, v] of Object.entries(layers)) {
     if (v === null) continue;                     // ⚠️ 缺席的层（如整张无反例）不参与判定

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="render-canvas" content="__CANVAS__">
+<title>纠正插图 tpl-compare</title>
+<!--
+  ════════════════════════════════════════════════════════════════════════
+  tpl-compare · 公众号正文「纠正」插图（2026-08-18 立）
+  ════════════════════════════════════════════════════════════════════════
+  🔴 **它⛔ 不是「A vs B」两个平等选项，是「你以为的／实际的」。**
+     服务号线原话：**心理科普里几乎不出现对等比较，出现的是纠正。**
+     ⇒ **两栏权重不对等**：右边（事实）更重更大；左边（误解）要有**被划掉/淡化**的暗示。
+     ⛔ **别做成左右对称的天平**——对称会读成"两种观点各有道理"，那正好是反效果。
+
+  与 tpl-steps 同源的硬约束（⛔ 别放宽）：
+  ① 画幅 1313×876（3:2）。⛔ 别信「16:9」，那是出图 API 的参数名。
+  ② 🔴 字号下限：`@375px 手机正文宽（≈0.286 倍）下，内容层最小的那个 ≥11px`。
+     **元素个数由这条反推，⛔ 不是先定个数再缩字。**
+  ③ accent 用色块，⛔ 不用细线（细线缩到信息流尺寸会被抹平，实测 0 像素）。
+  ④ 🔴 **页码是功能层不是装饰层**——读者读不出「还有第 2 张」就会以为内容只有这些，
+     那是**内容缺失**不是美观问题。⇒ 进 CONTENT_LAYERS 参与判定。
+  ════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:__W__px; height:__H__px; overflow:hidden;
+    font-family:"Noto Sans CJK SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif; }
+  body { background:__BASE__; position:relative; padding:__PAD__px __PADX__px; }
+
+  h1 { font-size:__H1__px; font-weight:700; color:__INK__; margin-bottom:34px; padding-right:200px; }
+  .pageno { position:absolute; top:__PAD__px; right:__PADX__px;
+    font-size:__DESC__px; font-weight:700; color:__INK__;
+    background:__HINT__; padding:8px 20px; border-radius:10px; }
+
+  /* 🔴 不对等的关键就在这两个 flex 值：误解栏 38%、事实栏 62%。
+     ⛔ 别改成 1:1——那就成了天平。 */
+  /* ⚠️ align-items 用 flex-start 而非 stretch：误解栏内容天然比事实栏短，
+     stretch 会把它撑成一个**底部大片空白的空盒子**——那不是「透气留白」，
+     是「盒子没填满」，观感完全不同（首版实渲即见）。 */
+  .cols { display:flex; gap:36px; align-items:flex-start; }
+  .col  { border-radius:18px; padding:30px 32px; }
+  .wrong { flex:38 1 0; background:__HINT__; }
+  .right { flex:62 1 0; background:__ACCENT_SOFT__; }
+
+  .lab { font-size:__DESC__px; font-weight:700; margin-bottom:16px;
+    display:inline-block; padding:6px 18px; border-radius:9px; }
+  .wrong .lab { background:__MUTED__; color:#fff; }
+  .right .lab { background:__ACCENT__; color:#fff; }
+
+  /* 误解那句：淡化 + 删除线 —— 视觉上"这句被划掉了"。
+     ⚠️ 删除线用 line-through 而非画一条 div：细线元素在信息流尺寸会被抹平，
+     而 text-decoration 随字号缩放、不会消失。 */
+  .wrong .txt { font-size:__DESC__px; line-height:1.5; color:__MUTED__;
+    text-decoration:line-through; text-decoration-thickness:3px; }
+  /* 事实那句：更大、更实 —— 权重差就落在这里 */
+  .right .txt { font-size:__BIG__px; line-height:1.45; color:__INK__; font-weight:700; }
+  .note { margin-top:18px; font-size:__DESC__px; line-height:1.5; color:__INK2__; }
+</style>
+</head>
+<body>
+  <h1>__TITLE__</h1>__PAGENO_HTML__
+  <div class="cols">
+    <div class="col wrong">
+      <div class="lab">__WRONG_LABEL__</div>
+      <div class="txt">__WRONG_TEXT__</div>
+    </div>
+    <div class="col right">
+      <div class="lab">__RIGHT_LABEL__</div>
+      <div class="txt">__RIGHT_TEXT__</div>__NOTE_HTML__
+    </div>
+  </div>
+
+<script>
+(function () {
+  const k = __FEED_SCALE__;
+  const px = sel => {
+    const e = document.querySelector(sel);
+    return e ? Math.round(parseFloat(getComputedStyle(e).fontSize) * 10) / 10 : null;
+  };
+  const layers = { 标题: px('h1'), 页码: px('.pageno'), 标签: px('.lab'),
+                   误解句: px('.wrong .txt'), 事实句: px('.right .txt'), 补注: px('.note') };
+  const CONTENT_LAYERS = __CONTENT_LAYERS__;
+  const feed = {}, present = [];
+  for (const [k2, v] of Object.entries(layers)) {
+    if (v === null) continue;
+    feed[k2] = Math.round(v * k * 10) / 10;
+    if (CONTENT_LAYERS.includes(k2)) present.push(feed[k2]);
+  }
+  const body = document.body, cols = document.querySelector('.cols');
+  const w = document.querySelector('.col.wrong').getBoundingClientRect().width;
+  const r = document.querySelector('.col.right').getBoundingClientRect().width;
+  window.ILLUST_REPORT = {
+    layout: "compare", canvas: [__W__, __H__], feed_scale: k,
+    font_px: layers, feed_px: feed, content_layers: CONTENT_LAYERS,
+    min_feed_px: present.length ? Math.min(...present) : null,
+    // 🔴 不对等度：事实栏 / 误解栏。⛔ 接近 1.0 就是做成天平了，闸门会拦
+    asymmetry: Math.round(r / w * 100) / 100,
+    fact_over_wrong_font: Math.round(layers.事实句 / layers.误解句 * 100) / 100,
+    overflow: body.scrollHeight > body.clientHeight,
+    content_bottom: Math.round(cols.getBoundingClientRect().bottom),
+  };
+})();
+</script>
+</body>
+</html>

@@ -46,7 +46,8 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 TPL_DIR = HERE.parent / "assets" / "illust-templates"
-TEMPLATES = {"steps": TPL_DIR / "tpl-steps.html"}
+TEMPLATES = {"steps": TPL_DIR / "tpl-steps.html",
+             "compare": TPL_DIR / "tpl-compare.html"}
 
 # 画幅：⛔ 别信规格里的「16:9」——那是出图 API 的参数名，实产 42 张实测全是 3:2、零例外。
 CANVAS = dict(w=1313, h=876)
@@ -60,13 +61,14 @@ PALETTE = dict(
     INK="#2E3A44",      # 主文字
     INK2="#43525E",     # 展开句
     MUTED="#6B7A86",    # 副题
+    ACCENT_SOFT="#EFE0D6",   # 赭红的浅底：事实栏底色（compare）
     ACCENT="#A34B3A",   # 赭红：序号色块。⛔ accent 用色块不用细线——
                         #   细线缩到信息流尺寸会被抹平（实测 0 像素）
     HINT="#A8B5C4",     # 雾霾蓝灰：反例底块
 )
 
 # 字号：2 步/张的实测值。⚠️ 改任何一个都要重跑字号下限闸，⛔ 别凭观感调。
-SIZES = dict(H1=46, SUB=24, NAME=50, DESC=40, NUM=76, NUMF=40, NUMR=20,
+SIZES = dict(H1=46, BIG=52, SUB=24, NAME=50, DESC=40, NUM=76, NUMF=40, NUMR=20,
              PAD=56, PADX=64, GAP=46)
 
 STEPS_PER_PAGE = 2
@@ -95,21 +97,48 @@ def steps_html(steps: list[dict], base_no: int) -> str:
 
 def instantiate(data: dict, steps: list[dict], base_no: int, page: int, pages: int,
                 strict_decor: bool = False) -> str:
-    sub = esc(data.get("subtitle", ""))
-    if pages > 1:
-        sub = f"{sub} · 第 {page}／{pages} 张" if sub else f"第 {page}／{pages} 张"
+    # ⚠️ 单页时不渲页码（缺席层不参与判定）；多页时它是**功能层**，必须守住字号下限
+    pageno = f'\n  <div class="pageno">{page}／{pages}</div>' if pages > 1 else ""
     m = {"__CANVAS__": f"{CANVAS['w']}x{CANVAS['h']}",
          "__W__": CANVAS["w"], "__H__": CANVAS["h"],
          "__FEED_SCALE__": round(FEED_W / CANVAS["w"], 6),
-         "__TITLE__": esc(data.get("title", "")), "__SUBTITLE__": sub,
+         "__TITLE__": esc(data.get("title", "")), "__PAGENO_HTML__": pageno,
          "__STEPS_HTML__": steps_html(steps, base_no),
          # ⚠️ 参数必须真的生效——写进 --help 却不接线就是假承诺
          "__CONTENT_LAYERS__": json.dumps(
-             (["标题", "副题"] if strict_decor else []) + ["动作名", "展开句", "反例"],
+             (["标题"] if strict_decor else []) + ["页码", "动作名", "展开句", "反例"],
              ensure_ascii=False),
          **{f"__{k}__": v for k, v in PALETTE.items()},
          **{f"__{k}__": v for k, v in SIZES.items()}}
     html = TEMPLATES[data["layout"]].read_text(encoding="utf-8")
+    for k, v in m.items():
+        html = html.replace(k, str(v))
+    import re
+    left = sorted(set(re.findall(r"__[A-Z_0-9]+__", html)))
+    if left:
+        sys.exit(f"❌ 模板还有没填的占位符：{left}")
+    return html
+
+
+def instantiate_compare(data: dict, strict_decor: bool = False) -> str:
+    """compare 单张。⚠️ 两栏权重不对等由 CSS 的 flex 38/62 承担，⛔ 不是靠内容长短。"""
+    w, r = data.get("wrong") or {}, data.get("right") or {}
+    note = r.get("note")
+    m = {"__CANVAS__": f"{CANVAS['w']}x{CANVAS['h']}",
+         "__W__": CANVAS["w"], "__H__": CANVAS["h"],
+         "__FEED_SCALE__": round(FEED_W / CANVAS["w"], 6),
+         "__TITLE__": esc(data.get("title", "")), "__PAGENO_HTML__": "",
+         "__WRONG_LABEL__": esc(w.get("label", "常听到的说法")),
+         "__WRONG_TEXT__": esc(w.get("text", "")),
+         "__RIGHT_LABEL__": esc(r.get("label", "实际上")),
+         "__RIGHT_TEXT__": esc(r.get("text", "")),
+         "__NOTE_HTML__": f'\n      <div class="note">{esc(note)}</div>' if note else "",
+         "__CONTENT_LAYERS__": json.dumps(
+             (["标题"] if strict_decor else []) + ["页码", "标签", "误解句", "事实句", "补注"],
+             ensure_ascii=False),
+         **{f"__{k}__": v for k, v in PALETTE.items()},
+         **{f"__{k}__": v for k, v in SIZES.items()}}
+    html = TEMPLATES["compare"].read_text(encoding="utf-8")
     for k, v in m.items():
         html = html.replace(k, str(v))
     import re
@@ -143,6 +172,10 @@ def gate(rep: dict, tag: str) -> list[str]:
     if rep["overflow"]:
         bad.append(f"{tag}：内容溢出画布（底边 {rep['content_bottom']}px > {CANVAS['h']}px）"
                    f"——减少本页步数或缩短展开句，⛔ 别缩字号（那会撞下一条闸）")
+    if rep.get("asymmetry") is not None and rep["asymmetry"] < 1.25:
+        bad.append(f"{tag}：两栏宽度比只有 {rep['asymmetry']}——**做成对称天平了**。"
+                   f"⛔ 心理科普里出现的是**纠正**不是对等比较；对称会读成"
+                   f"「两种观点各有道理」，正好是反效果")
     m = rep["min_feed_px"]
     if m is not None and m < MIN_FEED_PX:
         # ⚠️ 只在内容层里挑最差的那个——⛔ 别把装饰层报出来当元凶（那是假红）
@@ -175,6 +208,25 @@ def main(argv=None) -> int:
     if data.get("layout") not in TEMPLATES:
         print(f"❌ layout 必须是 {sorted(TEMPLATES)}，拿到 {data.get('layout')!r}", file=sys.stderr)
         return 2
+    if data["layout"] == "compare":
+        out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+        hp = out / "illust-compare.html"
+        hp.write_text(instantiate_compare(data, a.strict_decor), encoding="utf-8")
+        rep = render(hp, out / "illust-compare.png")
+        rep["page"] = 1
+        fails = gate(rep, "compare")
+        print(json.dumps({"ok": not fails, "pages": 1, "reports": [rep],
+                          "fails": fails}, ensure_ascii=False, indent=2))
+        print(f"  两栏宽度比 {rep['asymmetry']}｜事实/误解字号比 {rep['fact_over_wrong_font']}"
+              f"｜手机正文最小字号 {rep['min_feed_px']}px", file=sys.stderr)
+        if fails:
+            print("\n⛔ 闸门不过：", file=sys.stderr)
+            for f in fails:
+                print(f"  · {f}", file=sys.stderr)
+            return 1
+        print("\n✅ 全过（溢出闸 + 字号下限闸 + 不对等闸）", file=sys.stderr)
+        return 0
+
     steps = data.get("steps") or []
     if not steps:
         print("❌ steps 为空——⛔ 这不是「没有步骤」，是数据没读到", file=sys.stderr)
