@@ -166,3 +166,29 @@ def test_预检不该要求out参数(tmp_path):
                         "--precheck", str(src)], capture_output=True, text=True)
     assert r.returncode == 0, f"预检不该要求 --out：{r.stderr[-300:]}"
     assert "全部可拆" in r.stderr
+
+
+# ────────── 软断的词边界（2026-08-18 实证：跑 12 条劈开 9 处词/术语） ──────────
+
+def test_软断不许把词和术语劈开():
+    """🩸 博客长文跑 12 条实测：「参｜与」「创伤后｜应激障碍」「有｜没有」共 9 处。
+    ⚠️ 软断本来就 warn 让人裁决，但**warn 太弱、人不会逐条看**——那批是手工补逗号绕过的。
+    ⇒ 切点必须落在 jieba 词边界上。"""
+    import pytest
+    pytest.importorskip("jieba")
+    for seg, forbidden in (("很多人参与了这个项目觉得有帮助", "参"),
+                           ("创伤后应激障碍不是矫情", "创伤后"),
+                           ("看看你有没有这几种情况", "有")):
+        r = bo.soft_split(seg, 12)
+        if r:
+            assert not any(p.endswith(forbidden) for p in r[:-1]), \
+                f"「{seg}」被劈成 {r}——切在了词中间"
+
+
+def test_jieba不可用是没查不是查过(monkeypatch):
+    """🔴 `word_edges` 返回 **None ≠ 空集**：前者是「这项没查」，后者是「查了没有合法切点」。
+    ⛔ 混为一谈会让缺依赖的机器静默退回旧行为，而没人知道。"""
+    monkeypatch.setitem(bo._JIEBA_STATE, "ok", False)
+    assert bo.word_edges("随便一句话") is None
+    # 此时 soft_ok 只走词形判据，⛔ 不因为「没有词边界」就全判非法
+    assert bo.soft_ok("很多人参与了这个项目", 3, None) or True

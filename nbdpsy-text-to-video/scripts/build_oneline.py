@@ -151,9 +151,45 @@ def display(s: str) -> str:
 
 # ────────────────────────── 软断点 ──────────────────────────
 
-def soft_ok(seg: str, i: int) -> bool:
-    """在 seg 的第 i 个字之前断开是否算合法软断点。"""
-    return seg[i:].startswith(SOFT_HEAD) or seg[:i].endswith(SOFT_TAIL)
+_JIEBA_STATE = {"ok": None}      # None=没试过 / True=可用 / False=不可用
+
+
+def word_edges(seg: str):
+    """jieba 分词后的合法切点（字符下标集合）。**jieba 不可用返回 None**。
+
+    🩸 2026-08-18 实证（博客长文跑 12 条）：软断在无标点处把**词和术语劈开** 9 处——
+    「参｜与」「创伤后｜应激障碍」「有｜没有」。⚠️ 软断本来就 warn 让人裁决，
+    但**warn 太弱，人不会逐条看**，那批是靠手工补逗号绕过去的。
+    ⇒ 加一条**词边界**约束：切点必须落在词与词之间。
+
+    ⚠️ **返回 None ≠ 返回空集**：前者是「这项没查」，后者是「查了，没有合法切点」。
+    ⛔ 混为一谈会让缺依赖的机器静默退回旧行为，而没人知道。
+    """
+    if _JIEBA_STATE["ok"] is False:
+        return None
+    try:
+        import jieba
+    except ImportError:
+        _JIEBA_STATE["ok"] = False
+        return None
+    _JIEBA_STATE["ok"] = True
+    pos, out = 0, {0}
+    for w in jieba.cut(seg):
+        pos += len(w)
+        out.add(pos)
+    return out
+
+
+def soft_ok(seg: str, i: int, edges=None) -> bool:
+    """在 seg 的第 i 个字之前断开是否算合法软断点。
+
+    两条都要满足：① 本来的 SOFT_HEAD/SOFT_TAIL 词形判据；
+    ② 🔴 **切点落在词边界上**（jieba）——⛔ 别把「参与」「创伤后应激障碍」劈开。
+    ⚠️ `edges is None` 表示 jieba 不可用，此时只走 ①（并由调用方报出「这项没查」）。
+    """
+    if not (seg[i:].startswith(SOFT_HEAD) or seg[:i].endswith(SOFT_TAIL)):
+        return False
+    return True if edges is None else (i in edges)
 
 
 def soft_split(seg: str, cap: int):
@@ -162,6 +198,7 @@ def soft_split(seg: str, cap: int):
     返回片列表；切不开返回 None。优先片数最少，同片数取长度最匀的那种切法。
     """
     n = len(seg)
+    edges = word_edges(seg)      # None ⇒ jieba 不可用，词边界这一项没查
     best = {n: (0, 0.0, None)}   # 位置 -> (片数, 长度方差, 下一刀位置)
 
     def solve(i):
@@ -173,7 +210,7 @@ def soft_split(seg: str, cap: int):
             if units(seg[i:j]) > cap:
                 break
             if j < n:
-                if n - j < MIN_SOFT or not soft_ok(seg, j):
+                if n - j < MIN_SOFT or not soft_ok(seg, j, edges):
                     continue
             sub = solve(j)
             if sub is None:
@@ -554,6 +591,9 @@ def main(argv=None):
     print(f"✅ {html_path}")
     print(f"   {a.canvas} {cv['w']}x{cv['h']} · {bg['label']} · 字号 {cv['font']}px · "
           f"上限 {cv['max_chars']} 字/屏")
+    if _JIEBA_STATE["ok"] is False:
+        print("   ⚠️ jieba 未安装 ⇒ **软断的词边界检查这一项没做**（可能把词/术语劈开）。"
+              "\n      ⛔ 这不是「检查过没问题」。装上：pip install jieba", file=sys.stderr)
     print(f"   {len(cues)} 句 → {len(screens)} 屏，最长 {max(units(s['text']) for s in screens):.0f} 字，"
           f"超限 {n_over} 屏")
     for w in warns:
