@@ -346,3 +346,38 @@ def test_单句末尾带句号不算跨句():
     assert cn._sentence_span("它是一个月的功课，不是当场的开关。") == 1
     assert cn._sentence_span("它是一个月的功课，不是当场的开关") == 1
     assert cn._sentence_span("真的吗？我不信。") == 2
+
+
+# ────────── 对冲强度比对：口播不得强于正文（2026-08-18 立） ──────────
+
+def test_对冲整类消失要报_用X4真实事故句():
+    """🩸 正文「它有**可核对**的结果」→ 口播「后者有结果」：删掉三个字，
+    从「你能看清他做没做」变成「这么说他就会做」，撞红线「⛔ 不承诺效果」。"""
+    g = cn.hedge_gap("把「我很难受」换成「我需要你做一件具体的事」，它有可核对的结果。",
+                     "前者要理解，后者有结果。")
+    assert [x["class"] for x in g] == ["证据"] and "可核对" in g[0]["in_source"]
+
+
+def test_同义替换不报_按类别比不按词比():
+    """⛔ 「往往」改说「多半」是合法替换。按词比会误报到没人肯看。"""
+    assert cn.hedge_gap("这往往是没有恋爱意图的日常来往。", "这多半是没有恋爱意图的日常来往。") == []
+
+
+def test_上游没用对冲则不报():
+    assert cn.hedge_gap("他做了一件事。", "他做了一件事。") == []
+
+
+def test_词表不含单字词_也不含零命中词():
+    """🔴 两条实证约束：① 单字词（能/可/只/若/更）误报太多，⛔ 不收；
+    ② 稿库实证零命中的词是编出来的，⛔ 不收（一般来说/不见得/一定程度上/某种程度上）。"""
+    words = [w for ws in cn.HEDGE_CLASSES.values() for w in ws]
+    assert not [w for w in words if len(w) == 1], "⛔ 收了单字词"
+    for fake in ("一般来说", "不见得", "一定程度上", "某种程度上"):
+        assert fake not in words, f"⛔ 收了稿库零命中的编造词：{fake}"
+    assert len(words) == len(set(words)), "词表有重复"
+
+
+def test_端到端_没传source时输出里没有hedge键(tmp_path):
+    """「没做」与「做了没问题」必须分得开。"""
+    r = _run(["--text", "他做了一件事。"])
+    assert "hedge_gap" not in json.loads(r.stdout)
