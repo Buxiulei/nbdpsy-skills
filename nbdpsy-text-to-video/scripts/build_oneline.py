@@ -232,8 +232,29 @@ def _protected_spans(seg: str):
     spans += [(m.start(), m.end()) for m in CN_NUM_TOKEN.finditer(seg) if m.end() - m.start() > 1]
     spans += [(m.start(), m.end()) for m in AB_QUESTION.finditer(seg)]
     return spans
-MIN_SOFT = 3      # 软断点切出来的碎片不得短于此（避免"都被""而是"这种孤儿行）
+MIN_SOFT = 3
+"""软断点切出来的碎片不得短于此（避免"都被""而是"这种孤儿行）。
+
+🔴 **⛔ 别为了治「三字孤悬」把它提到 4——数据不支持**（2026-08-18，29 份在产稿实测）：
+
+| | 断不开 | 软断 | ≤3 字屏 |
+|---|---|---|---|
+| MIN_SOFT=3 | 62 | 147 | **122** |
+| MIN_SOFT=4 | **77** (+24%) | 132 | **107** (−15) |
+
+⚠️ **≤3 字屏有 122 个，提高 MIN_SOFT 只消掉 15 个（12%）**——因为**大头根本不来自软断，
+来自作者自己用逗号句号断出来的短句**，而 `MIN_SOFT` 只管软断。
+⇒ 代价（多拒 15 处、逼作者改稿）与收益（治好 12%）**完全不成比例**。
+真正管用的是把短屏**报出来让作者调标点**（见 `SHORT_CHARS`），⛔ 不是在软断这一侧加严。"""
+
 MIN_SEC = 1.0     # 单屏建议下限；低于此只告警（字数上限决定了它并不下去，只能改稿）
+SHORT_CHARS = 3
+"""屏显字数 ≤ 此值即报 `[短屏]`（助理 2026-08-18：「三字孤悬」）。
+
+⚠️ 这是**报出来给人看**，⛔ 不是拒渲染——短屏合不合适只有写稿人说了算
+（「够了」「不是的」这种三字屏是刻意的节奏）。
+🩸 但**光有 `MIN_SEC` 那条时长警告不够**：它跟软断警告混在一堆 `⚠️` 里，
+**warn 太弱、人不会逐条看**（jieba 那节踩过同一个坑）⇒ 给它独立记号，能数能 grep。"""
 
 
 # ────────────────────────── 宽度口径 ──────────────────────────
@@ -263,6 +284,12 @@ def word_edges(seg: str):
     ⚠️ **返回 None ≠ 返回空集**：前者是「这项没查」，后者是「查了，没有合法切点」。
     ⛔ 混为一谈会让缺依赖的机器静默退回旧行为，而没人知道。
     """
+    ws = word_spans(seg)
+    return None if ws is None else {0} | {e for _, e, _ in ws}
+
+
+def word_spans(seg: str):
+    """jieba 切词结果 `[(start, end, word)]`。**jieba 不可用返回 None**（＝这项没查）。"""
     if _JIEBA_STATE["ok"] is False:
         return None
     try:
@@ -271,14 +298,24 @@ def word_edges(seg: str):
         _JIEBA_STATE["ok"] = False
         return None
     _JIEBA_STATE["ok"] = True
-    pos, out = 0, {0}
+    pos, out = 0, []
     for w in jieba.cut(seg):
+        out.append((pos, pos + len(w), w))
         pos += len(w)
-        out.add(pos)
     return out
 
 
-def soft_ok(seg: str, i: int, edges=None, spans=None) -> bool:
+def _word_around(seg: str, i: int, words):
+    """断口两侧的**词**。`words is None`（jieba 不可用）时退回**单字**——⚠️ 那更严，会多拒。"""
+    if not words:
+        return (seg[i - 1] if i > 0 else ""), (seg[i] if i < len(seg) else "")
+    left = next((w for _, e, w in words if e == i), None)
+    right = next((w for s, _, w in words if s == i), None)
+    return (left if left is not None else (seg[i - 1] if i > 0 else "")), \
+           (right if right is not None else (seg[i] if i < len(seg) else ""))
+
+
+def soft_ok(seg: str, i: int, edges=None, spans=None, words=None) -> bool:
     """在 seg 的第 i 个字之前断开是否算合法软断点。
 
     五条**全部**要满足（⚠️ 前四条是硬否决，任一不过就不许断）：
@@ -294,11 +331,20 @@ def soft_ok(seg: str, i: int, edges=None, spans=None) -> bool:
     （那**确实**是两个词）⇒ **词边界是必要条件，⛔ 不是充分条件**。
     🩸 **①' 是当天晚些补的，因为①只挡住了半边**——同一批虚词做下屏开头照样出病句，
     而规则只写了「后面不断」。⚠️ **写规则时把"前后"写全，比事后补一半容易得多。**
-    ⚠️ `edges is None` 表示 jieba 不可用，此时跳过③（并由调用方报出「这项没查」）。
+
+    🔴 **①①' 判的是「断口两侧的词」，⛔ 不是「两侧的字」**（2026-08-18 晚改）。
+    🩸 起因：`向` 在 `STRUCT_PARTICLES` 里，于是「证据**方向**｜是相反的」被当成
+    「断在介词后」**整句拒渲染** ⇒ **逼作者改一句本来没问题的话**。
+    ⚠️ 同一个字在不同词里角色不同——「方向」的「向」是名词的一部分，
+    **单字黑名单永远分不出这两种**。升到词级后：`jieba` 把「方向」切成一个词，
+    它 ≠「向」⇒ 放行；而「持续/的」「挡/在/门外」里那些虚词**本来就是独立的词** ⇒ 照禁。
+    ⇒ **拦截能力一点没少，误伤面大幅缩小。**
+
+    ⚠️ `edges is None` / `words is None` 表示 jieba 不可用：此时跳过③、且①①' **退回单字判据**
+    （更严、会多拒），并由调用方报出「这项没查」。
     """
-    if i > 0 and seg[i - 1] in TAIL_BAN:
-        return False
-    if i < len(seg) and seg[i] in HEAD_BAN:
+    left, right = _word_around(seg, i, words)
+    if left in TAIL_BAN or right in HEAD_BAN:
         return False
     for a, b in (spans or ()):
         if a < i < b:                       # 切点落在保护区间内部
@@ -314,8 +360,9 @@ def soft_split(seg: str, cap: int):
     返回片列表；切不开返回 None。优先片数最少，同片数取长度最匀的那种切法。
     """
     n = len(seg)
-    edges = word_edges(seg)      # None ⇒ jieba 不可用，词边界这一项没查
-    spans = _protected_spans(seg)   # 英文词组／正反问：切进去就出事
+    words = word_spans(seg)      # None ⇒ jieba 不可用，词边界这一项没查
+    edges = None if words is None else {0} | {e for _, e, _ in words}
+    spans = _protected_spans(seg)   # 英文词组／数量串／正反问：切进去就出事
     best = {n: (0, 0.0, None)}   # 位置 -> (片数, 长度方差, 下一刀位置)
 
     def solve(i):
@@ -327,7 +374,7 @@ def soft_split(seg: str, cap: int):
             if units(seg[i:j]) > cap:
                 break
             if j < n:
-                if n - j < MIN_SOFT or not soft_ok(seg, j, edges, spans):
+                if n - j < MIN_SOFT or not soft_ok(seg, j, edges, spans, words):
                     continue
             sub = solve(j)
             if sub is None:
@@ -442,10 +489,11 @@ def suggest(seg: str, cap: int):
     一个把人引向错误修法的报错，比不报还糟。
     ⇒ 挑不出合法位置时**明说"这句没有合法断点，请改写"**，⛔ 绝不硬凑三条。
     """
-    edges, spans = word_edges(seg), _protected_spans(seg)
+    words, spans = word_spans(seg), _protected_spans(seg)
+    edges = None if words is None else {0} | {e for _, e, _ in words}
     cands = []
     for p in range(MIN_SOFT, len(seg) - MIN_SOFT + 1):
-        if not soft_ok(seg, p, edges, spans):
+        if not soft_ok(seg, p, edges, spans, words):
             continue
         left, right = seg[:p], seg[p:]
         # 加了这一刀之后，两边各自还能不能被自动处理（≤cap 或还能软切）
@@ -522,7 +570,11 @@ def build_screens(cues, cap, allow_proper: bool = True):
             end = c["end"] if i == len(texts) - 1 else t + span * w / tot
             out.append(dict(text=s["text"], lines=s["lines"],
                             start=round(t, 3), end=round(end, 3), cue=ci))
-            if end - t < MIN_SEC:
+            if units(s["text"]) <= SHORT_CHARS:
+                warns.append(f"[短屏] 第 {len(out)} 屏「{s['text']}」{units(s['text']):.0f} 字 / "
+                             f"{end - t:.2f}s——⚠️ 多半是稿子里的逗号断得太碎，"
+                             f"⛔ 不是断句器的事（合并要动标点，归写稿人）")
+            elif end - t < MIN_SEC:
                 warns.append(f"第 {len(out)} 屏「{s['text']}」仅 {end - t:.2f}s（建议 ≥{MIN_SEC}s）")
             t = end
     return out, fails, warns, propers
@@ -726,10 +778,14 @@ def precheck(path: Path, cap: int) -> int:
               file=sys.stderr)
         return 2
 
-    fails, softs, propers, screens = [], [], [], 0
+    fails, softs, propers, shorts, screens = [], [], [], [], 0
     for i, sent in enumerate(sents, 1):
         texts, f, sf, pr = split_cue(sent, cap)
         screens += len(texts)
+        # ⚠️ 真闸报短屏、预检不报 ⇒ 又是「两边看到的东西不一样」。这里按字数估，
+        #    ⛔ 别因为"预检没有 cues 算不出秒数"就整条不报。
+        shorts += [dict(sent_no=i, text=t["text"]) for t in texts
+                   if units(t["text"]) <= SHORT_CHARS]
         for x in f:
             x["sent_no"] = i
             x["sent"] = sent
@@ -757,6 +813,14 @@ def precheck(path: Path, cap: int) -> int:
             print(f"  [软断] 第 {x['sent_no']} 句：{'｜'.join(x['pieces'])}", file=sys.stderr)
         if len(softs) > 8:
             print(f"  …另有 {len(softs) - 8} 处", file=sys.stderr)
+    if shorts:
+        print(f"\n⚠️ {len(shorts)} 屏 ≤{SHORT_CHARS} 字（「三字孤悬」）——"
+              f"⚠️ 多半是稿子里的逗号断得太碎，⛔ 不是断句器的事：", file=sys.stderr)
+        for x in shorts[:8]:
+            print(f"  [短屏] 第 {x['sent_no']} 句：「{x['text']}」"
+                  f"（约 {units(x['text']) / 3.5:.2f}s，按 3.5 字/秒估）", file=sys.stderr)
+        if len(shorts) > 8:
+            print(f"  …另有 {len(shorts) - 8} 屏", file=sys.stderr)
     if fails:
         print(f"\n⛔ {len(fails)} 处**断不开**（真跑会拒绝出片，⚠️ 而那时 TTS 配额已经花掉）：",
               file=sys.stderr)
@@ -838,6 +902,14 @@ def main(argv=None):
     screens, fails, warns, propers = build_screens(cues, cv["max_chars"],
                                                    allow_proper=(a.template == "oneline"))
 
+    # 🔴 **四类结果全在 fail 早退之前报**（专名屏／短屏／软断／断不开）。
+    # 🩸 挪过两次才挪全：第一次只挪了专名屏，**软断与短屏还留在早退之后** ⇒
+    #    有 fail 的稿子照旧看不到它们，而预检是四类一次报全的。
+    # ⚠️ 「有 fail 就早退」看着很合理（反正不出片了），但它让**同一份稿子在两个工具里
+    #    显示的问题数量不一样**——人会以为修完 fail 就没别的事了。
+    for w in warns:
+        print(f"   ⚠️ {w}", file=sys.stderr)
+
     # 🔴 **专名屏先报，⛔ 别放在 fail 早退之后**：有 fail 就 return 的话，
     # 作者要修完 fail 再跑一次才看得到这一类——而预检是三类一次报全的，
     # ⚠️ 两边看到的东西不一样，「预检与真闸同源」就只剩一句口号。
@@ -894,8 +966,6 @@ def main(argv=None):
               "\n      ⛔ 这不是「检查过没问题」。装上：pip install jieba", file=sys.stderr)
     print(f"   {len(cues)} 句 → {len(screens)} 屏，最长 "
           f"{max((units(s['text']) for s in plain), default=0):.0f} 字，超限 {n_over} 屏")
-    for w in warns:
-        print(f"   ⚠️ {w}")
 
     if not a.no_check:
         rep = pixel_check(html_path)

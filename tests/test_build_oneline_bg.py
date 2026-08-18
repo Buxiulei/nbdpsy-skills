@@ -138,7 +138,7 @@ def test_预检与真闸必须同源(tmp_path):
     # 🩸 原样本只有刊名那句——专名屏例外上线后它被接住了，这个测试当场变成
     #    「真闸 0 处 vs 预检 1 处」的假红。⇒ 同源测试的样本必须覆盖**每一种终态**，
     #    否则它测的只是"当前恰好走到的那一条路"。
-    txt = ("感觉好了不代表能停药。"
+    txt = ("感觉好了不代表能停药。够了。"
            "焦虑抑郁强迫创伤解离躯体化人格障碍成瘾进食睡眠问题。"
            "有一本期刊叫 Psychotherapy and Psychosomatics 上面登过这个研究。")
     src = tmp_path / "s.txt"
@@ -161,7 +161,7 @@ def test_预检与真闸必须同源(tmp_path):
     # 🩸 原来只比 fail，且 fail 与软断**共用「· 第」这一个记号** ⇒ 计数互相串味。
     #    ⚠️ 那时的样本恰好一处软断都没有，所以坑一直没露头。
     real_txt, pre_txt = real.stdout + real.stderr, pre.stdout + pre.stderr
-    for mark, want in (("[断不开]", 1), ("[专名屏]", 1), ("[软断]", 0)):
+    for mark, want in (("[断不开]", 1), ("[专名屏]", 1), ("[软断]", 0), ("[短屏]", 1)):
         a, b = real_txt.count(mark), pre_txt.count(mark)
         assert a == b == want, f"{mark}：真闸 {a} vs 预检 {b}（应各 {want}）——两把尺不同源"
     assert pre.returncode == 1, "有断不开却退出 0——闸门没起作用"
@@ -440,3 +440,59 @@ def test_python端报的是估算下限不是最终字号():
     """⚠️ 两个数印在同一份输出里，人会当成同一个数（实测普遍高 8–15%）。"""
     src = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
     assert src.count("估算 ≥") == 2, "预检与真闸都要标明这是估算下限"
+
+
+# ────── 词级判据（2026-08-18 晚：单字黑名单在制造假红） ──────
+
+def test_结构虚词判的是词不是字():
+    """🩸 `向` 在 `STRUCT_PARTICLES` 里 ⇒ 「证据**方向**｜是相反的」被当成"断在介词后"
+    **整句拒渲染**，**逼作者改一句本来没问题的话**。
+
+    ⚠️ 同一个字在不同词里角色不同——「方向」的「向」是名词的一部分，
+    **单字黑名单永远分不出这两种**。"""
+    pytest.importorskip("jieba")
+    r = bo.soft_split("目前这个领域的证据方向是相反的", 12)
+    assert r, "「方向」的「向」被误当介词 ⇒ 整句拒渲染（假红）"
+    assert any(x.endswith("方向") for x in r[:-1]), f"没断在「方向」后：{r}"
+
+
+@pytest.mark.parametrize("seg", [
+    "如果你正被持续的情绪困扰缠着不放",     # 虚词「的」独立成词 ⇒ 照禁
+    "把想来的人挡在门外面等着叫号",         # 「在」独立成词 ⇒ 照禁
+    "正念更关心你和自己感受之间的距离",     # 「和」独立成词 ⇒ 照禁
+])
+def test_升到词级后拦截能力一点没少(seg):
+    """⚠️ 放宽判据时最该验的不是"新放行了什么"，是**"原来拦住的还拦不拦得住"**。"""
+    pytest.importorskip("jieba")
+    r = bo.soft_split(seg, 12)
+    for i, x in enumerate(r or []):
+        if i:
+            assert x[0] not in bo.HEAD_BAN, f"下屏以虚词开头：{r}"
+        if i < len(r) - 1:
+            assert x[-1] not in bo.TAIL_BAN, f"上屏以虚词结尾：{r}"
+
+
+def test_jieba不可用时退回单字判据():
+    """⚠️ 退回的是**更严**的那一版（多拒），⛔ 不是悄悄放行。"""
+    assert bo._word_around("证据方向是相反的", 4, None) == ("向", "是")
+    ws = bo.word_spans("证据方向是相反的")
+    assert bo._word_around("证据方向是相反的", 4, ws) == ("方向", "是")
+
+
+# ────── 短屏（助理 2026-08-18：「三字孤悬」） ──────
+
+def test_不许靠提高MIN_SOFT治短屏():
+    """🔴 **数据不支持**（29 份在产稿实测）：≤3 字屏有 122 个，MIN_SOFT 3→4 只消掉 15 个（12%），
+    代价是断不开 62→77（**多拒 24%**）。
+
+    ⚠️ 因为**大头根本不来自软断，来自作者自己用逗号句号断出来的短句**，
+    而 `MIN_SOFT` 只管软断。⇒ 真正管用的是把短屏报出来让作者调标点。"""
+    assert bo.MIN_SOFT == 3, "⛔ 别提高它——见 MIN_SOFT 的文档串"
+    src = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
+    assert "[短屏]" in src and src.count("[短屏]") >= 2, "真闸与预检都要报短屏"
+
+
+def test_短屏是报出来不是拒渲染():
+    """⚠️ 短屏合不合适只有写稿人说了算（「够了」「不是的」这种三字屏是刻意的节奏）。"""
+    sc, fails, _, _ = bo.split_cue("够了。", 12)
+    assert not fails and sc[0]["text"] == "够了"
