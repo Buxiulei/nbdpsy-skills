@@ -598,3 +598,42 @@ def test_图标CSS不许用百分号格式化():
     而且报的是「unsupported format character」这种跟真因无关的话。第一版就这么炸的。"""
     py = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
     assert "ICON_CSS % " not in py and "@BOTTOM@" in py
+
+
+# ────── 语速口径（2026-08-19 用 15 份在产稿的真 cues 重算） ──────
+
+def test_语速用句内口径不用整片口径():
+    """🩸 原来写的 3.5 是**双重错配**：
+    ① **口径错**——那是「整片时长÷字数」，却拿来算「每屏停多久」；
+    ② **样本是异常值**——出自单条 `oneline-qiuqiu-jianyao`，其句间静音 **16.3%**
+       为 15 条之最（其余 6–8%）。
+    ⇒ 比真值低 17% ⇒ **每屏停留被高估 21%**，实际只停 3.5s 的屏被算成 4.2s ⇒ **闸门漏报**。
+
+    ⚠️ **一条样本 + 错口径，出来的数看着很像真值**（它确实是"实测"来的），
+    这种数最难被怀疑——⛔ 别再拿单条片子定全线的尺子。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ccs", SCRIPTS / "check_collage_script.py")
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    assert abs(m.SPEED - 4.23) < 0.01, "句内语速真值是 4.23（15 份在产稿实测）"
+    src = (SCRIPTS / "check_collage_script.py").read_text(encoding="utf-8")
+    assert "整片" in src and "3.88" in src, "两个口径都要写明，⛔ 别只留一个数"
+
+
+def test_语速真值可从在产cues复算():
+    """⚠️ 判据要**可复算**，⛔ 不是"某人某次量的"。这条把算法钉住：
+    句内语速 ＝ `Σ(句 end−start) ÷ Σ汉字数`。"""
+    import glob, json
+    fs = sorted(glob.glob("/home/roots/NBDpsy/seo-geo/content/videos/*/narration.mp3.cues.json"))
+    if len(fs) < 5:
+        pytest.skip("在产 cues 不足，跳过（⚠️ 这是「没查」不是「查过没问题」）")
+    ch = sec = 0
+    for f in fs:
+        c = json.load(open(f, encoding="utf-8"))
+        c = c.get("cues", c) if isinstance(c, dict) else c
+        for s in c:
+            d = s["end"] - s["start"]
+            n = len([x for x in s["text"] if "一" <= x <= "龥"])
+            if d > 0 and n > 0:
+                ch += n; sec += d
+    assert 4.0 < ch / sec < 4.5, f"句内语速复算得 {ch/sec:.2f}，与定档的 4.23 差太远"
