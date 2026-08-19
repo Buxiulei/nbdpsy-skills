@@ -2080,15 +2080,33 @@ python3 {SKILL_DIR}/scripts/publish_video.py --note {note_dir}/post-01.md --acco
 - **预期回执是 `exit 3` + `applied.cover.status=error`（cover_exception）——这是当前的预期值，不是意外**。
   台账那行会写成 `差集: cover=FAIL(补救: --fix-cover …)`，⛔ 别把它当发布失败去重发。
 
+**①.5 同步台账**（**100% 必经，⛔ 不是偶发**）
+
+```bash
+python3 {SKILL_DIR}/scripts/note_ops.py --sync-ledger <账号名或ID>
+```
+
+🩸 **漏了它，第②步必报** `job XXX 没有 note_id（台账还没回填平台 id）`——
+发布刚落地时台账里还没有平台 note_id，而补封面要它定位笔记。
+**2026-08-19 job 349、350 连续两次都撞**（xhs-server 给的节奏文档漏了这一步）。
+⭕ `--sync-ledger` **幂等、可放心重试**。
+
 **② 补封面**（**必然要走的一步**；这条链走弹窗结构、**已真号验证可用**）
 
 ```bash
-python3 {SKILL_DIR}/scripts/publish_video.py --fix-cover --job <发布job_id> --cover <同一张封面.jpg> \
-        --ledger {note_dir}/publish-ledger.md   # ⚠️ --ledger 必给：不给时台账路径按 --cover 推导，
-                                                 # 封面放在 cover/ 子目录就会推到 cover/publish-ledger.md，
-                                                 # 补救号登记不进发布那一行（recorded:false 但仍 exit 0），
-                                                 # 第③步 recheck 永远闭不掉 → 诱导重跑（每次都是真提交）
+cd {note_dir} && python3 {SKILL_DIR}/scripts/publish_video.py \
+        --fix-cover --job <发布job_id> --cover <同一张封面.jpg>
 ```
+
+⭕ **`--ledger` 不必再给**（v2.19.2 起）：台账推导改成**先找已存在的那一份**——
+🩸 2026-08-19 实炸：`--fix-cover --job 350 --cover <封面>` 是**典型用法**（手上只有 job 号和封面），
+旧实现「第一个非空候选就 return」⇒ 落到封面的父目录 `cover-brand7/`，真台账却在稿件目录。
+⚠️ **要求人每次多带一个参数才不出错的规矩，人一定会漏**——SKILL.md 当时**已经警告过这个坑**，
+照样踩。⇒ 修的是推导链，⛔ 不是再加一句提醒。
+
+⇒ 现在的判据是「**那里到底有没有台账**」，⛔ 不是「参数叫什么」：
+封面在独立输出目录 ⇒ 跳过它、命中稿件目录；封面就在媒体目录里（轮播/放映线）⇒ 照旧命中。
+**在稿件目录里跑**最省事。⛔ 一份都找不到时仍报错指路，**绝不新建**。
 
 - **判据**：stdout `"applied_cover": true` **且** exit `0` 才算补上；exit `3` ＝ 没换上；**且回执里 `ledger_remedy.recorded` 必须为 true**——它是 false 说明补救号没登记进台账那一行（台账路径推导漂了），第③步一定闭不掉，此时先补 `--ledger` 重跑一次登记，⛔ 别重跑 `--fix-cover`（那是又一次真提交）。
   （**这条产品线的失败是静默的，只有 `true` 算数**）——看 `reason`/`observed` 取证，

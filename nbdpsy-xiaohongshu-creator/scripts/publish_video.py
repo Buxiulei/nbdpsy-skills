@@ -317,9 +317,17 @@ def do_fix_cover(args, api_base, key):
         view = pn.poll_job(api_base, key, args.job, timeout=0)
         account_id, note_id = view.get("account_id"), view.get("note_id")
         if not note_id:
+            # 🩸 **这一步 100% 必经，⛔ 不是偶发**（2026-08-19 小红书发布线：job 349、350
+            # 连续两次都撞）：发布刚落地时台账里还没有平台 note_id，而补封面要它定位笔记。
+            # ⚠️ **⛔ 没做成"自动跑一次 sync"**：`--fix-cover` 的语义是补封面，
+            #    顺手改台账文件是另一个动作；而且 note_ops 也要推台账路径——
+            #    **在一个刚修完路径推导 bug 的地方再叠一层推导，风险大于省下的那一步**。
+            # ⇒ 改成给一条**可直接粘贴的完整命令**（账号 id 从 job 回执里取，⛔ 不留 `<账号>` 让人猜）。
             raise ValueError(
                 f"job {args.job} 没有 note_id（台账还没回填平台 id）——"
-                "先跑 note_ops.py --sync-ledger <账号> 同步台账，再补封面")
+                f"**发布与补封面之间必须夹一次台账同步**，它幂等、可放心重试：\n"
+                f"   python3 note_ops.py --sync-ledger {account_id or '<账号名或ID>'}\n"
+                f"   然后原样重跑本条 --fix-cover（补封面是幂等的：已是自定义封面会 skipped）")
     else:
         if not (args.account and args.note_id):
             raise ValueError("--fix-cover 需要 --job <发布任务号>，或 --account + --note-id")

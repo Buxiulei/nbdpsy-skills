@@ -442,3 +442,74 @@ def test_登记时机必须在入队之后轮询之前():
     i_record = body.index('remedy = record_remedy(args, "cover", cjob)')
     i_poll = body.index("deadline = time.monotonic()")
     assert i_enqueue < i_record < i_poll, "登记不在「入队之后、轮询之前」"
+
+
+def test_cover不许参与台账路径推导(tmp_path):
+    """🩸 **2026-08-19 实炸**：`--fix-cover --job 350 --cover <封面>` 是补封面的**典型用法**
+    （手上只有 job 号和封面，没理由再带 --note），旧链落到封面的父目录 `cover-brand7/`，
+    真台账却在稿件目录 `seven/`。
+
+    ⚠️ **要求人每次多带一个 `--ledger` 才不出错的规矩，人一定会漏**——
+    SKILL.md 里当时**已经警告过这个坑**，照样踩。⇒ 修推导链，⛔ 不是再加一句提醒。
+
+    🩸 **第一版我改错了方向**：直接把 `--cover` 从链里摘掉，**当场打断 5 个用例**——
+    轮播/放映线的封面**就在媒体目录里**（`cover-1.jpg` 与稿件同级）。
+    ⇒ **两种用法都真实存在**，区别不在"是哪个参数"，在**"那里到底有没有台账"**。
+    ⚠️ 别人点名一处，得先数清这个共用函数还有谁在用。
+    """
+    import publish_note as pn
+    cover_dir = tmp_path / "cover-brand7"; cover_dir.mkdir()
+    cover = cover_dir / "c.jpg"; cover.write_bytes(b"\xff\xd8")
+    note_dir = tmp_path / "seven"; note_dir.mkdir()
+    real = note_dir / pn.LEDGER_NAME; real.write_text("- [ ] x\n", encoding="utf-8")
+
+    args = Namespace(ledger=None, note=None, content_file=None, video=None,
+                     audio=None, cover=str(cover))
+    monkeypatch2 = __import__("os")
+    old = monkeypatch2.getcwd()
+    try:
+        monkeypatch2.chdir(note_dir)
+        # ⛔ 绝不能推到 cover-brand7/（那里没有台账）；稿件目录里的那份才是
+        assert pn.ledger_path(args) == real
+    finally:
+        monkeypatch2.chdir(old)
+
+
+def test_封面与台账同目录时仍然认cover(tmp_path, monkeypatch):
+    """⭕ 轮播/放映线的用法：封面就在媒体目录里 ⇒ `--cover` 照旧能锚定。
+    ⚠️ 修一个场景⛔ 不能打断另一个——判据是**「那里有没有台账」**，不是「参数叫什么」。"""
+    import publish_note as pn
+    media = tmp_path / "slideshow-h1"; media.mkdir()
+    real = media / pn.LEDGER_NAME; real.write_text("- [ ] x\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)          # cwd 里没有台账
+    args = Namespace(ledger=None, cover=media / "cover-1.jpg")
+    assert pn.ledger_path(args) == real
+
+
+def test_一份台账都不存在时指向最可能的位置(tmp_path, monkeypatch):
+    """⚠️ 找不到时**仍然要把错误指到正确的地方**，⛔ 不是抛一句"哪儿都没有"。
+    ⭕ 「绝不新建」这条不变——它是 2026-08-19 那次没造成更大伤害的原因
+    （没在 `cover-brand7/` 里造一份假台账）。"""
+    import publish_note as pn
+    media = tmp_path / "slideshow-h1"; media.mkdir()
+    monkeypatch.chdir(tmp_path)
+    args = Namespace(ledger=None, cover=media / "cover-1.jpg")
+    assert pn.ledger_path(args) == media / pn.LEDGER_NAME
+    assert list(media.iterdir()) == [], "⛔ 推导过程不许在磁盘上留下任何东西"
+
+
+def test_没有note_id时给的是可粘贴的完整命令(tmp_path, monkeypatch):
+    """🩸 **100% 必经、⛔ 不是偶发**（job 349、350 连续两次都撞）。
+    ⚠️ 报错里留 `<账号>` 让人猜，等于把一步手工活留给每一次调用。"""
+    import publish_note as pn, publish_video as pv
+    cover = tmp_path / "c.jpg"; cover.write_bytes(b"\xff\xd8")
+    monkeypatch.setattr(pv, "check_cover_receipt", lambda p: {"ok": True})
+    monkeypatch.setattr(pn, "poll_job",
+                        lambda *a, **k: {"job_id": 350, "account_id": 7, "note_id": None})
+    args = Namespace(cover=cover, job=350, account=None, note_id=None,
+                     wait_timeout=1, ledger=None)
+    with pytest.raises(ValueError) as e:
+        pv.do_fix_cover(args, API, "key")
+    msg = str(e.value)
+    assert "--sync-ledger 7" in msg, "⛔ 别留 <账号> 让人猜——account_id 就在 job 回执里"
+    assert "幂等" in msg

@@ -520,14 +520,31 @@ def ledger_path(args, note: Path = None) -> Path:
     文件已经在那儿才认，不在就抛错指路，绝不凭空造一份干净台账假装这批没欠账。"""
     if getattr(args, "ledger", None):
         return Path(args.ledger)
-    for cand in (note, getattr(args, "note", None), getattr(args, "content_file", None),
-                 getattr(args, "video", None), getattr(args, "audio", None),
-                 getattr(args, "cover", None)):
-        if cand:
-            return Path(cand).parent / LEDGER_NAME
+    # 🔴 **推导链的目的是「找到那份台账」，⛔ 不是「返回一个路径」**（2026-08-19 改）。
+    #
+    # 🩸 实炸（小红书发布线）：`--fix-cover --job 350 --cover <封面>` 是补封面的**典型用法**
+    #    （手上只有 job 号和封面，没理由再带 --note），旧实现「第一个非空候选就 return」
+    #    ⇒ 落到封面的父目录 `cover-brand7/`，而真台账在稿件目录 `seven/`
+    #    ⇒ 补救号登记不进发布那一行 ⇒ recheck 永远闭不掉。
+    #
+    # ⚠️ **⛔ 别直接把 `--cover` 从链里摘掉**（我第一版就是那么改的，当场打断 5 个用例）：
+    #    轮播/放映线的封面**就在媒体目录里**（`cover-1.jpg` 与稿件同级），摘了它们就推不出来了。
+    #    ⇒ **两种用法都真实存在**，区别不在"是哪个参数"，在"那里到底有没有台账"。
+    #
+    # ⇒ 先按顺序找**已存在**的那一份；一份都没有时，再返回第一个候选——
+    #   那是"最可能的位置"，用来把错误信息指到正确的地方（⛔ 仍然不新建）。
+    cands = [c for c in (note, getattr(args, "note", None),
+                         getattr(args, "content_file", None), getattr(args, "video", None),
+                         getattr(args, "audio", None), getattr(args, "cover", None)) if c]
+    for cand in cands:
+        lp = Path(cand).parent / LEDGER_NAME
+        if lp.exists():
+            return lp
     here = Path.cwd() / LEDGER_NAME
-    if here.exists():
+    if here.exists():       # ⚠️ cwd 锚点提到候选之前判：人就在稿件目录里跑是最自然的用法
         return here
+    if cands:
+        return Path(cands[0]).parent / LEDGER_NAME
     raise ValueError(
         f"定位不到台账（{LEDGER_NAME}）：当前目录 {Path.cwd()} 下没有它，"
         "命令行也没给 `--ledger <台账路径>` 或 --note/--video/--audio/--cover。"
