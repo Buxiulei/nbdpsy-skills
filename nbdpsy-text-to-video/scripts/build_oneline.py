@@ -1122,6 +1122,16 @@ def main(argv=None):
             print("处置：把专名单独说成一屏（前后各断一句），⛔ 别在专名内部补逗号——那等于改刊名。",
                   file=sys.stderr)
             return 1
+        # 🔴 **编排退化哨兵**：把「视觉计划给的 motif」与「机械轮转会给的」逐段比。
+        # ⚠️ **若差异接近 0，「编排」就退化成了轮转——而光看画面分不出来**（片子照样"很丰富"）。
+        # 🔴 这个数**在浏览器里算**：读的是 `motifFor()` 的**返回值**与模板自己的轮转函数，
+        #    ⛔ 不是在 Python 里复刻一份轮转逻辑——那是「复刻了原料，复刻不出行为」
+        #    （2026-08-19 小红书发布线三次栽在这上面）。
+        div = rep.get("plan_divergence")
+        if div is not None:
+            print(f"   🎬 编排 vs 机械轮转：{div['diff']}/{div['total']} 段不同"
+                  f"（{div['pct']:.0f}%）"
+                  f"{'  ⚠️ 差异过低，编排可能退化成了轮转' if div['pct'] < 25 else ''}")
         for p in rep.get("proper", []):
             print(f"   ✅ 专名屏第 {p['i'] + 1} 屏实测 {p['width']}px ≤ {cv['w'] - 2 * cv['pad']}px，"
                   f"字号 {p['font_px']}px（{p['ratio']:.0%}）")

@@ -183,12 +183,18 @@ const STILL_EVERY = 4;
    `[]` ＝ 没给计划，走原轮转（存量片走这条，**逐帧不变**）。 */
 const PLAN_MOTIFS = __PLAN_MOTIFS__;
 
-function motifFor(si) {
-  const planned = PLAN_MOTIFS[si];
-  if (planned && MOTIFS[planned]) return planned;
+/* 机械轮转：没有视觉计划时的默认编排，也是**哨兵的对照基线**。
+   ⚠️ 抽成独立函数就是为了让 `motifFor` 与它能被逐段比——⛔ 别把它内联回去。 */
+function rotateFor(si) {
   if (si > 0 && si % STILL_EVERY === 0) return 'still';
   const k = si - Math.floor(si / STILL_EVERY);      // 扣掉留白段，轮转不跳号
   return ORDER[k % ORDER.length];
+}
+
+function motifFor(si) {
+  const planned = PLAN_MOTIFS[si];
+  if (planned && MOTIFS[planned]) return planned;
+  return rotateFor(si);
 }
 
 /* ══════════════════ ④ 应用 ══════════════════ */
@@ -239,6 +245,15 @@ function report() {
     screens:SCREENS.length, total, overflow:over,
     template:"tpl-paragraph",
     sections:SEC_COUNT, sec_cues:SEC_CUES,
+    /* 🔴 编排退化哨兵：计划给的 motif vs 机械轮转会给的，逐段比。
+       ⚠️ 差异接近 0 ＝「编排」退化成了轮转，**而光看画面分不出来**。
+       在这里算是因为 `rotateFor` 与 `motifFor` 都在本文件里——⛔ 别在 Python 里复刻一份。 */
+    plan_divergence: (() => {
+      if (!PLAN_MOTIFS.length) return null;
+      const secs = [...new Set(SEC)];
+      const diff = secs.filter(si => motifFor(si) !== rotateFor(si)).length;
+      return { total: secs.length, diff, pct: secs.length ? diff * 100 / secs.length : 0 };
+    })(),
     motifs:usedMotifs.filter(Boolean),
     motif_kinds:[...new Set(usedMotifs.filter(Boolean))].length,
   };

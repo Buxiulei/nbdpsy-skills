@@ -674,3 +674,21 @@ def test_否定词禁令在产稿零影响_但规则确实生效():
     src = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
     assert "left in NEG_TAIL_BAN" in src and "right in NEG_TAIL_BAN" not in src, \
         "否定词只禁做结尾，⛔ 不禁做开头"
+
+
+def test_编排退化哨兵必须在浏览器里算():
+    """🔴 「计划 vs 机械轮转」的差异率是**防编排退化的哨兵**：
+    ⚠️ **差异接近 0 ＝「编排」退化成了轮转，而光看画面分不出来**（片子照样"很丰富"）。
+
+    🔴 **它必须在模板里算**（`motifFor` 与 `rotateFor` 都在那儿），
+    ⛔ 别在 Python 里复刻一份轮转逻辑——那是「**复刻了原料，复刻不出行为**」
+    （2026-08-19 小红书发布线三次栽在这上面：自己写切分集 → 补句末标点 → 
+    `from build_oneline import HARD` 仍过严 6 倍，因为漏掉了软断点逻辑）。"""
+    tpl = (ROOT / "assets/card-templates/tpl-paragraph.html").read_text(encoding="utf-8")
+    assert "function rotateFor(si)" in tpl, "轮转必须是独立函数，否则没法与 motifFor 逐段比"
+    assert "plan_divergence" in tpl and "motifFor(si) !== rotateFor(si)" in tpl
+    py = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
+    assert 'rep.get("plan_divergence")' in py, "出片信息里要报哨兵数"
+    # ⛔ Python 侧不许出现轮转常量的复刻
+    assert "STILL_EVERY" not in py and "'drift', 'tilt'" not in py, \
+        "Python 里复刻了轮转逻辑——⛔ 那正是「复刻原料」的坑"
