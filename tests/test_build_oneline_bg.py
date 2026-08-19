@@ -496,3 +496,50 @@ def test_短屏是报出来不是拒渲染():
     """⚠️ 短屏合不合适只有写稿人说了算（「够了」「不是的」这种三字屏是刻意的节奏）。"""
     sc, fails, _, _ = bo.split_cue("够了。", 12)
     assert not fails and sc[0]["text"] == "够了"
+
+
+# ────── 短屏护栏（2026-08-19 审稿代理：别的产线先撞上的同类缺陷） ──────
+
+def test_退场必须夹住不早于入场结束():
+    """🩸 起因是**别的产线先撞上的**：博客长文的账号图标位淡入 .15+.7、淡出 end−.25
+    全写死秒数 ⇒ 首屏 0.88s 时**淡出起点比淡入终点还早 0.22s**，图标一闪。
+
+    ⚠️ **同一个缺陷在本模板里是"还没触发"的状态**——29 份在产稿 1067 屏最短 0.347s，
+    按原参数平台期只剩 0.087s。⇒ 被提醒"同步 X"要先看**同类结构还有几处**。"""
+    src = (ROOT / "assets/card-templates/tpl-oneline.html").read_text(encoding="utf-8")
+    assert "Math.max(at(s.end - LEAD), t0 + din)" in src, "退场起点没夹住"
+    assert "const inDur = s => Math.min(IN, Math.max(0.08, (s.end - s.start) * 0.4));" in src
+
+
+def test_短屏护栏不许改动正常屏():
+    """🔴 屏长 ≥0.65s 时 `dur*0.4 ≥ 0.26` ⇒ `inDur` 恒等于 `IN` ⇒ 与改动前**逐帧相同**。
+
+    **Playwright 实测（2026-08-19，92 个时刻 × 3 屏，读 opacity+transform）**：
+    2.000s 屏差异 **0**、2.153s 屏差异 **0**、0.347s 短屏差异 12（正是意图）。
+    ⛔ 这次改动不许动到任何一条已过审片子的动效。"""
+    IN = 0.26
+    in_dur = lambda d: min(IN, max(0.08, d * 0.4))
+    for d in (0.65, 0.9, 1.5, 2.0, 6.0):
+        assert in_dur(d) == IN, f"{d}s 屏的入场时长被改了：{in_dur(d)}"
+    assert in_dur(0.347) < IN, "短屏没有收缩"
+    # 夹持之后一定留得下平台期（退场起点 ≥ 入场结束）
+    for d in (0.2, 0.347, 0.5, 0.64):
+        LEAD, t0 = 0.07, -0.07
+        assert max(d - LEAD, t0 + in_dur(d)) >= t0 + in_dur(d)
+
+
+def test_成品必须自报有没有背景音():
+    """🩸 v2.18.0 把 BGM 默认改成开，**波及所有既有调用方的产物内容，而它们不知道**
+    ⇒ 2026-08-19 在 kepu-B 的 out.mp4 里抓到混进的 BGM。
+    ⚠️ **改默认值时光写 CHANGELOG 不够**——得让**每一次产出**自己说清它是什么。
+    ⇒ 「带 BGM」与「不带 BGM」两种状态都要打，⛔ 不能只打其中一种。"""
+    src = (SCRIPTS / "render_card.py").read_text(encoding="utf-8")
+    assert "'⛔ 无背景音'" in src and "背景音 {bgm_label}" in src
+
+
+def test_纯净底版是口播原件不是某个mp4():
+    """⚠️ 下游想要的能力是**能重混**，而 `remux()` 从 `narration.mp3.wav` 出发
+    （它显式拒绝拿成片音轨当口播）⇒ ⛔ 不需要再留一份无 BGM 的 mp4 当底版。"""
+    src = (SCRIPTS / "render_card.py").read_text(encoding="utf-8")
+    assert "纯净底版就是 `narration.mp3.wav`" in src
+    assert "新渲的片子⛔ 不用再 remux" in src

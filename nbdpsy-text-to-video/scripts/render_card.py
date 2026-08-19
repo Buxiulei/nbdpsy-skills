@@ -313,7 +313,18 @@ BGM_DEFAULT = "auto"
 `BGM_DUCK_LU=14` 还是老板 2026-08-16 对着成片实听调下来的。
 **只有字卡线漏接了。**⚠️ 这正是 `BGM_DUCK_LU` 注释里写的那条教训的第二次现身：
 **「修复只落在他点名的那个形态上」** ⇒ 同一个老板在另一个形态上又听到一次同样的问题。
-⇒ 本次接线**直接复用 `prepare_bgm`**，⛔ 不为字卡线另写一套混音——三条线必须同一个声音。"""
+⇒ 本次接线**直接复用 `prepare_bgm`**，⛔ 不为字卡线另写一套混音——三条线必须同一个声音。
+
+🔴 **默认开 ⇒ 整片渲染出的 mp4 就带 BGM 了**（2026-08-19 审稿代理在 kepu-B 上抓到，
+与下游「out＝纯净底版／out-bgm＝带 BGM」的约定撞车）。**默认仍然保持开**，理由：
+关掉的话明天新渲的片子又没有背景音 ⇒ **同一个投诉第三次**。
+
+⚠️ **那个「纯净底版」的约定不需要一个 mp4 来承载**：
+**纯净底版就是 `narration.mp3.wav`（口播原件）**，`remux()` 也正是从它出发重混的
+（它显式拒绝拿成片音轨当口播）。⇒ ⛔ 别为了留底版再编一份无 BGM 的 mp4。
+
+⚠️ **新渲的片子⛔ 不用再 remux**——它已经是成品。再 remux 一遍只是**白白多一次 AAC 编码**。
+`--remux` 是给**已经渲完的存量片**用的。"""
 
 
 def _mix_bgm(am, narr: Path, total: float, bgm: str, duck: float, tmp: Path):
@@ -351,11 +362,12 @@ def mux(html_name: str, out_name: str, bgm: str = BGM_DEFAULT,
     total = n_frames / FPS
     with tempfile.TemporaryDirectory() as td:
         ready, _ = _mix_bgm(am, narr, total, bgm, duck, Path(td))
-        return _encode(am, fd, narr, ready, out, out_name, pre, target)
+        return _encode(am, fd, narr, ready, out, out_name, pre, target,
+                       bgm_label=(f"{bgm}（压 {duck:g} LU）" if ready else ""))
 
 
 def _encode(am, fd, narr, bgm_ready, out: Path, out_name: str, pre: dict, target: float,
-            video_src: Path = None) -> str:
+            video_src: Path = None, bgm_label: str = "") -> str:
     """最后一次编码：视频（帧目录或已成片）＋ 口播（＋BGM）→ 母带归一 → 自检。
 
     🔴 **BGM 与母带归一必须在同一次编码里**：先编好口播再补一遍 BGM ＝ 二次编码，
@@ -400,8 +412,14 @@ def _encode(am, fd, narr, bgm_ready, out: Path, out_name: str, pre: dict, target
               file=sys.stderr, flush=True)
     if not v["passed"]:
         raise RuntimeError("母带响度自检不过（见上方 ❌ 行）——⛔ 这条片子别发，先查归一链路。")
+    # 🔴 **两种状态都要打出来**：「带 BGM」与「不带 BGM」必须在成品信息里分得开。
+    # 🩸 v2.18.0 把 BGM 默认改成开，**波及所有既有调用方的产物内容，而它们不知道**
+    # ⇒ 2026-08-19 审稿代理发现 kepu-B 的 out.mp4 里混进了 BGM，
+    #    与下游「out＝纯净底版」的约定撞车。⚠️ 改默认值时**光写 CHANGELOG 不够**，
+    #    得让**每一次产出**自己说清它是什么。
     print(f"✅ {out_name} {out.stat().st_size/1048576:.1f}MB "
-          f"({v['measured_lufs']:.2f} LUFS / {v['measured_tp']:.2f} dBTP)", flush=True)
+          f"({v['measured_lufs']:.2f} LUFS / {v['measured_tp']:.2f} dBTP)"
+          f"｜{f'背景音 {bgm_label}' if bgm_label else '⛔ 无背景音'}", flush=True)
     return str(out)
 
 
@@ -434,7 +452,8 @@ def remux(src_mp4: str, out_name: str, bgm: str = BGM_DEFAULT, duck: float = Non
           file=sys.stderr, flush=True)
     with tempfile.TemporaryDirectory() as td:
         ready, _ = _mix_bgm(am, narr, total, bgm, duck, Path(td))
-        return _encode(am, None, narr, ready, out, out_name, pre, target, video_src=src)
+        return _encode(am, None, narr, ready, out, out_name, pre, target, video_src=src,
+                       bgm_label=(f"{bgm}（压 {duck:g} LU）" if ready else ""))
 
 
 def _video_seconds(path: Path) -> float:

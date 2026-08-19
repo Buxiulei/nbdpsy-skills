@@ -107,18 +107,37 @@ const at = t => Math.max(0, t);
 
 const LEAD = 0.07;   // 视觉比语音早这么一点点起手，换来翻屏零空窗（0.07s 人耳无感）
 const OUT  = 0.16;   // 退场时长
+const IN   = 0.26;   // 入场时长（够长的屏用这个，⛔ 别改——存量过审片全按它渲的）
+
+/* 🔴 **短屏护栏：入场时长按屏长收缩，退场起点夹住不早于入场结束。**
+
+   🩸 起因是**别的产线先撞上的**（博客长文的账号图标位，2026-08-19 审稿代理抓到）：
+   淡入 .15+.7、淡出 end−.25 全写死秒数 ⇒ kepu-B 首屏只 0.88s 时
+   **淡出起点比淡入终点还早 0.22s**，没有平台期，图标一闪。
+
+   ⚠️ **同一个缺陷在本模板里是"还没触发"的状态**——29 份在产稿 1067 屏里最短 0.347s，
+   按原参数平台期还剩 0.087s，**没翻转但余量只有这么多**。
+   ⇒ 别人点名的是他那处，**我这处是同一类**（`feedback_sync_all_sibling_maps`：
+   被提醒"同步 X"先看同类结构还有几处）。
+
+   🔴 **屏长 ≥0.65s 时 `dur*0.4 ≥ 0.26` ⇒ 与改动前逐帧相同**——
+   ⛔ 这次改动不许动到任何一条已过审片子的动效，只有短屏才收缩。 */
+const inDur = s => Math.min(IN, Math.max(0.08, (s.end - s.start) * 0.4));
 
 SCREENS.forEach((s, i) => {
   const el = els[i], last = (i === SCREENS.length - 1);
   const t0 = at(s.start - LEAD);
+  const din = inDur(s);
   // 入场：整行一起浮起——⛔ 不做逐字，本版式的意义就是"没有第二个东西在动"
   tl.fromTo(el, { opacity:0, y:__RISE__, scale:.988 },
-                { opacity:1, y:0, scale:1, duration:.26, ease:'power2.out', immediateRender:false }, t0);
+                { opacity:1, y:0, scale:1, duration:din, ease:'power2.out', immediateRender:false }, t0);
   // 停留：极缓推近，给静止画面一点呼吸，幅度小到不构成"动效"
   const hold = Math.max(s.end - s.start, .3);
-  tl.fromTo(el, { scale:1 }, { scale:1.014, duration:hold, ease:'none', immediateRender:false }, at(t0 + .26));
-  // 退场：与下一屏入场同刻交错，两屏同向上移＝推进感，不是溶解
-  if (!last) tl.to(el, { opacity:0, y:-__RISE__, duration:OUT, ease:'power1.in' }, at(s.end - LEAD));
+  tl.fromTo(el, { scale:1 }, { scale:1.014, duration:hold, ease:'none', immediateRender:false }, at(t0 + din));
+  // 退场：与下一屏入场同刻交错，两屏同向上移＝推进感，不是溶解。
+  // ⚠️ 夹住：退场绝不早于入场结束，否则元素"一闪"（没有任何一帧是完整可读的）。
+  if (!last) tl.to(el, { opacity:0, y:-__RISE__, duration:OUT, ease:'power1.in' },
+                   Math.max(at(s.end - LEAD), t0 + din));
 });
 
 if (SCREENS.length) {
