@@ -76,6 +76,14 @@ const SCREENS = __SCREENS__;   // build 脚本断句分屏后的逐屏 {text,sta
 const SAFE_W  = __SAFE_W__;
 const STROKE  = __STROKE_PX__;
 const RISE    = __RISE__;
+/* 🔴 **段落字卡的位移量比 oneline 大得多**（56 vs 20）——2026-08-19 审稿实测：
+   原来 20px 的纵向位移在观众眼里是**亚可见量级**，六种 motif 里只有 wipe 明确可辨。
+   ⚠️ ⛔ 不改 `RISE` 常量本身：`tpl-oneline` 共用它，而那个版式的克制是它的身份。
+
+   ⚠️ **幅度和缓动要一起看**：`power2.out` 在入场 35% 处已走完 58%，
+   ⇒ 同样 56px 的位移，观众实际能看到的只剩 ~16px。
+   改用 `power1.out`（线性）后同一时刻剩 ~46px——**缓动比幅度更能决定"看不看得见"**。 */
+const RISE_P  = 72;
 const TAIL    = 1.4;           // 末屏定格
 const SEC_CUES = __SEC_CUES__; // 每段几句（段落边界只落在句边界上）
 
@@ -121,45 +129,45 @@ const MOTIFS = {
   /* 基准件：与 tpl-oneline 同款（纵向浮起→缓推近→上移）。留着它是为了
      ⓐ 段落节奏需要一个"最安静"的选项；ⓑ 与旧版式视觉血缘不断。 */
   rise(el, t0, hold, tOut, isLast) {
-    tl.fromTo(el, { opacity:0, y:RISE, scale:.988 },
-                  { opacity:1, y:0, scale:1, duration:.26, ease:'power2.out', immediateRender:false }, t0);
-    tl.fromTo(el, { scale:1 }, { scale:1.014, duration:hold, ease:'none', immediateRender:false }, at(t0 + .26));
-    if (!isLast) tl.to(el, { opacity:0, y:-RISE, duration:OUT, ease:'power1.in' }, tOut);
+    tl.fromTo(el, { opacity:0, y:RISE_P, scale:.988 },
+                  { opacity:1, y:0, scale:1, duration:.42, ease:'power1.out', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.014, duration:hold, ease:'none', immediateRender:false }, at(t0 + .42));
+    if (!isLast) tl.to(el, { opacity:0, y:-RISE_P, duration:OUT, ease:'power1.in' }, tOut);
   },
 
   /* 揭示件：clipPath 从左擦出。🔴 这一类旧模板一个都没有（0/7），
      而它是字卡动效最主力的手法——"字被写出来"而不是"字飘进来"。 */
   wipe(el, t0, hold, tOut, isLast) {
     tl.fromTo(el, { opacity:1, clipPath:'inset(0 100% 0 0)' },
-                  { clipPath:'inset(0 0% 0 0)', duration:.34, ease:'power2.inOut', immediateRender:false }, t0);
-    tl.fromTo(el, { scale:1 }, { scale:1.010, duration:hold, ease:'none', immediateRender:false }, at(t0 + .34));
+                  { clipPath:'inset(0 0% 0 0)', duration:.46, ease:'power2.inOut', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.010, duration:hold, ease:'none', immediateRender:false }, at(t0 + .46));
     if (!isLast) tl.to(el, { clipPath:'inset(0 0 0 100%)', duration:OUT + .06, ease:'power1.in' }, tOut);
   },
 
   /* 焦点件：从虚到实。用在段落起头很像"镜头对上焦"，给长片换气。
      ⚠️ blur 是滤镜，开销比 transform 大；只在进出两端用，停留期归零。 */
   depth(el, t0, hold, tOut, isLast) {
-    tl.fromTo(el, { opacity:0, filter:'blur(14px)', scale:1.05 },
-                  { opacity:1, filter:'blur(0px)', scale:1, duration:.38, ease:'power2.out', immediateRender:false }, t0);
-    tl.fromTo(el, { scale:1 }, { scale:1.012, duration:hold, ease:'none', immediateRender:false }, at(t0 + .38));
+    tl.fromTo(el, { opacity:0, filter:'blur(20px)', scale:1.06 },
+                  { opacity:1, filter:'blur(0px)', scale:1, duration:.55, ease:'power1.out', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.012, duration:hold, ease:'none', immediateRender:false }, at(t0 + .55));
     if (!isLast) tl.to(el, { opacity:0, filter:'blur(10px)', duration:OUT + .04, ease:'power1.in' }, tOut);
   },
 
   /* 横向件：侧滑进出。与 rise 的纵向形成方向对比——**换方向是最省的变化**，
      观众立刻感到"换了一段"，而认知负担几乎为零。 */
   drift(el, t0, hold, tOut, isLast) {
-    tl.fromTo(el, { opacity:0, x:74, skewX:-4 },
-                  { opacity:1, x:0, skewX:0, duration:.30, ease:'power3.out', immediateRender:false }, t0);
-    tl.fromTo(el, { x:0 }, { x:-10, duration:hold, ease:'none', immediateRender:false }, at(t0 + .30));
+    tl.fromTo(el, { opacity:0, x:110, skewX:-6 },
+                  { opacity:1, x:0, skewX:0, duration:.40, ease:'power2.out', immediateRender:false }, t0);
+    tl.fromTo(el, { x:0 }, { x:-10, duration:hold, ease:'none', immediateRender:false }, at(t0 + .40));
     if (!isLast) tl.to(el, { opacity:0, x:-74, skewX:4, duration:OUT, ease:'power1.in' }, tOut);
   },
 
   /* 空间件：绕 X 轴翻入（靠 #stage 的 perspective 生效）。
      ⚠️ 角度必须小（≤16°）——大了字会变形，可读性掉得比新鲜感涨得快。 */
   tilt(el, t0, hold, tOut, isLast) {
-    tl.fromTo(el, { opacity:0, rotationX:-16, y:RISE * .6, transformOrigin:'50% 100%' },
-                  { opacity:1, rotationX:0, y:0, duration:.32, ease:'power2.out', immediateRender:false }, t0);
-    tl.fromTo(el, { scale:1 }, { scale:1.012, duration:hold, ease:'none', immediateRender:false }, at(t0 + .32));
+    tl.fromTo(el, { opacity:0, rotationX:-16, y:RISE_P * .6, transformOrigin:'50% 100%' },
+                  { opacity:1, rotationX:0, y:0, duration:.46, ease:'power1.out', immediateRender:false }, t0);
+    tl.fromTo(el, { scale:1 }, { scale:1.012, duration:hold, ease:'none', immediateRender:false }, at(t0 + .46));
     if (!isLast) tl.to(el, { opacity:0, rotationX:10, duration:OUT, ease:'power1.in' }, tOut);
   },
 
@@ -198,7 +206,7 @@ function motifFor(si) {
 }
 
 /* ══════════════════ ④ 应用 ══════════════════ */
-const ENTER = { rise:.26, wipe:.34, depth:.38, drift:.30, tilt:.32, still:.30 };
+const ENTER = { rise:.42, wipe:.46, depth:.55, drift:.40, tilt:.46, still:.30 };
 
 /* 🔴 退场提前量：**这一条是 tpl-oneline 搬不过来的地方，别照抄它**。
    oneline 里退场与下一屏入场**同刻**是有意的——两屏同向上移，重叠读作"推进"。

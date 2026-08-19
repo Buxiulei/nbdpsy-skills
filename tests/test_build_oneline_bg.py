@@ -692,3 +692,52 @@ def test_编排退化哨兵必须在浏览器里算():
     # ⛔ Python 侧不许出现轮转常量的复刻
     assert "STILL_EVERY" not in py and "'drift', 'tilt'" not in py, \
         "Python 里复刻了轮转逻辑——⛔ 那正是「复刻原料」的坑"
+
+
+# ────── 动效可辨性（2026-08-19 审稿：编排是真编排，但渲染没兑现） ──────
+
+def test_量动效必须量入场进行中():
+    """🩸 审稿量「入场后 0.88s 的文字包围盒」，得出「只有 wipe 可辨、depth 低于 still 基线」
+    ——⚠️ **而 0.88s 时所有入场动画早已结束**（最长的 depth 也只有 .55s）。
+    那一刻量到的是**停留期**，而硬契约⑤**明确要求停留期完全静止可读**
+    ⇒ **它量的正是"契约要求它们必须一样"的那一段。**
+
+    ⚠️ 但**结论方向仍然对**：入场 0.3s、屏停 6–9s ⇒ 观众 95% 时间看到的确实是静止画面。
+    ⇒ 正解是**拉长可辨窗 + 加大峰值**，⛔ 不是把停留期也动起来。"""
+    src = (SCRIPTS / "check_motifs.py").read_text(encoding="utf-8")
+    assert "PROGRESS = 0.35" in src, "量点必须落在入场进行中"
+    assert "t0 + dur * progress" in src
+
+
+def test_别人给的建议值要看它从哪个量测推出来():
+    """🩸 审稿建议「tilt 提到 2–3 度」，而模板里 tilt 的起始角**本来就是 16 度**——
+    它量到 0.3 度是因为量在动画之后。
+    ⇒ **按错误量测给出的参数，会把一个 16 度的动效"提"到 3 度。**"""
+    tpl = (ROOT / "assets/card-templates/tpl-paragraph.html").read_text(encoding="utf-8")
+    assert "rotationX:-16" in tpl, "⛔ 别按那条建议把 tilt 降到 2–3 度"
+
+
+@pytest.mark.parametrize("motif,feature", [
+    ("rise", "dy"), ("tilt", "rotx"), ("drift", "dx"), ("wipe", "clip"), ("depth", "blur"),
+])
+def test_特征指标必须选对(motif, feature):
+    """🩸 **量具自己改过三版**，每次都是**指标选错**、⛔ 不是被量对象有问题：
+    - `wipe` 用 `clipPath`，**裁剪是视觉的，`getBoundingClientRect` 一点不变**（实测 dw=0.1px）；
+    - `tilt` 的 `dh` 只有 0.4px——3D 变换的投影包围盒里，透视近端放大与远端缩小互相抵消
+      ⇒ 只能**从 `matrix3d` 直接解角度**。
+    ⚠️ **量不出来先怀疑指标选错了，⛔ 别先去改被量的东西**——
+    差一点就把两个本来做对了的动效"加强"了。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cm", SCRIPTS / "check_motifs.py")
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    assert m.FEATURE[motif] == feature
+    assert m.FEATURE["still"] is None, "still 是基线本身，⛔ 不该有特征指标"
+
+
+def test_缓动比幅度更能决定看不看得见():
+    """⚠️ `power2.out` 在入场 35% 处已走完 58% ⇒ 同样 56px 位移，观众只看得到 ~16px。
+    改 `power1.out` 后同一时刻剩 ~46px（实测 15.5 → 30.7）。"""
+    tpl = (ROOT / "assets/card-templates/tpl-paragraph.html").read_text(encoding="utf-8")
+    assert "const RISE_P  = 72;" in tpl
+    assert "duration:.42, ease:'power1.out'" in tpl, "rise 必须用线性缓动"
+    assert "const RISE    = __RISE__;" in tpl, "⛔ 别改 RISE 常量——tpl-oneline 共用它"
