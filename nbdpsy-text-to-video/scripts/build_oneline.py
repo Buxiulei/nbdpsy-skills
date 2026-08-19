@@ -241,6 +241,24 @@ STRUCT_PARTICLES = ("的", "地", "得", "把", "被", "在", "从", "对", "向
 TAIL_BAN = STRUCT_PARTICLES   # 不许做**上屏结尾**
 HEAD_BAN = STRUCT_PARTICLES   # 不许做**下屏开头**
 
+NEG_TAIL_BAN = ("不", "没", "别", "未", "非", "无")
+"""🔴 **否定词不许做上屏结尾——但做下屏开头是合法的。**
+
+⚠️ **这条是有根据的不对称，⛔ 别按 `STRUCT_PARTICLES` 那样"前后都禁"**：
+「不是这样」做下屏开头**完全成话**，禁了白丢一批合法断点。
+
+🩸 **实证（2026-08-19，X1 样片）**：`好得不像真的` 被切成
+**「所以如果你发现自己总在好得不」｜「像真的」** ——
+上屏以「不」收尾，读者那一屏读到的是「**好得不**」，
+⚠️ 而它的自然理解是"好得**不**够"，**与原意「好得不像真的」正好相反**。
+
+⇒ 判据不是"不成话"，是**「截断会让语义翻转」**——这比不成话严重得多：
+不成话读者知道没说完，**翻转了读者以为自己读懂了**。
+（同族：`feedback_negation_flips_when_truncated`——印章屏前 1.4s 只显前半句那次。）
+
+⚠️ **jieba 拦不住它**：它把「不像」切成「不」「像」两个词，**那确实是词边界**
+（跟「持续的｜情绪困扰」同构）⇒ **词边界仍然只是必要条件**。"""
+
 AB_QUESTION = re.compile(r"(.)不\1|在不在|行不行|是不是|有没有|能不能|会不会|要不要")
 """正反问（X不X）**不可劈**：实证「它还在不在影响你的日子」被劈成
 「是它还在不」——**1.6s 一屏、根本不成话**。"""
@@ -422,6 +440,8 @@ def soft_ok(seg: str, i: int, edges=None, spans=None, words=None) -> bool:
     """
     left, right = _word_around(seg, i, words)
     if left in TAIL_BAN or right in HEAD_BAN:
+        return False
+    if left in NEG_TAIL_BAN:      # 否定词只禁做结尾，⛔ 不禁做开头（见 NEG_TAIL_BAN）
         return False
     for a, b in (spans or ()):
         if a < i < b:                       # 切点落在保护区间内部
@@ -773,7 +793,8 @@ def with_proper_font(screens, cv: dict):
     return out
 
 
-def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None):
+def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None,
+                plan_motifs=None):
     stroke = round(cv["font"] * 0.17)
     safe_w = cv["w"] - 2 * cv["pad"]
     need = cv["font"] * cv["max_chars"] + 2 * stroke
@@ -794,6 +815,7 @@ def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None):
         "__SCREENS__": json.dumps(with_proper_font(screens, cv), ensure_ascii=False),
         # 段落字卡专用；oneline 模板里没有这个占位符，填了也不会有副作用
         "__SEC_CUES__": sec_cues,
+        "__PLAN_MOTIFS__": json.dumps(plan_motifs or [], ensure_ascii=False),
         # 账号图标位；⚠️ 关掉时填的是**空串**，⛔ 不是留着占位符不填
         # （留着会被下面那道「模板还有没填的占位符」检查拦下，报一个跟真因无关的错）
         **dict(zip(("__ICON_CSS__", "__ICON_HTML__", "__ICON_JS__"), icon_parts(icon, cv))),
@@ -947,6 +969,9 @@ def main(argv=None):
     ap.add_argument("--max-line-chars", type=int, default=12,
                 help="单屏排版拆屏上限（8–14，默认 12；书名场景可 13——整片按安全区统一反推字号，非按行缩字）。"
                      "⛔ 这是排版量具，不是写稿字数上限：写稿只管把事说清楚，装不下就多一屏")
+    ap.add_argument("--plan", metavar="plan.json",
+                help="视觉计划（plan_llm.py 产出）：**逐段 motif 由它定，⛔ 不再机械轮转**。"
+                     "⚠️ 只对 --template paragraph 有效，且**必须配 --sec-cues 1**")
     ap.add_argument("--account-icon", metavar="图片",
                 help="账号图标位（默认关）：**跟落款走同一机制**——只在首屏与落款屏浮出，"
                      "中间屏一个像素都没有 ⇒ ⛔ 不是常驻元素，不碰版式契约。"
@@ -980,6 +1005,25 @@ def main(argv=None):
     if not 8 <= a.max_line_chars <= 14:
         sys.exit(f"❌ --max-line-chars 只收 8–14，收到 {a.max_line_chars}")
     cv, bg = apply_max_chars(CANVAS[a.canvas], a.max_line_chars), BG[a.bg]
+
+    plan_motifs = None
+    if a.plan:
+        if a.template != "paragraph":
+            sys.exit(f"❌ --plan 只对 --template paragraph 有效（收到 {a.template}）")
+        if a.sec_cues != 1:
+            sys.exit(f"❌ --plan 必须配 --sec-cues 1（收到 {a.sec_cues}）："
+                     f"计划的粒度是「句」，sec_cues>1 时**段与句对不上** ⇒ "
+                     f"motif 会挂到错误的段上，⚠️ **而画面照样出得来，没人会发现**")
+        pj = json.load(open(a.plan, encoding="utf-8"))
+        plan_motifs = [x.get("motif") for x in pj.get("screens", [])]
+        if len(plan_motifs) != len(cues):
+            sys.exit(f"❌ --plan 有 {len(plan_motifs)} 个单元、cues 有 {len(cues)} 句——"
+                     f"**对不上就一定是错的**（计划是按当时那份 cues 出的）。"
+                     f"⛔ 别截断凑数，重跑 plan_llm.py")
+        bad = sorted({m for m in plan_motifs
+                      if m not in ("rise", "wipe", "depth", "drift", "tilt", "still")})
+        if bad:
+            sys.exit(f"❌ --plan 里有闭集之外的 motif：{bad}")
 
     # ⚠️ 专名屏例外只有 oneline 版式实现了（模板里要有 .scr.proper 的两行排版）。
     # paragraph 走这条会**静默出一屏塞爆的字**——所以对它显式关掉，让它照旧报「断不开」。
@@ -1038,7 +1082,8 @@ def main(argv=None):
             shutil.copy(HERE / dep, dst)
     html_path = out_dir / a.name
     html_path.write_text(
-        instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues, a.account_icon),
+        instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues,
+                    a.account_icon, plan_motifs),
         encoding="utf-8")
 
     # ⚠️ 统计只看普通屏：专名屏本来就**允许**超单行上限（它排两行、字号另算），

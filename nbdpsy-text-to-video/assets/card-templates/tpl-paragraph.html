@@ -176,7 +176,16 @@ const MOTIFS = {
    规则：按 ORDER 轮转，每第 4 段插一次留白件让节奏喘气。 */
 const ORDER = ['rise', 'wipe', 'depth', 'drift', 'tilt'];
 const STILL_EVERY = 4;
+
+/* 🔴 **视觉计划（plan.json）给的逐段 motif 优先于机械轮转。**
+   这就是「每屏动画由 LLM 按内容设计」落地的那一行——⛔ 没有它，样片仍是轮转，
+   ⚠️ 而轮转出来的片子**看上去也很"丰富"**，光看画面分不出是不是按内容编排的。
+   `[]` ＝ 没给计划，走原轮转（存量片走这条，**逐帧不变**）。 */
+const PLAN_MOTIFS = __PLAN_MOTIFS__;
+
 function motifFor(si) {
+  const planned = PLAN_MOTIFS[si];
+  if (planned && MOTIFS[planned]) return planned;
   if (si > 0 && si % STILL_EVERY === 0) return 'still';
   const k = si - Math.floor(si / STILL_EVERY);      // 扣掉留白段，轮转不跳号
   return ORDER[k % ORDER.length];
