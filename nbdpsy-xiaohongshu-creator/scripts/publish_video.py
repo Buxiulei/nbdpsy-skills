@@ -281,6 +281,10 @@ def record_remedy(args, comp: str, cjob) -> dict:
     """把补救任务号登记回台账那一行——**recheck 靠它才找得到这条补救**（服务端没有按 note
     列补救任务的端点）。登记的是索引不是凭据：翻不翻 `- [x]` 仍由 --recheck 回服务端验 applied。
 
+    🔴 **在入队瞬间调用，⛔ 不等终态**（2026-08-19 事故）：`job_id` 入队就有了，
+    而终态要等轮询——**绑在一起，网关一抖就把索引陪葬**，台账从此闭不掉。
+    ⚠️ **幂等**：`remedies[comp] = str(cjob)` 是覆盖式赋值，重复写同值无害。
+
     登记失败只告警不改退出码：封面已经真补上了，为「记账没写成」把成功报成失败更误导人。"""
     if not args.job:
         return {"recorded": False,
@@ -330,25 +334,53 @@ def do_fix_cover(args, api_base, key):
     cjob = resp.json()["job_id"]
     print(f"  补封面已入队 job_id={cjob}", file=sys.stderr)
 
+    # 🔴 **入队即登记，⛔ 不等轮询拿到终态**（2026-08-19 咪问首发实炸，小红书发布线转 xhs-server 定位）。
+    #
+    # 🩸 事故形状：轮询中吃了一个 Cloudflare **502**，脚本报 `outcome: failed` ——
+    #    而只读复查 `GET /api/note-components/<cjob>` 是 **status:done / applied.cover:true**，
+    #    **任务其实成功了，502 只断了轮询**。次生影响才是真伤：登记没做 ⇒ 台账那一行
+    #    不知道该去读哪个 component job ⇒ `--recheck` 只能读发布 job 的原始回执（`cover=error`）
+    #    ⇒ **台账永远闭不掉**，而**不看脚本源码的人根本不知道要手工补索引**。
+    #
+    # 🔴 根因是**把两件事绑在一起**：「登记去哪读」与「读到了什么」。
+    #    前者在**入队瞬间就已确定**（server 回执里就有 job_id），后者要等轮询——
+    #    绑在一起，**网关一抖就把前者陪葬**。
+    # ⇒ 拆开：入队即写索引（`remedies[comp] = cjob` 是覆盖式赋值 ⇒ **重复写同值天然幂等**），
+    #   **终态判定仍然只由 `--recheck` 回 server 读**，⛔ 这里不下闭环结论、不会造成假闭环。
+    remedy = record_remedy(args, "cover", cjob)
+
     deadline = time.monotonic() + args.wait_timeout
     cview = {}
-    while True:
-        r = pn.send_request("GET", f"{api_base}/api/note-components/{cjob}", key)
-        if r.status_code >= 400:
-            raise ValueError(pn.api_error(r))
-        cview = r.json()
-        st = cview.get("status")
-        print(f"  note-components {cjob}: {st}", file=sys.stderr)
-        if st in COMPONENT_TERMINAL or time.monotonic() >= deadline:
-            break
-        time.sleep(10)
+    try:
+        while True:
+            r = pn.send_request("GET", f"{api_base}/api/note-components/{cjob}", key)
+            if r.status_code >= 400:
+                raise ValueError(pn.api_error(r))
+            cview = r.json()
+            st = cview.get("status")
+            print(f"  note-components {cjob}: {st}", file=sys.stderr)
+            if st in COMPONENT_TERMINAL or time.monotonic() >= deadline:
+                break
+            time.sleep(10)
+    except Exception as e:
+        # ⚠️ **轮询断了 ≠ 任务失败**：任务在 server 上照跑。⛔ 别裸抛——
+        # 裸抛会把已经拿到的 cjob 埋进 traceback，人得去翻栈才知道该 recheck 哪个号。
+        print(json.dumps({
+            "outcome": "unknown", "component_job_id": cjob, "note_id": note_id,
+            "error": f"{type(e).__name__}: {e}", "ledger_remedy": remedy,
+            "hint": (f"⚠️ 轮询断了，**任务多半仍在服务端跑完了**——⛔ 绝不重跑 --fix-cover"
+                     f"（每次重跑都是一次真提交）。\n"
+                     f"   只读复查：GET /api/note-components/{cjob} 看 applied.cover 是不是 true；\n"
+                     f"   台账索引**已在入队时写好**，直接 --recheck {args.job or '<发布任务号>'} 闭环"),
+        }, ensure_ascii=False))
+        return 2
 
     ok = ((cview.get("applied") or {}).get("cover") is True)
     out = {"outcome": cview.get("status"), "component_job_id": cjob, "note_id": note_id,
            "applied_cover": (cview.get("applied") or {}).get("cover"),
-           "reason": cview.get("reason"), "cover_receipt": receipt}
-    if ok:
-        out["ledger_remedy"] = record_remedy(args, "cover", cjob)
+           "reason": cview.get("reason"), "cover_receipt": receipt,
+           # ⚠️ 成败都带上：登记是**索引**不是**凭据**，失败时同样要能顺着它去复查
+           "ledger_remedy": remedy}
     if ok and args.job:
         out["next"] = f"封面已补上，跑 --recheck {args.job} 把台账那一行闭掉"
     elif not ok:

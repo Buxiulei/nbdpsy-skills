@@ -9,7 +9,8 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts"))
+SCRIPTS = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
 
 import pytest
 
@@ -378,3 +379,66 @@ def test_publish_row_uses_account_name(tmp_path, monkeypatch):
     row = _rows(tmp_path / pn.LEDGER_NAME)[0]
     assert code == 0
     assert "| NBDpsy-我们都有病 |" in row and "号1" not in row
+
+
+def test_轮询断了台账仍然知道去哪读(tmp_path, monkeypatch, capsys):
+    """🩸 **2026-08-19 咪问首发实炸**：`--fix-cover` 轮询中吃了 Cloudflare **502**，
+    脚本报 `outcome: failed`——而只读复查 `GET /api/note-components/<cjob>` 是
+    **status:done / applied.cover:true**，**任务其实成功了，502 只断了轮询**。
+
+    🔴 真伤是次生的：登记没做 ⇒ 台账那一行不知道去读哪个 component job
+    ⇒ `--recheck` 只能读发布 job 的原始回执（`cover=error`）⇒ **台账永远闭不掉**，
+    而**不看脚本源码的人根本不知道要手工补索引**。
+
+    🔴 根因是**把两件事绑在一起**：「登记去哪读」与「读到了什么」。
+    前者入队瞬间就已确定，后者要等轮询——**绑在一起，网关一抖就把前者陪葬**。
+    """
+    import publish_note as pn, publish_video as pv
+    lp, _ = _seed_ledger(tmp_path)
+    cover = tmp_path / "cover-1.jpg"
+    cover.write_bytes(b"\xff\xd8fake")
+    monkeypatch.setattr(pv, "check_cover_receipt", lambda p: {"ok": True})
+    monkeypatch.setattr(pn, "poll_job", lambda *a, **k: {"job_id": 340, "account_id": 1,
+                                                        "note_id": "abc123"})
+    monkeypatch.setattr(pn, "stage_media", lambda p, kind: "/srv/uploads/cover-1.jpg")
+
+    def fake(method, url, key, *a, **kw):
+        if method == "POST":
+            return _Resp(200, {"job_id": "NC-502"})
+        raise ConnectionError("502 Bad Gateway")     # 轮询当场断掉
+    monkeypatch.setattr(pn, "send_request", fake)
+
+    args = Namespace(cover=cover, job=340, account=None, note_id=None,
+                     wait_timeout=1, ledger=None)
+    code = pv.do_fix_cover(args, API, "key")
+
+    assert code == 2, "轮询断了应报 unknown（2），⛔ 不是 failed"
+    row = _rows(lp)[0]
+    assert "补救: cover=NC-502" in row, "🔴 轮询断了但索引必须已经写进台账"
+    assert row.startswith("- [ ]"), "⛔ 登记不是闭环，判定仍归 --recheck"
+    out = capsys.readouterr().out
+    assert "NC-502" in out, "⛔ 别把 cjob 埋进 traceback——人得能直接看到该复查哪个号"
+    assert "绝不重跑" in out
+
+
+def test_登记必须幂等(tmp_path):
+    """⚠️ 入队即登记 ⇒ 同一条可能被写多次（重跑、恢复）。
+    `remedies[comp] = str(cjob)` 是覆盖式赋值 ⇒ 重复写同值只留一段。"""
+    import publish_video as pv
+    lp, _ = _seed_ledger(tmp_path)
+    # ⚠️ 直接调 record_remedy 时要把台账路径显式给它——`ledger=None` 走的是
+    # 「按 cwd 找」那条路，那是 do_fix_cover 的场景，不是本用例要测的东西
+    args = Namespace(job=340, ledger=str(lp), account=None, note_id=None)
+    for _ in range(3):
+        assert pv.record_remedy(args, "cover", "NC-9")["recorded"]
+    assert _rows(lp)[0].count("补救: cover=NC-9") == 1
+
+
+def test_登记时机必须在入队之后轮询之前():
+    """⛔ 别把它挪回轮询之后——那就把「登记去哪读」重新绑回「读到了什么」。"""
+    src = (SCRIPTS / "publish_video.py").read_text(encoding="utf-8")
+    body = src[src.index("def do_fix_cover"):]
+    i_enqueue = body.index('cjob = resp.json()["job_id"]')
+    i_record = body.index('remedy = record_remedy(args, "cover", cjob)')
+    i_poll = body.index("deadline = time.monotonic()")
+    assert i_enqueue < i_record < i_poll, "登记不在「入队之后、轮询之前」"
