@@ -27,6 +27,12 @@
      各档色值一律由它填（占位符形如两侧双下划线）。⛔ 别在这里硬编码句子。
   ③ 画面上除了正在说的那一句，什么都没有——纸纹背景静止、无插画、无进度条。
      落款只在最后一屏浮出。往里加任何常驻元素都是在破坏这个版式。
+     ┌ **账号图标位（`--account-icon`，默认关）跟落款走同一机制**：只在**首屏**与
+     │ **落款屏**浮出，中间屏一个像素都没有 ⇒ ⛔ 它不是常驻元素，不碰本条契约。
+     │ 🔴 **DOM 放在 `#stage` 之前**：同 z-index 时**先绘者在下** ⇒ 图标在字层之下。
+     │    🩸 别处那版把它放在 `#stage` 之后、却注释成「z-index 低于字层」——**那是错话**，
+     │    它让后人以为有层次保护，而实际"不挡字"只靠**位置分离**（图标在底部、字在正中）。
+     └    ⛔ 也别改成 `z-index:2`——那会把它压到 `#vignette` 暗角之下、整体变暗。
   ④ GSAP 必须内置（同目录 gsap.min.js）。缺了页面不报错，只会渲染器静默超时。
   ⑤ 时间轴位置参数一律走 at()——GSAP 里裸的负数位置会平移整条时间轴。
   ════════════════════════════════════════════════════════════════════════
@@ -58,6 +64,7 @@ __BG_LAYERS_CSS__
   .scr.proper { text-align:center; }
   .scr.proper .ln { display:block; }
 
+__ICON_CSS__
   #brand { position:absolute; left:0; right:0; bottom:__BRAND_BOTTOM__px; z-index:4;
     text-align:center; font-family:"ONELINE"; font-size:__BRAND_PX__px;
     letter-spacing:.18em; color:__BRAND_COLOR__; opacity:0; }
@@ -65,7 +72,7 @@ __BG_LAYERS_CSS__
 </head>
 <body>
 __BG_LAYERS_HTML__
-<div id="stage"></div>
+__ICON_HTML__<div id="stage"></div>
 <div id="brand">NBDpsy 心理科普</div>
 
 <script src="gsap.min.js"></script>
@@ -146,6 +153,7 @@ if (SCREENS.length) {
     { opacity:1, y:0, duration:.9, ease:'power2.out', immediateRender:false }, at(end - .35));
 }
 
+__ICON_JS__
 /* ── 像素层复核：字号写死，所以"装不下"只可能是断句闸门漏了 ──
    build_oneline.py --check 会开浏览器读这份 report 并据此判成败。
    offsetWidth 是布局宽（不受 transform 影响），描边画在布局盒之外，须自己把 2×STROKE 加回去。 */

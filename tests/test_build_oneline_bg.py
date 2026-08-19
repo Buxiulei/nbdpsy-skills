@@ -543,3 +543,58 @@ def test_纯净底版是口播原件不是某个mp4():
     src = (SCRIPTS / "render_card.py").read_text(encoding="utf-8")
     assert "纯净底版就是 `narration.mp3.wav`" in src
     assert "新渲的片子⛔ 不用再 remux" in src
+
+
+# ────── 账号图标位（助理 2026-08-19 拍：跟落款同机制、默认关、按账号可选） ──────
+
+def test_图标位默认关且关掉时零残留():
+    """⚠️ 「关掉」必须是**元素根本不存在**，⛔ 不是「存在但 opacity:0」——
+    后者会在别人改动效时被误当成常驻元素接手。"""
+    cv = bo.apply_max_chars(bo.CANVAS["3:4"], 12)
+    css, html, js = bo.icon_parts(None, cv)
+    assert (css, html, js) == ("", "", ""), "关掉时不是三段空串"
+    css2, html2, js2 = bo.icon_parts(
+        "/home/roots/NBDpsy/seo-geo/assets/brand/miwen/miwen-avatar-512.png", cv)
+    assert "#account-icon" in css2 and 'id="account-icon"' in html2 and "@" not in js2
+
+
+def test_图标只在首屏与落款屏浮出():
+    """🔴 **跟落款走同一机制**，中间屏一个像素都没有 ⇒ ⛔ 它不是常驻元素，不碰契约③。
+
+    **Playwright 实测（2026-08-19，10.91s 片、每 0.1s 采 opacity）**：
+    可见区间 `0.20–2.40s`（首屏 0.00–2.41s）与 `9.20–10.90s`（落款屏），
+    中间屏区间内可见采样点 **0** 个。"""
+    src = (ROOT / "assets/card-templates/tpl-oneline.html").read_text(encoding="utf-8")
+    assert "__ICON_JS__" in src and "__ICON_HTML__" in src and "__ICON_CSS__" in src
+    py = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
+    # 只有首屏(s0)与全片末尾(endAll)两处时间锚，⛔ 没有第三处
+    assert py.count("'#account-icon'") == 3, "补间数量变了——图标位可能不再只出现两次"
+
+
+def test_图标DOM必须在stage之前():
+    """🔴 同 z-index 下**先绘者在下** ⇒ 图标在字层之下。
+    🩸 别处那版放在 `#stage` 之后、却注释成「z-index 低于字层」——**那是错话**，
+    它让后人以为有层次保护。⛔ 也别改成 z-index:2（会被 #vignette 暗角压暗）。"""
+    src = (ROOT / "assets/card-templates/tpl-oneline.html").read_text(encoding="utf-8")
+    assert src.index("__ICON_HTML__") < src.index('<div id="stage">')
+
+
+@pytest.mark.parametrize("canvas", ["3:4", "16:9"])
+def test_图标与字层不重叠(canvas):
+    """⚠️ 「不挡字」靠的是**位置分离**，⛔ 不是层次——所以它必须算得出来。
+
+    字恒在画面正中（`top:50%`），图标贴底。两个画幅都要留出间隙，
+    **专名屏两行**（高度翻倍）也要算进去。"""
+    cv = bo.CANVAS[canvas]
+    text_h = cv["font"] * 1.28 * 2          # 按最坏情况：专名屏两行
+    text_lo, text_hi = cv["h"] / 2 - text_h / 2, cv["h"] / 2 + text_h / 2
+    icon_lo = cv["h"] - cv["icon_bottom"] - cv["icon_px"]
+    assert text_hi < icon_lo, (f"{canvas} 图标与字重叠：字底 {text_hi:.0f} ≥ 图标顶 {icon_lo:.0f}")
+
+
+def test_图标CSS不许用百分号格式化():
+    """🩸 CSS 里 `%` 太多（`left:50%`、`translateX(-50%)`、`transform-origin:50% 100%`），
+    用 `%` 格式化就得逐个转义成 `%%`，**漏一个就是运行时 ValueError**，
+    而且报的是「unsupported format character」这种跟真因无关的话。第一版就这么炸的。"""
+    py = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
+    assert "ICON_CSS % " not in py and "@BOTTOM@" in py

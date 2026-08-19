@@ -25,7 +25,7 @@
    调小字号 = 废掉这个版式；**删掉一个论据 = 拿排版理由伤内容，同样禁止**。
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-import argparse, json, re, shutil, sys
+import argparse, base64, json, re, shutil, sys
 from pathlib import Path
 from urllib.parse import quote
 
@@ -63,9 +63,9 @@ SCRIPT_DEPS = ["render_card.py"]
 # 校验：font*max + 2*stroke ≤ w - 2*pad
 CANVAS = {
     "3:4":  dict(w=1080, h=1440, font=80,  pad=40,  max_chars=12, rise=20,
-                 brand_px=30, brand_bottom=118),
+                 brand_px=30, brand_bottom=118, icon_bottom=206, icon_px=200, icon_tail=0.6),
     "16:9": dict(w=1920, h=1080, font=130, pad=150, max_chars=12, rise=26,
-                 brand_px=40, brand_bottom=84),
+                 brand_px=40, brand_bottom=84,  icon_bottom=155, icon_px=150, icon_tail=0.6),
 }
 
 # ────────────────────────── 背景档（加档＝加一组参数，不动规则） ──────────────────────────
@@ -120,6 +120,83 @@ BG = {
         crease=dict(freq="0.008", octaves=3, seed=5, k=0.55, size=900, tile=900),
     ),
 }
+
+# ──────────────── 账号图标位（--account-icon，默认关） ────────────────
+# 🔴 **跟落款走同一机制：只在首屏与落款屏浮出，中间屏一个像素都没有。**
+#    ⇒ 它不是常驻元素，⛔ 不碰 tpl-oneline 契约③（「画面上除了正在说的那一句什么都没有」）。
+# 形态照搬博客长文 2026-08-19 已过审稿 PASS 的那版（`_inject_miwen_cat.py`），
+# ⛔ 别凭观感重调——审过的是那个形态，重调出来的是另一个。
+#
+# 🩸 **3:4 那三个数是实测过审值**（bottom 206 / 首屏 200px / 落款屏 ×0.6）。
+# ⚠️ **16:9 的是按画幅高度等比推的，⛔ 没有目视验证过**——第一次在 16:9 用之前先渲一条看。
+#    ⛔ 别把这行注释删掉当它验过了。
+
+ICON_CSS = """  /* 账号图标位：⛔ 不常驻，只首屏与落款屏浮出（见头部契约③）。
+     🔴 本元素 DOM 在 `#stage` **之前** ⇒ 同 z-index 下**先绘者在下**，图标在字层之下。
+        🩸 别处那版放在 `#stage` 之后、却注释成「z-index 低于字层」——**那是错话**：
+        它让后人以为有层次保护，而实际"不挡字"只靠**位置分离**（图标在底部、字恒在正中）。
+     ⛔ 别改成 z-index:2——那会把它压到 #vignette 暗角之下、整体变暗。 */
+  #account-icon { position:absolute; left:50%; transform:translateX(-50%);
+    bottom:@BOTTOM@px; transform-origin:50% 100%; z-index:3;
+    width:@PX@px; height:@PX@px;
+    background:url(data:@MIME@;base64,@B64@) center/contain no-repeat;
+    opacity:0; pointer-events:none; }"""
+# ⚠️ 占位用 @X@ 而不是 %(x)s——**CSS 里 % 太多**（left:50%、translateX(-50%)、
+# transform-origin:50% 100%），用 % 格式化就得逐个转义成 %%，**漏一个就是运行时
+# ValueError**，而且报的是「unsupported format character」这种跟真因无关的话。
+# 🩸 第一版就这么炸的（index 311 处的 `left:50%;`）。
+
+ICON_JS = """/* 账号图标位：首屏浮出→随首屏退场；落款屏与 #brand 同刻再现（缩小，让位落款）。
+   🩸 淡入淡出**按首屏时长成比例**，⛔ 不写死秒数：写死那版（按 1.9s 首屏定的
+   .15/.7/end−.25/.45）用到 0.88s 首屏时，**淡出起点比淡入终点还早 0.22s**
+   ⇒ 两段动画重叠打架、图标一闪（2026-08-19 审稿抓到）。
+   ⚠️ 与上面 `inDur` 是同一条道理的两处实现——**改一处就想想另一处**。 */
+if (SCREENS.length) {
+  const s0 = SCREENS[0], endAll = SCREENS[SCREENS.length - 1].end;
+  const D0 = Math.max(s0.end - s0.start, .3);
+  const inD = Math.min(.7, D0 * .38), outD = Math.min(.45, D0 * .30);
+  const inAt = s0.start + Math.min(.15, D0 * .12);
+  const outAt = Math.max(inAt + inD + .05, s0.end - outD);   // 淡出必在淡入完成之后
+  tl.fromTo('#account-icon', { opacity:0, y:18 },
+    { opacity:.96, y:0, duration:inD, ease:'power2.out', immediateRender:false }, at(inAt));
+  tl.to('#account-icon', { opacity:0, y:-14, duration:outD, ease:'power1.in' }, at(outAt));
+  tl.fromTo('#account-icon', { opacity:0, y:14, scale:@TAIL@ },
+    { opacity:.96, y:0, scale:@TAIL@, duration:.9, ease:'power2.out',
+      immediateRender:false }, at(endAll - .35));
+}"""
+
+ICON_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml"}
+
+
+def icon_parts(path, cv: dict):
+    """账号图标位的三段填充 (CSS, HTML, JS)。`path` 为空 ⇒ 三段都是空串（＝关）。
+
+    ⚠️ 图片**内联成 data URI**，与背景纹理同口径——⛔ 零外部依赖，
+    免得成片工作目录少拷一个文件就静默丢图（页面不报错，只是那里空着）。
+    """
+    if not path:
+        return "", "", ""
+    f = Path(path)
+    if not f.is_file():
+        sys.exit(f"❌ --account-icon 找不到文件：{f}")
+    mime = ICON_MIME.get(f.suffix.lower())
+    if not mime:
+        sys.exit(f"❌ --account-icon 不认识的图片格式：{f.suffix}"
+                 f"（认 {'/'.join(sorted(ICON_MIME))}）")
+    b64 = base64.b64encode(f.read_bytes()).decode()
+    css, js = ICON_CSS, ICON_JS
+    for k, v in (("@BOTTOM@", cv["icon_bottom"]), ("@PX@", cv["icon_px"]),
+                 ("@MIME@", mime), ("@B64@", b64)):
+        css = css.replace(k, str(v))
+    js = js.replace("@TAIL@", f"{cv['icon_tail']:.2f}")
+    for left, where in ((css, "ICON_CSS"), (js, "ICON_JS")):
+        if "@" in left.replace("@charset", ""):     # ⚠️ 漏填的占位符会静默出一个坏页面
+            leftover = [t for t in re.findall(r"@[A-Z0-9_]+@", left)]
+            if leftover:
+                sys.exit(f"❌ {where} 还有没填的占位符：{leftover}")
+    return css, '<div id="account-icon"></div>\n', js
+
 
 # ────────────────────────── 断句词表 ──────────────────────────
 # 硬断点：标点，一律断，且**不上屏**（对标片的屏显文字不带标点）。
@@ -696,7 +773,7 @@ def with_proper_font(screens, cv: dict):
     return out
 
 
-def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3):
+def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None):
     stroke = round(cv["font"] * 0.17)
     safe_w = cv["w"] - 2 * cv["pad"]
     need = cv["font"] * cv["max_chars"] + 2 * stroke
@@ -717,6 +794,9 @@ def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3):
         "__SCREENS__": json.dumps(with_proper_font(screens, cv), ensure_ascii=False),
         # 段落字卡专用；oneline 模板里没有这个占位符，填了也不会有副作用
         "__SEC_CUES__": sec_cues,
+        # 账号图标位；⚠️ 关掉时填的是**空串**，⛔ 不是留着占位符不填
+        # （留着会被下面那道「模板还有没填的占位符」检查拦下，报一个跟真因无关的错）
+        **dict(zip(("__ICON_CSS__", "__ICON_HTML__", "__ICON_JS__"), icon_parts(icon, cv))),
     }
     html = (tpl or TPL).read_text(encoding="utf-8")
     for k, v in sub.items():
@@ -867,6 +947,10 @@ def main(argv=None):
     ap.add_argument("--max-line-chars", type=int, default=12,
                 help="单屏排版拆屏上限（8–14，默认 12；书名场景可 13——整片按安全区统一反推字号，非按行缩字）。"
                      "⛔ 这是排版量具，不是写稿字数上限：写稿只管把事说清楚，装不下就多一屏")
+    ap.add_argument("--account-icon", metavar="图片",
+                help="账号图标位（默认关）：**跟落款走同一机制**——只在首屏与落款屏浮出，"
+                     "中间屏一个像素都没有 ⇒ ⛔ 不是常驻元素，不碰版式契约。"
+                     "图片会内联成 data URI（零外部依赖）")
     ap.add_argument("--template", choices=sorted(TEMPLATES), default="oneline",
                 help="版式：oneline＝一行字卡（默认，每屏同一动效，刻意极简）｜"
                      "paragraph＝段落字卡（段内统一、段间变化，为 3 分钟以上长片而立）")
@@ -913,6 +997,9 @@ def main(argv=None):
     # 🔴 **专名屏先报，⛔ 别放在 fail 早退之后**：有 fail 就 return 的话，
     # 作者要修完 fail 再跑一次才看得到这一类——而预检是三类一次报全的，
     # ⚠️ 两边看到的东西不一样，「预检与真闸同源」就只剩一句口号。
+    # ⚠️ 两种状态都打：「有图标位」与「没有」必须在产出信息里分得开
+    print(f"   {'账号图标位：' + a.account_icon if a.account_icon else '⛔ 无账号图标位'}",
+          file=sys.stderr)
     for pr in propers:
         px = proper_font(pr["lines"], cv)
         # ⚠️ 这里的 px 是**估算下限**——模板的 refitProper() 会按实测宽度回收余量往上抬，
@@ -951,7 +1038,7 @@ def main(argv=None):
             shutil.copy(HERE / dep, dst)
     html_path = out_dir / a.name
     html_path.write_text(
-        instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues),
+        instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues, a.account_icon),
         encoding="utf-8")
 
     # ⚠️ 统计只看普通屏：专名屏本来就**允许**超单行上限（它排两行、字号另算），
