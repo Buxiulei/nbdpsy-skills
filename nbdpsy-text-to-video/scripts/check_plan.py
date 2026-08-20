@@ -193,6 +193,13 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
         else:
             text = s.get("text", "")
 
+        # 🔴 **两个检查要用两份文本，⛔ 别共用一个变量**（2026-08-20 我撞过）：
+        #    ① 核「没改稿子的字」要用**句**文本（它必须能在某一条 cue 里找到）；
+        #    ② 核 `emphasis`/`why` 的引用要用**整段**文本——合屏后那些词可能来自段内后续句。
+        # 🩸 我先把 `text` 一把换成 section_text，① 立刻全红（拼接文本当然不在任一条 cue 里）
+        #    ⇒ **改判据前先看清这个变量被几处用着。**
+        ref = s.get("section_text") or text
+
         # ① 文本一致：plan 的屏文本必须能在 cues 里找到（⛔ 别让 LLM 顺手改词）
         #    ⚠️ 解耦模式跳过——那时 text 是从 cues 拼出来的，自比无意义
         if not decoupled and not any(text and text in ct for ct in cue_texts):
@@ -206,12 +213,13 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
 
         # ③ 强调词必须在本屏文内
         emph = s.get("emphasis")
-        if emph and emph not in text:
+        # ⚠️ 用 ref（整段）核，⛔ 不是 text（段首句）
+        if emph and emph not in ref:
             fails.append(f"{tag}：emphasis「{emph}」不是屏文本的子串——强调一个没出现的词")
 
         # ④ 🔴 相关性：why 必须逐字引用本屏文本
         why = s.get("why", "")
-        cite = _cited(why, text)
+        cite = _cited(why, ref)
         if not cite:
             fails.append(
                 f"{tag}：why 没有引用本屏文本 ——「{why[:40]}」\n"

@@ -89,6 +89,8 @@ SYSTEM = f"""你在给一条心理科普短视频做**视觉编排**：稿子已
 3. `emphasis` —— 本屏要强调的词。**必须是本屏 text 的连续子串**（逐字对得上），
    没有值得强调的词就填空字符串。
 4. `relation` —— 与**上一段**的关系。**闭集只有这五个**：{"｜".join(cp.RELATIONS)}
+   ⚠️ 闭集外的词一律报红。**常见误填**：给建议/教做法 ⇒ 归 `断言`（你在陈述一个做法）；
+   下定义 ⇒ 归 `断言`；举例子 ⇒ 归 `场景` 或 `列举`。⛔ 别自造「建议」「定义」这类值。
    ⚠️ ⛔ 别把 `semantic` 的值（转折/因果/对比…）填到这里来——它们是**两个不同的闭集**，
    填串了闸门会当场报「不在闭集内」。第一段用「开场」，最后一段用「收口」。
 5. `why` —— **为什么这一屏配这个动效**。
@@ -307,10 +309,17 @@ def merge(screens: list[dict], llm: dict) -> dict:
     for r in out:
         sec = r["section"]
         span[sec] = (min(span.get(sec, (r["start"],))[0], r["start"]), r["end"])
+    # 🔴 **段首还要带整段文本**：合屏后 `emphasis`/`why` 里的词可能来自段内**后续句**，
+    # ⚠️ 拿段首句的 text 去核引用会误判成"强调了一个没出现的词"
+    # （2026-08-20 实测 x2 两处、x6 一处栽在这）——**单元变了，判据要跟着变**。
+    text_of = {}
+    for r in out:
+        text_of.setdefault(r["section"], []).append(r["text"])
     for r in out:
         if r["section_head"]:
             lo, hi = span[r["section"]]
             r["section_span"] = round(hi - lo, 3)
+            r["section_text"] = "".join(text_of[r["section"]])
     # ⚠️ 必须在兜底**之后**重算——`head_of` 是兜底前的，直接用会打印陈旧段数
     n_sec = len({r["section"] for r in out})
     short = [r["section"] for r in out
