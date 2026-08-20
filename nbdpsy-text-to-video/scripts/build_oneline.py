@@ -794,7 +794,7 @@ def with_proper_font(screens, cv: dict):
 
 
 def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None,
-                plan_motifs=None):
+                plan_motifs=None, plan_sections=None):
     stroke = round(cv["font"] * 0.17)
     safe_w = cv["w"] - 2 * cv["pad"]
     need = cv["font"] * cv["max_chars"] + 2 * stroke
@@ -816,6 +816,7 @@ def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None,
         # 段落字卡专用；oneline 模板里没有这个占位符，填了也不会有副作用
         "__SEC_CUES__": sec_cues,
         "__PLAN_MOTIFS__": json.dumps(plan_motifs or [], ensure_ascii=False),
+        "__PLAN_SECTIONS__": json.dumps(plan_sections or [], ensure_ascii=False),
         # 账号图标位；⚠️ 关掉时填的是**空串**，⛔ 不是留着占位符不填
         # （留着会被下面那道「模板还有没填的占位符」检查拦下，报一个跟真因无关的错）
         **dict(zip(("__ICON_CSS__", "__ICON_HTML__", "__ICON_JS__"), icon_parts(icon, cv))),
@@ -1006,7 +1007,7 @@ def main(argv=None):
         sys.exit(f"❌ --max-line-chars 只收 8–14，收到 {a.max_line_chars}")
     cv, bg = apply_max_chars(CANVAS[a.canvas], a.max_line_chars), BG[a.bg]
 
-    plan_motifs = None
+    plan_motifs = plan_sections = None
     if a.plan:
         if a.template != "paragraph":
             sys.exit(f"❌ --plan 只对 --template paragraph 有效（收到 {a.template}）")
@@ -1015,11 +1016,29 @@ def main(argv=None):
                      f"计划的粒度是「句」，sec_cues>1 时**段与句对不上** ⇒ "
                      f"motif 会挂到错误的段上，⚠️ **而画面照样出得来，没人会发现**")
         pj = json.load(open(a.plan, encoding="utf-8"))
-        plan_motifs = [x.get("motif") for x in pj.get("screens", [])]
-        if len(plan_motifs) != len(cues):
-            sys.exit(f"❌ --plan 有 {len(plan_motifs)} 个单元、cues 有 {len(cues)} 句——"
+        # ⚠️ ⛔ 别把它命名成 `units`——模块级已有 `units()`（宽度口径函数）。
+        # 🩸 撞名后 Python 把 `units` 当整个函数的局部变量 ⇒ **没给 --plan 时**
+        #    后面调用 `units(...)` 抛 NameError：**有 plan 正常、没 plan 才崩**。
+        plan_units = pj.get("screens", [])
+        if len(plan_units) != len(cues):
+            sys.exit(f"❌ --plan 有 {len(plan_units)} 个单元、cues 有 {len(cues)} 句——"
                      f"**对不上就一定是错的**（计划是按当时那份 cues 出的）。"
                      f"⛔ 别截断凑数，重跑 plan_llm.py")
+        # 🔴 **段划分来自计划**（合屏是编排层职责）。`section` 缺省 ⇒ 退回「一句一段」，
+        # ⚠️ 那是**旧格式的 plan**，⛔ 不是"没有段"——退回后行为与 v2.21 完全一致。
+        plan_sections = [x.get("section", i) for i, x in enumerate(plan_units)]
+        # motif 按**段**取：段首那一句带 motif，段内其余为 None ⇒ 用段首的
+        plan_motifs, seen = [], {}
+        for sec, x in zip(plan_sections, plan_units):
+            if sec not in seen:
+                seen[sec] = x.get("motif")
+            plan_motifs.append(seen[sec])
+        n_sec = len(seen)
+        if n_sec < len(cues):
+            print(f"   🔗 合屏：{len(cues)} 句 → {n_sec} 段（计划合并了 "
+                  f"{len(cues) - n_sec} 处）", file=sys.stderr)
+        # ⚠️ 模板按**段号**索引 PLAN_MOTIFS，⛔ 不按句号 ⇒ 这里要压成按段的数组
+        plan_motifs = [seen[k] for k in sorted(seen)]
         bad = sorted({m for m in plan_motifs
                       if m not in ("rise", "wipe", "depth", "drift", "tilt", "still")})
         if bad:
@@ -1083,7 +1102,7 @@ def main(argv=None):
     html_path = out_dir / a.name
     html_path.write_text(
         instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues,
-                    a.account_icon, plan_motifs),
+                    a.account_icon, plan_motifs, plan_sections),
         encoding="utf-8")
 
     # ⚠️ 统计只看普通屏：专名屏本来就**允许**超单行上限（它排两行、字号另算），

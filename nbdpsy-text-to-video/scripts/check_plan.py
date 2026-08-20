@@ -166,6 +166,10 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
     cue_texts = [c.get("text", "") for c in cues]
     stems: dict[str, int] = {}
     for s in screens:
+        # ⚠️ 段内非段首的句**没有 motif/why**（同段共用段首那一份）⇒ 跳过，
+        # ⛔ 别把"按设计留空"判成"漏填"。
+        if "section" in s and not s.get("section_head", True):
+            continue
         i = s.get("i")
         tag = f"#{i:02d}" if isinstance(i, int) else "#??"
         # 🔴 解耦模式（collage）：卡片文字 ≠ 口播文字
@@ -222,7 +226,10 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
             stems[st] = i if isinstance(i, int) else -1
 
         # ⑥ 停留下限
-        hold = round(float(s.get("end", 0)) - float(s.get("start", 0)), 2)
+        # 🔴 **合屏后「屏停多久」＝整段时长，⛔ 不是这一句的时长**（2026-08-20）。
+        # ⚠️ 拿句时长判 3.5s 下限，会把已经合好的段照旧报红——**闸门要跟着单元走**。
+        hold = round(float(s.get("section_span")
+                           or (float(s.get("end", 0)) - float(s.get("start", 0)))), 2)
         if hold < hold_min:
             fails.append(
                 f"{tag}：停留 {hold}s < 下限 {hold_min}s ——合并相邻屏；\n"

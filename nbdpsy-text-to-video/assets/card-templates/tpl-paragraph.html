@@ -109,7 +109,17 @@ const OUT  = 0.16;   // 退场时长
 /* ══════════════════ ① 段落划分：边界只落在句边界上 ══════════════════
    按 cue（句）分组，每 SEC_CUES 句一段。⛔ 不按屏数均分——那会在一句话中间
    换手法，观众会以为换了话题（硬契约⑥）。 */
+/* 🔴 **视觉计划给的段划分优先于机械的每 N 句一段。**
+   合屏（相邻短句归一段）是**编排层的职责**——⚠️ 短句本身救不了：
+   1.57s 的句子再放慢语速也是短句（2026-08-20 实测 speed 0.84 仍有 3 处 <3.5s）。
+   ⛔ 拆屏仍归确定性闸门，本文件与计划都不碰。 */
+const PLAN_SECTIONS = __PLAN_SECTIONS__;   // 按**句号**索引；[] ＝ 没给，走每 SEC_CUES 句一段
+
 function sectionOf(screens) {
+  if (PLAN_SECTIONS.length) {
+    // ⚠️ 同一句的多屏必然同段——段号按 s.cue 取，⛔ 不按屏序
+    return screens.map(s => PLAN_SECTIONS[s.cue] ?? 0);
+  }
   const sec = [], seen = new Set();
   let n = 0;                            // 已出现过的**句**数（不是屏数）
   for (const s of screens) {
