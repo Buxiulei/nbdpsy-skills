@@ -722,8 +722,16 @@ def gen_timed(text: str, out: str, *, engine: str = "doubao", voice: str | None 
         shutil.copy(total_wav, wav_sidecar)
         dur = ffprobe_duration(out)
         cues_path = str(out) + ".cues.json"
+        # 🔴 **合成参数跟着它产出的东西走**（2026-08-20，助理："八条同参可追溯"）。
+        # ⚠️ 参数只留在命令行历史里 ⇒ **一批片子参数不一致也没人发现**——
+        #    而语速直接决定每屏停留时长，混了就是一批节奏不齐的片子。
+        # ⛔ 别改 `duration`/`cues` 这两个键的名字与位置：下游全靠 `.get("cues", c)` 读。
         Path(cues_path).write_text(
-            json.dumps({"duration": dur, "cues": cues}, ensure_ascii=False, indent=2),
+            json.dumps({"duration": dur, "cues": cues,
+                        "params": {"engine": engine, "voice": voice, "speed": speed,
+                                   "gap": gap, "model": model,
+                                   "emotion": emotion, "emotion_scale": emotion_scale}},
+                       ensure_ascii=False, indent=2),
             encoding="utf-8")
         return {"success": True, "output": str(Path(out).resolve()), "engine": engine,
                 # 逐句实际解析出的音色（V3/V1 各自默认不同，见 gen_one）。取 parts[-1] 而非

@@ -741,3 +741,16 @@ def test_缓动比幅度更能决定看不看得见():
     assert "const RISE_P  = 72;" in tpl
     assert "duration:.42, ease:'power1.out'" in tpl, "rise 必须用线性缓动"
     assert "const RISE    = __RISE__;" in tpl, "⛔ 别改 RISE 常量——tpl-oneline 共用它"
+
+
+def test_cues带合成参数才可追溯():
+    """🔴 **合成参数要跟着它产出的东西走**（2026-08-20，助理「八条同参可追溯」）。
+
+    ⚠️ 参数只留在命令行历史里 ⇒ **一批片子参数不一致也没人发现**——
+    而**语速直接决定每屏停留时长**，混了就是一批节奏不齐的片子。
+    ⛔ `duration`/`cues` 两个键的名字与位置不许动：下游全靠 `.get("cues", c)` 读。"""
+    src = (SCRIPTS / "tts_gen.py").read_text(encoding="utf-8")
+    assert '"params": {"engine": engine' in src
+    for k in ("speed", "gap", "voice", "model"):
+        assert f'"{k}": {k}' in src, f"params 里缺 {k}"
+    assert '{"duration": dur, "cues": cues,' in src, "⛔ 别动这两个键的位置"
