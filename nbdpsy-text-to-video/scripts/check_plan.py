@@ -257,6 +257,21 @@ def check(plan: dict, cues: list[dict], hold_min: float = HOLD_MIN) -> dict:
             "screens": len(screens), "hold_min": hold_min}
 
 
+MD_HEADER = """🔴 **单位说明：这份表一行是一「屏」，而编排的单位是「段」。**
+
+⚠️ 2026-08-20 审稿三处误判**全源于屏/段单位混用**——⛔ 别再踩：
+
+- `motif` 为空 ＝ **这一屏是段内的后续屏**（同段共用段首那一份），⛔ 不是"漏填"；
+- `emphasis` 为空 ＝ LLM 判断该屏无需强调（**留空是合法的**），⛔ 不是缺陷；
+- `check_motifs.log` 的读数统计的是**段**，⛔ 不是屏——**两者数量对不上是正常的**。
+
+---
+
+"""
+# ⚠️ ⛔ 别写成 HTML 注释：plan.md 是给人读的，注释在渲染后**看不见**——
+#    而这段字的全部意义就是让核稿的人看见（我第一版就写成了注释）。
+
+
 def to_md(res: dict) -> str:
     """人读的一屏一行（给内容审稿 agent）。
 
@@ -284,7 +299,7 @@ def to_md(res: dict) -> str:
         else:
             out.append(f"      「{r['text']}」")
         out.append(f"      why: {r['why']}   [引用:{r['cite'] or '⛔无'}]")
-    return "\n".join(out)
+    return MD_HEADER + "\n".join(out)
 
 
 def main(argv=None) -> int:
