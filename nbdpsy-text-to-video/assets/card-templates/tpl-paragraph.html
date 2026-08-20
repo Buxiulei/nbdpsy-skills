@@ -59,6 +59,15 @@ __BG_LAYERS_CSS__
     paint-order:stroke fill;
     opacity:0; will-change:transform,opacity,filter,clip-path; }
 
+  /* 🔴 **强调词：加重 ＋ 品牌赭红双通道，⛔ 绝不放大字号**（助理 2026-08-20 拍）。
+     ⚠️ 放大＝一行里出现两种字号 ⇒ 要么撑破安全区、要么整行缩字号，**两条都违反硬契约①**。
+     ⚠️ **双通道**是为色弱观众：只变色他们分不出，加重是第二条通道。
+     🔴 `inline-block` 独立盒是硬要求——⚠️ **行内高亮块的巨字必溢出**，
+        那是老板抓过的"字符遮挡"真凶（card-video-spec GSAP 七坑之三）。
+     ⚠️ `ZCOOLKuaiLe` 只有一个字重 ⇒ `font-weight:800` 走的是**浏览器合成加粗**，
+        与描边叠加后是否变糊，**首条出片必须目视核一眼**。 */
+  .em { display:inline-block; font-weight:800; color:#A34B3A; }
+
   #brand { position:absolute; left:0; right:0; bottom:__BRAND_BOTTOM__px; z-index:4;
     text-align:center; font-family:"ONELINE"; font-size:__BRAND_PX__px;
     letter-spacing:.18em; color:__BRAND_COLOR__; opacity:0; }
@@ -85,13 +94,45 @@ const RISE    = __RISE__;
    改用 `power1.out`（线性）后同一时刻剩 ~46px——**缓动比幅度更能决定"看不看得见"**。 */
 const RISE_P  = 72;
 const TAIL    = 1.4;           // 末屏定格
-const SEC_CUES = __SEC_CUES__; // 每段几句（段落边界只落在句边界上）
+const SEC_CUES = __SEC_CUES__;
+const PLAN_SECTIONS = __PLAN_SECTIONS__;
+const PLAN_EMPH     = __PLAN_EMPH__;      // 按**段号**索引的强调词；"" ＝ 该段不强调 // 每段几句（段落边界只落在句边界上）
 
 const stage = document.getElementById('stage');
-const els = SCREENS.map(s => {
+/* 把该屏文字里的强调词切成独立盒。⚠️ **只切第一处**——同一屏出现两次时
+   全标反而没有重点；⛔ 也别用正则（强调词里可能含正则元字符）。 */
+function paintEmph(el, text, emph) {
+  const at = emph ? text.indexOf(emph) : -1;
+  if (at < 0) { el.textContent = text; return false; }
+  el.textContent = "";
+  if (at > 0) el.appendChild(document.createTextNode(text.slice(0, at)));
+  const b = document.createElement("span");
+  b.className = "em";
+  b.textContent = emph;
+  el.appendChild(b);
+  const rest = text.slice(at + emph.length);
+  if (rest) el.appendChild(document.createTextNode(rest));
+  return true;
+}
+
+/* ⚠️ SEC 要在 els 之前算——强调词按**段**取（同段共用段首那一个）。 */
+const SEC_PRE = (function () {
+  const seen = new Set(); let n = 0;
+  return SCREENS.map(s => {
+    if (PLAN_SECTIONS.length) return PLAN_SECTIONS[s.cue] ?? 0;
+    if (!seen.has(s.cue)) { seen.add(s.cue); n++; }
+    return Math.floor((n - 1) / SEC_CUES);
+  });
+})();
+
+const emphHit = [];
+const els = SCREENS.map((s, i) => {
   const d = document.createElement('div');
   d.className = 'scr';
-  d.textContent = s.text;
+  // 🔴 强调词落在**段内哪一屏**由文字决定：段的强调词出现在哪一屏就标哪一屏，
+  //    ⚠️ 段首屏未必含它（合屏后段首是第一句，强调词可能在后面那句里）。
+  const em = PLAN_EMPH.length ? (PLAN_EMPH[SEC_PRE[i]] || "") : "";
+  emphHit.push(paintEmph(d, s.text, em));
   stage.appendChild(d);
   return d;
 });
@@ -113,7 +154,8 @@ const OUT  = 0.16;   // 退场时长
    合屏（相邻短句归一段）是**编排层的职责**——⚠️ 短句本身救不了：
    1.57s 的句子再放慢语速也是短句（2026-08-20 实测 speed 0.84 仍有 3 处 <3.5s）。
    ⛔ 拆屏仍归确定性闸门，本文件与计划都不碰。 */
-const PLAN_SECTIONS = __PLAN_SECTIONS__;   // 按**句号**索引；[] ＝ 没给，走每 SEC_CUES 句一段
+/* ⚠️ 声明已上移到 SCREENS 旁边——`els` 建元素时就要用它们，
+   放在这里会 `Cannot access before initialization`（2026-08-20 当场撞到）。 */   // 按**句号**索引；[] ＝ 没给，走每 SEC_CUES 句一段
 
 function sectionOf(screens) {
   if (PLAN_SECTIONS.length) {
@@ -263,6 +305,17 @@ function report() {
     screens:SCREENS.length, total, overflow:over,
     template:"tpl-paragraph",
     sections:SEC_COUNT, sec_cues:SEC_CUES,
+    /* 🔴 **强调词有没有真落到画面上**——⚠️ 这个字段以前压根没进渲染层，
+       而闸门却一直守着它（"字段在、判据在、每次都过"）。⇒ 现在把落地数报出来。 */
+    emphasis: (() => {
+      const want = new Set();
+      PLAN_EMPH.forEach((e, si) => { if (e) want.add(si); });
+      const hitSec = new Set();
+      emphHit.forEach((ok, i) => { if (ok) hitSec.add(SEC_PRE[i]); });
+      const missed = [...want].filter(si => !hitSec.has(si));
+      return { want: want.size, hit: hitSec.size, missed_sections: missed,
+               painted_screens: emphHit.filter(Boolean).length };
+    })(),
     /* 🔴 编排退化哨兵：计划给的 motif vs 机械轮转会给的，逐段比。
        ⚠️ 差异接近 0 ＝「编排」退化成了轮转，**而光看画面分不出来**。
        在这里算是因为 `rotateFor` 与 `motifFor` 都在本文件里——⛔ 别在 Python 里复刻一份。 */

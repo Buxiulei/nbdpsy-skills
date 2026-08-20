@@ -794,7 +794,7 @@ def with_proper_font(screens, cv: dict):
 
 
 def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None,
-                plan_motifs=None, plan_sections=None):
+                plan_motifs=None, plan_sections=None, plan_emph=None):
     stroke = round(cv["font"] * 0.17)
     safe_w = cv["w"] - 2 * cv["pad"]
     need = cv["font"] * cv["max_chars"] + 2 * stroke
@@ -817,6 +817,7 @@ def instantiate(screens, cv, bg, bg_name, tpl=None, sec_cues=3, icon=None,
         "__SEC_CUES__": sec_cues,
         "__PLAN_MOTIFS__": json.dumps(plan_motifs or [], ensure_ascii=False),
         "__PLAN_SECTIONS__": json.dumps(plan_sections or [], ensure_ascii=False),
+        "__PLAN_EMPH__": json.dumps(plan_emph or [], ensure_ascii=False),
         # 账号图标位；⚠️ 关掉时填的是**空串**，⛔ 不是留着占位符不填
         # （留着会被下面那道「模板还有没填的占位符」检查拦下，报一个跟真因无关的错）
         **dict(zip(("__ICON_CSS__", "__ICON_HTML__", "__ICON_JS__"), icon_parts(icon, cv))),
@@ -1007,7 +1008,7 @@ def main(argv=None):
         sys.exit(f"❌ --max-line-chars 只收 8–14，收到 {a.max_line_chars}")
     cv, bg = apply_max_chars(CANVAS[a.canvas], a.max_line_chars), BG[a.bg]
 
-    plan_motifs = plan_sections = None
+    plan_motifs = plan_sections = plan_emph = None
     if a.plan:
         if a.template != "paragraph":
             sys.exit(f"❌ --plan 只对 --template paragraph 有效（收到 {a.template}）")
@@ -1039,6 +1040,16 @@ def main(argv=None):
                   f"{len(cues) - n_sec} 处）", file=sys.stderr)
         # ⚠️ 模板按**段号**索引 PLAN_MOTIFS，⛔ 不按句号 ⇒ 这里要压成按段的数组
         plan_motifs = [seen[k] for k in sorted(seen)]
+        # 🔴 **强调词按「段」取，与 motif 同源**（段首那句带 emphasis，段内其余留空）。
+        # 🩸 2026-08-20 审稿实测发现：`emphasis` 有设计稿定义、有 LLM 逐屏填、
+        #    还有一道「必须是文内子串 ⇒ 拒渲染」的闸门守着——**却从没进过渲染层**。
+        #    ⇒ 那条闸门从上线起就没有任何保护作用，而**字段在、判据在、每次都过**，
+        #    连"量不出来"的迹象都不给。⚠️ **闸门守的东西，要能在最终产物里指出它在哪。**
+        emph_of, plan_emph = {}, []
+        for sec, x in zip(plan_sections, plan_units):
+            if sec not in emph_of:
+                emph_of[sec] = (x.get("emphasis") or "").strip()
+        plan_emph = [emph_of[k] for k in sorted(emph_of)]
         bad = sorted({m for m in plan_motifs
                       if m not in ("rise", "wipe", "depth", "drift", "tilt", "still")})
         if bad:
@@ -1102,7 +1113,7 @@ def main(argv=None):
     html_path = out_dir / a.name
     html_path.write_text(
         instantiate(screens, cv, bg, a.bg, TEMPLATES[a.template], a.sec_cues,
-                    a.account_icon, plan_motifs, plan_sections),
+                    a.account_icon, plan_motifs, plan_sections, plan_emph),
         encoding="utf-8")
 
     # ⚠️ 统计只看普通屏：专名屏本来就**允许**超单行上限（它排两行、字号另算），
@@ -1146,6 +1157,20 @@ def main(argv=None):
         # 🔴 这个数**在浏览器里算**：读的是 `motifFor()` 的**返回值**与模板自己的轮转函数，
         #    ⛔ 不是在 Python 里复刻一份轮转逻辑——那是「复刻了原料，复刻不出行为」
         #    （2026-08-19 小红书发布线三次栽在这上面）。
+        # 🔴 **强调词有没有真落到画面上**——⛔ 别再出现"闸门守着不存在的东西"
+        # （2026-08-20：emphasis 有定义、有 LLM 填、有闸门守，**却从没进过渲染层**，
+        #  而字段在、判据在、每次都过，连"量不出来"的迹象都不给）。
+        em = rep.get("emphasis")
+        if em:
+            if em.get("missed_sections"):
+                print(f"\n❌ {len(em['missed_sections'])} 段的强调词没落到画面上"
+                      f"（段号 {em['missed_sections']}）——**闸门放行了一个渲染层没实现的字段**。\n"
+                      f"   多半是强调词不在该段任何一屏的文字里（合屏后段文字跨多句，"
+                      f"而每屏只有其中一句）。", file=sys.stderr)
+                b.close() if False else None
+                return 1
+            print(f"   🖍 强调词：{em['hit']}/{em['want']} 段落地"
+                  f"（画面上 {em['painted_screens']} 屏带赭红重字）")
         div = rep.get("plan_divergence")
         if div is not None:
             print(f"   🎬 编排 vs 机械轮转：{div['diff']}/{div['total']} 段不同"

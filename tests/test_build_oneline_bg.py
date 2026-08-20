@@ -754,3 +754,37 @@ def test_cues带合成参数才可追溯():
     for k in ("speed", "gap", "voice", "model"):
         assert f'"{k}": {k}' in src, f"params 里缺 {k}"
     assert '{"duration": dur, "cues": cues,' in src, "⛔ 别动这两个键的位置"
+
+
+# ────── 强调词实装（2026-08-20 审稿：闸门守着一个不存在的东西） ──────
+
+def test_闸门守的东西必须能在产物里指出它在哪():
+    """🩸 `emphasis` 有设计稿定义、有 LLM 逐屏填、还有一道「必须是文内子串 ⇒ 拒渲染」
+    的闸门守着——**却从没进过渲染层**（两个模板零处引用）。
+    ⇒ 那条闸门**从上线起就没有任何保护作用**，而**字段在、判据在、每次都过**，
+    连"量不出来"的迹象都不给。
+
+    🔴 它比「恒报红」和「量错层」都隐蔽：
+    恒红 ⇒ 人会绕过去，**至少有迹象**；量错层 ⇒ 读数可疑，**还能被质疑**；
+    **守一个不存在的字段 ⇒ 什么迹象都没有。**
+
+    ⇒ 判据：**一条闸门守的东西，要能在最终产物里指出它在哪。**"""
+    tpl = (ROOT / "assets/card-templates/tpl-paragraph.html").read_text(encoding="utf-8")
+    assert "PLAN_EMPH" in tpl and "paintEmph" in tpl, "强调词没进渲染层"
+    assert "emphasis:" in tpl, "report 里要报强调词落地数——⛔ 别再只有闸门没有产物"
+    py = (SCRIPTS / "build_oneline.py").read_text(encoding="utf-8")
+    assert 'rep.get("emphasis")' in py and "missed_sections" in py, "像素闸要核落地"
+
+
+def test_强调词只动字重与颜色_不放大字号():   # ⛔ 不放大字号
+    """🔴 助理 2026-08-20 拍：**加重 ＋ 品牌赭红双通道，⛔ 绝不放大字号**。
+    ⚠️ 放大＝一行里出现两种字号 ⇒ 要么撑破安全区、要么整行缩字号，**两条都违反硬契约①**。
+    ⚠️ **双通道是为色弱观众**：只变色他们分不出，加重是第二条通道。
+
+    **Playwright 实测（x7）**：字重 800 vs 400 ✅／颜色 `rgb(163,75,58)` vs `rgb(36,30,23)` ✅／
+    **字号 69px vs 69px（相同）** ✅／`display: inline-block` ✅。"""
+    tpl = (ROOT / "assets/card-templates/tpl-paragraph.html").read_text(encoding="utf-8")
+    css = tpl[tpl.index(".em {"):tpl.index(".em {") + 90]
+    assert "font-weight:800" in css and "#A34B3A" in css
+    assert "inline-block" in css, "🔴 行内高亮块的巨字必溢出——老板抓过的字符遮挡真凶"
+    assert "font-size" not in css, "⛔ 强调词绝不放大字号（硬契约①）"
