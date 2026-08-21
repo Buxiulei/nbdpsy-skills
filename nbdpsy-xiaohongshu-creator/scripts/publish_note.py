@@ -587,14 +587,42 @@ def ledger_find_by_job(path: Path, job_id) -> str:
 
 
 def ledger_row(closed: bool, ts: str, what: str, account: str, job_id, intent: str,
-               actual: str, gap: str, remedies: dict = None) -> str:
+               actual: str, gap: str, remedies: dict = None, note_id: str = None) -> str:
+    """写一行台账。
+
+    🔴 **`note_id` 段（2026-08-21 加）**：出事时**对方（server/平台/用户）给的永远是 note_id**
+    ——平台看得见的只有它。🩸 实测拿真实已发布 note_id grep 全部台账＝**零命中**，
+    只能反向查台账拿标题再猜稿件（多一跳且靠猜）。
+
+    ⚠️ **段位置**：跟在 `job=` 之后。**前 4 段位次不动、后面的段一律追加在尾部之前**
+    ⇒ **旧行照样解析**（与 `补救:` 段当初的处置同一条规矩）。
+    ⚠️ **没有 note_id 时整段不写**（⛔ 不写 `note=None`）——
+    「这一行没有」与「这一行有但值是 None」必须分得开：
+    前者是历史行，后者是发布回执真的没给。
+    """
     box = "x" if closed else " "
     tail = "已闭环" if closed else "未闭环"
+    nid = f" | note={note_id}" if note_id else ""
     # 补救段落放在差集之后、结论之前：既不动前面 7 段的位次（旧行照样解析），
     # 又让「这一项是靠补救达成的」留在纸上。
     mid = f" | 补救: {ledger_remedies_txt(remedies)}" if remedies else ""
-    return (f"- [{box}] {ts} | {what} | {account} | job={job_id} | 意图: {intent} | "
+    return (f"- [{box}] {ts} | {what} | {account} | job={job_id}{nid} | 意图: {intent} | "
             f"实际: {actual} | 差集: {gap}{mid} | {tail}")
+
+
+_NOTE_SEG = re.compile(r"\|\s*note=([^|\s]+)")
+
+
+def ledger_note_id(row: str):
+    """从台账行读出 note_id；旧行没有这一段就返回 None。
+
+    🔴 **返回 None ＝「这一行没记」，⛔ 不是「这条笔记没有 note_id」** ——
+    两者后果完全不同（前者是台账欠账，后者是发布真的失败）。
+    ⚠️ 这正是今天技术侧那条：**缺失被渲染成"值为空"**，
+    于是"没记录"看起来像"记录了个空值"。
+    """
+    m = _NOTE_SEG.search(row or "")
+    return m.group(1) if m else None
 
 
 # 补救登记：`补救: cover=<note-components 任务号>`（多项逗号分隔）。
@@ -1592,7 +1620,8 @@ def main():
                 closed = view.get("status") == "published" and ngap == 0
                 row = ledger_row(closed, now_iso(), args.note.name if args.note else "—",
                                  account_display(api_base, key, view.get("account_id")), args.job,
-                                 intent_summary(intent), actual, gap, remedies)
+                                 intent_summary(intent), actual, gap, remedies,
+                                 note_id=view.get("note_id"))
                 ledger_replace(lp, old, row) if old else ledger_append(lp, row)
                 out["ledger"] = str(lp)
             owed = view.get("status") == "published" and ngap > 0

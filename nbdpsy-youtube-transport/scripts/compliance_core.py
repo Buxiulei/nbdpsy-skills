@@ -245,3 +245,29 @@ def check(units, *, crisis_scope="joined"):
             })
 
     return {"ok": not fatal, "fatal": fatal, "warnings": warnings, "crisis": crisis}
+
+
+def receipt_actor() -> str:
+    """凭证里的 `actor`：**谁出的这张图**。
+
+    🔴 **机器档也要署名**（2026-08-21 捞法演练）：`manual_confirmed` 人工档有
+    `confirmed_by`+`confirmed_at`，而机器档因为"是工具出的"就不记
+    ⇒ 今天 13 份「图文 v3」错标追责任线时，**靠的是当事人自己承认，⛔ 不是凭证追出来的**。
+    **机器出的一样会错，一样需要署名。**
+
+    ⚠️ 解析顺序：`NBDPSY_ACTOR` 环境变量（调用方/会话标识，最准）→ 退回**脚本名**。
+    ⛔ 退回值不假装是会话名：脚本名答的是"哪个工具"，答不了"哪个会话"——
+    **答得少但答得真，比编一个像样的值强**。
+    """
+    import os, sys
+    a = os.environ.get("NBDPSY_ACTOR", "").strip()
+    if a:
+        return a
+    return f"script:{os.path.basename(sys.argv[0]) or 'unknown'}"
+
+
+def receipt_stamp() -> dict:
+    """凭证的通用署名段：`created_at` + `actor`。⛔ 三个写入点共用这一份，别各写各的。"""
+    import datetime
+    return {"created_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "actor": receipt_actor()}

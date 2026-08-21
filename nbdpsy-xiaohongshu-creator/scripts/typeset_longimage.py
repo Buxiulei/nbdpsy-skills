@@ -102,6 +102,8 @@ def fetch_counselor(emp_no, avatar_dir):
     return json.loads(proc.stdout)
 
 
+import compliance_core  # noqa: E402  凭证署名段的唯一真源
+
 COVER_SOURCE = "typeset_longimage"
 """本产线在封面凭证里的 `source`。
 
@@ -124,12 +126,12 @@ def write_cover_meta(png_path, *, theme, style_profile, page_w, page_h, pages):
     错标畅通无阻，而**凭证的意义就是溯源，错标＝溯源断**
     （2026-08-21 实证：13 份凭证标了档案库里不存在的组合，一路绿灯到发布前）。
     """
-    import datetime
     meta = {
         "source": COVER_SOURCE,
         "style_profile": style_profile,          # ⚠️ 没有就是 null，⛔ 不编默认值
         "theme": theme,
-        "rendered_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        # ⚠️ created_at/actor 走 shared 的 receipt_stamp——⛔ 三个写入点别各写各的
+        **compliance_core.receipt_stamp(),
         "canvas": {"w": page_w, "h": page_h},
         "pages": pages,
         # ⚠️ 这条产线是**确定性渲染**（发布线实测 37 张重渲 byte 级不变）

@@ -230,7 +230,10 @@ def finish(view, intent, lp, pending_row_or_job, ts, what, who, intent_txt,
     actual, gap, ngap = diff_intent_actual(view, intent, verified)
     status = view.get("status")
     closed = (status == "published" and ngap == 0)
-    row = ledger_row(closed, ts, what, who, jid, intent_txt, actual, gap, remedies)
+    # ⚠️ note_id 从**发布回执**取——出事时对方给的永远是它（平台看得见的只有它）。
+    #    pending 行还没有 ⇒ 不传，段就不写（⛔ 不写 note=None）。
+    row = ledger_row(closed, ts, what, who, jid, intent_txt, actual, gap, remedies,
+                     note_id=view.get("note_id"))
     if old:
         ledger_replace(lp, old, row)
     else:

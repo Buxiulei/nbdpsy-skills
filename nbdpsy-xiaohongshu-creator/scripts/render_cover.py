@@ -158,6 +158,9 @@ def read_palette(page) -> list:
     return out
 
 
+import compliance_core  # noqa: E402  凭证署名段的唯一真源
+
+
 def resolve_style_profile(data_path: pathlib.Path, override):
     """本批风格档案 —— ⛔ 复用 gen_images 那一份，别另写一份解析。
 
@@ -596,7 +599,14 @@ def write_receipt(path: pathlib.Path, payload: dict):
     （gen_gzh_images.py）写输入数据的位置（cover.jpg ↔ cover.json），
     写那儿等于把别人喂进来的数据覆盖掉。
     """
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    # 🔴 **机器档也要署名**（2026-08-21 捞法演练）：`manual_confirmed` 人工档有
+    # `confirmed_by`+`confirmed_at`，而机器档因为"是工具出的"就不记
+    # ⇒ 13 份「图文 v3」错标追责任线时，**靠的是当事人自己承认，⛔ 不是凭证追出来的**。
+    # ⚠️ 加在这里（唯一出口）⇒ 所有调用点一次覆盖，⛔ 不用每处各写一遍。
+    # ⚠️ 已有同名键时**不覆盖调用方给的值**——调用方比这里更知道自己是谁。
+    stamp = {k: v for k, v in compliance_core.receipt_stamp().items() if k not in payload}
+    path.write_text(json.dumps({**payload, **stamp}, ensure_ascii=False, indent=2),
+                    encoding='utf-8')
     return str(path)
 
 

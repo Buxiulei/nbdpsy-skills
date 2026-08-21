@@ -629,3 +629,44 @@ def test_热线闸对B2r那类真实文本真的响():
     r = cc.gate_hotlines("如果你撑不住，可以打希望24热线 4001619995，也可以打 12356。")
     assert r, "漏了"
     assert "希望24" in r[0], "⛔ 拒绝理由必须指向热线本身（响错理由最贵）"
+
+
+# ────── 写入层两字段（2026-08-21 捞法演练：写了但捞不出来） ──────
+
+def test_台账行带note_id且旧行零影响():
+    """🔴 **出事时对方给的永远是 note_id** —— 平台看得见的只有它。
+    🩸 实测拿真实已发布 note_id grep 全部台账＝**零命中**，
+    只能反向查台账拿标题再猜稿件（多一跳且靠猜）。
+
+    ⚠️ **没有 note_id 时整段不写**（⛔ 不写 `note=None`）：
+    「这一行没有」与「这一行有但值是 None」必须分得开 ——
+    前者是历史行，后者是发布回执真的没给。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import publish_note as pn
+    old = pn.ledger_row(False, "T", "a.md", "号5", 349, "x", "y", "z")
+    new = pn.ledger_row(True, "T", "a.md", "号5", 349, "x", "y", "z", note_id="6a7b4a62")
+    assert "note=" not in old, "⛔ 没有 note_id 时不该写这一段"
+    assert "| note=6a7b4a62 |" in new
+    assert old.count("|") + 1 == new.count("|"), "只应多一段"
+    assert pn.ledger_note_id(old) is None and pn.ledger_note_id(new) == "6a7b4a62"
+
+
+def test_机器档凭证也要署名(tmp_path):
+    """🔴 **机器出的一样会错，一样需要署名**：`manual_confirmed` 人工档有
+    `confirmed_by`+`confirmed_at`，机器档因为"是工具出的"就不记
+    ⇒ 13 份「图文 v3」错标追责任线时，**靠的是当事人自己承认，⛔ 不是凭证追出来的**。
+
+    ⚠️ 退回值**不假装是会话名**：`script:<名>` 答的是"哪个工具"，答不了"哪个会话"——
+    **答得少但答得真，比编一个像样的值强**。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import compliance_core as cc, render_cover as rc
+    st = cc.receipt_stamp()
+    assert "created_at" in st and st["actor"]
+    r = rc.write_receipt(tmp_path / "a.meta.json", {"source": "render_cover"})
+    j = json.loads(Path(r).read_text(encoding="utf-8"))
+    assert j["created_at"] and j["actor"]
+    # 🔬 破坏例：调用方已给 actor ⇒ ⛔ 不许被覆盖（调用方比这里更知道自己是谁）
+    r2 = rc.write_receipt(tmp_path / "b.meta.json", {"source": "x", "actor": "调用方给的"})
+    assert json.loads(Path(r2).read_text(encoding="utf-8"))["actor"] == "调用方给的"
