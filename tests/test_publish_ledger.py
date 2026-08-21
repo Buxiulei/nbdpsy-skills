@@ -603,3 +603,29 @@ def test_存量三种source没被改坏():
     import publish_note as pn
     for s in ("gen_images", "render_cover", "manual_confirmed"):
         assert s in pn.COVER_SOURCES
+
+
+def test_热线闸必须有调用点而不只是有函数():
+    """🔴 **一个只有函数没有调用点的闸门，比没有更危险**——它让人以为有防线。
+
+    ⚠️ 这正是「守一个不存在的东西」的镜像：**函数在、判据在、测试全绿，
+    而发布路径上没有人调它**。⇒ 本用例断言的是**调用点的存在与位置**，
+    ⛔ 不是"函数存不存在"（那个早就绿了）。"""
+    for f in ("publish_note.py", "publish_video.py"):
+        src = (SCRIPTS / f).read_text(encoding="utf-8")
+        assert "gate_hotlines(" in src, f"{f} 没有调用点——⛔ 有函数不等于有闸门"
+        i_call = src.index("gate_hotlines(")
+        i_dry = src.find("dry_run")
+        if i_dry > 0:
+            assert i_call < i_dry, f"{f} 调用点在 dry-run 之后 ⇒ 「自查绿灯、真发才红」"
+
+
+def test_热线闸对B2r那类真实文本真的响():
+    """🩸 B2r 的形态是**两个热线并列**——12356 在、但后面还跟着一个空号。
+    ⚠️ 读者手上有一个能打通的，伤害是"多了一个打不通的"，⛔ 但仍必须拦。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import compliance_core as cc
+    r = cc.gate_hotlines("如果你撑不住，可以打希望24热线 4001619995，也可以打 12356。")
+    assert r, "漏了"
+    assert "希望24" in r[0], "⛔ 拒绝理由必须指向热线本身（响错理由最贵）"

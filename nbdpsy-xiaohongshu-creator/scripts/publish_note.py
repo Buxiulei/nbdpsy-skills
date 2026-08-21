@@ -279,6 +279,8 @@ COVER_LAYOUTS = ("通栏大字压顶", "左字右图分栏", "留白场", "色�
 # ⚠️ 2026-08-17 补 render_cover 这一档的理由（干跑实测）：此前判据只认「AI 生图」这一个世界，
 # 照文档钦定的主路径出的封面**如实填就发不出去**，唯一能过闸的做法是编一段这张图根本没用过的
 # 提示词——**闸门只放行谎话**。那不是措辞问题，是判据缺了一整条合法产线。
+import compliance_core  # noqa: E402  停用热线闸的唯一真源
+
 COVER_SOURCES = ("gen_images", "render_cover", "typeset_longimage", "manual_confirmed")
 # 🔴 **加新 source 必须与产线端同时改**（2026-08-21 typeset 那次）：
 # 产线端落了凭证而这里不认 ⇒ **照样拒**，而产线那边看起来"已经做了"。
@@ -1610,6 +1612,14 @@ def main():
         if not title:
             raise ValueError("frontmatter 缺 title")
         content, topics = split_content_topics(extract_publish_text(body), meta)
+        # 🔴 **停用热线硬闸：放在发布路径最前面**（2026-08-21）。
+        # 🩸 全仓扫出 **42 个在途稿件**仍带停用热线，而它们是从**排期稿**抓到的
+        #    ⇒ **在途稿可以绕过稿件闸门直接发** ⇒ 只挂稿件闸门挡不住。
+        # ⚠️ 这里**在 dry-run 之前**：预检的意义就是在花代价之前拦住。
+        _hot = compliance_core.gate_hotlines("\n".join([title, content]))
+        if _hot:
+            raise ValueError("停用热线闸拒发（⛔ 不是格式问题，是会让人打不通的号码）：\n  · "
+                             + "\n  · ".join(_hot))
         media_kind = "video" if args.video else ("audio" if args.audio else "images")
         # 图文误传 --cover 早拦（2026-08-16 干跑实测）：真发布路径本来就会抛，但那处在
         # dry-run 之后——于是「--dry-run 自查绿灯、真发才红」，且失败会在台账留一条

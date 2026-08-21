@@ -132,6 +132,12 @@ def do_publish(args, api_base, key):
         topics = args.topics
     if not title:
         raise ValueError("缺 title（frontmatter 的 title 或 --title）")
+    # 🔴 **停用热线硬闸：与 publish_note 同一个 gate_hotlines**（⛔ 不另写一份）
+    _hot = pn.compliance_core.gate_hotlines("\n".join([title or "", content or ""]))
+    if _hot:
+        raise ValueError("停用热线闸拒发（⛔ 不是格式问题，是会让人打不通的号码）：\n  · "
+                         + "\n  · ".join(_hot))
+
     # ⚠️ 话题必须**单传 topics 字段**才成话题实体；只写在正文里是纯文本
     # （job337 实证：视频直调裸奔，5 个标签全成了正文里的死字符，topics_applied 空）
     if not topics:
