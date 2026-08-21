@@ -1176,7 +1176,10 @@ def test_unknown_source_is_still_rejected(tmp_path):
         _write_render_cover_receipt(img_dir, source=bad)
         with pytest.raises(ValueError) as exc:
             publish_note.check_cover_receipt(img_dir / "P01.png")
-        assert "非法" in str(exc.value) and "gen_images/render_cover/manual_confirmed" in str(exc.value)
+        # ⚠️ ⛔ 别写死白名单拼接串——2026-08-21 加 typeset_longimage 时这条当场红，
+        #    而**代码是对的、测试才是旧的**。断言从 COVER_SOURCES 取，加档不用改测试。
+        assert "非法" in str(exc.value)
+        assert "/".join(publish_note.COVER_SOURCES) in str(exc.value)
 
 
 def test_render_cover_receipt_for_another_image_is_rejected(tmp_path):

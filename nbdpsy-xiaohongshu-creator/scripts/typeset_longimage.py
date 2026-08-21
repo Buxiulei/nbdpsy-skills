@@ -102,6 +102,45 @@ def fetch_counselor(emp_no, avatar_dir):
     return json.loads(proc.stdout)
 
 
+COVER_SOURCE = "typeset_longimage"
+"""本产线在封面凭证里的 `source`。
+
+🔴 **闸门端必须同步**：`publish_note.py` 的 `COVER_SOURCES` 白名单不加这个值，
+**落了凭证照样被拒** —— ⚠️ 那是"看起来做了"的典型：产线端有产物、闸门端不认。
+⇒ 两端一起改，⛔ 别只做一端。"""
+
+
+def write_cover_meta(png_path, *, theme, style_profile, page_w, page_h, pages):
+    """渲完 **P01（封面）** 落同名 `.meta.json` 凭证。
+
+    🩸 **这条产线此前零凭证** ⇒ 文字版长图的笔记到闸门 A **全会被拒**
+    （7/30 前发的三篇是闸门上线前混过去的）。
+
+    ⚠️ 凭证叫 `<产物名>.meta.json` **不叫 `.json`**——`<产物名>.json` 那个位置
+    已经被调用方占了（与 `render_cover` 同一口径，⛔ 别另起一套命名）。
+
+    ⚠️ **`style_profile` 可能是 None**（没传档案时）：如实写 `null`，
+    ⛔ 不要编一个默认值——**错标比缺失更毒**：缺失会被闸门拒（有声音），
+    错标畅通无阻，而**凭证的意义就是溯源，错标＝溯源断**
+    （2026-08-21 实证：13 份凭证标了档案库里不存在的组合，一路绿灯到发布前）。
+    """
+    import datetime
+    meta = {
+        "source": COVER_SOURCE,
+        "style_profile": style_profile,          # ⚠️ 没有就是 null，⛔ 不编默认值
+        "theme": theme,
+        "rendered_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "canvas": {"w": page_w, "h": page_h},
+        "pages": pages,
+        # ⚠️ 这条产线是**确定性渲染**（发布线实测 37 张重渲 byte 级不变）
+        # ⇒ 凭证内容全部来自输入，⛔ 没有一项是"跑出来才知道"的
+        "deterministic": True,
+    }
+    out = png_path.with_suffix(".meta.json")
+    out.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out
+
+
 def scan_promo_compliance(headline, blurb, out_dir):
     """把推介卡的标题与文案落盘再跑 check_compliance.py。
 
@@ -733,6 +772,13 @@ def main():
             fp = out_dir / f'P{idx:02d}.png'
             page.screenshot(path=str(fp), clip={'x': 0, 'y': 0, 'width': PAGE_W, 'height': PAGE_H})
             files.append(str(fp))
+            if idx == 1:
+                # ⚠️ 套名从**档案本身**取（`load_style` 的产物），⛔ 不另编一个来源：
+                #    两个来源迟早漂，而凭证漂了就是错标——比缺失更毒。
+                #    档案没传时是 None ⇒ 凭证里如实写 null。
+                _sp = (style_typeset or {}).get("name") or (style_typeset or {}).get("profile")
+                write_cover_meta(fp, theme=theme, style_profile=_sp,
+                                 page_w=PAGE_W, page_h=PAGE_H, pages=len(pages))
 
         if counselor:                                  # 末页推介：藏正文、显推介卡，再截一张
             overflow = page.evaluate("""() => {

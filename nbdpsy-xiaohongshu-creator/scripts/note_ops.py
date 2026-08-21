@@ -283,7 +283,11 @@ def components_result(view: dict, job_id: str, requested: dict):
     status = view.get("status")
     ok, not_ok = _split_applied(view)
     failed = _items(view, "failed")
-    extras = {k: view[k] for k in ("topics_dropped", "images_before", "images_after",
+    # ⚠️ `topics_truncated` 与 `topics_dropped` 两个名字都收：契约文档写的是前者、
+    #    现有代码读的是后者——**服务端给哪个就报哪个**，⛔ 别赌它叫什么
+    #    （赌错的后果是"截掉了哪些话题"这条信息静默消失）。
+    extras = {k: view[k] for k in ("topics_dropped", "topics_truncated",
+                                   "images_before", "images_after",
                                    "ledger_synced") if view.get(k) not in (None, [], {})}
     if status == "gone":
         return {"outcome": "unknown", "job_id": job_id, "requested": requested,
@@ -643,6 +647,16 @@ def main():
                          " all=所有账号 / newcomer=某新号去互动其余所有号（配 --actor）")
     ap.add_argument("--actor", metavar="账号名或ID", help="--scope newcomer：哪个新号去互动别人")
     ap.add_argument("--backfill-status", metavar="JOB_ID", help="查互动补量任务进度")
+    ap.add_argument("--topics", nargs="+", metavar="话题",
+                help="--set-components：给这篇**追加**话题（⚠️ 追加不是替换；带不带 # 都行，内部规整）。"
+                     "🔴 **与 --set-content[-file] 同传 ＝「正文替换之后重挂话题」**——"
+                     "整体替换正文会把既有话题实体全部冲掉，**这是运营批量改正文的标准用法**。"
+                     "⚠️ 任何 note_type 都受理（与 --cover 只对视频不同）；"
+                     "总数 >10 会截断（截掉的进 topics_truncated）；"
+                     "正文+话题超 1000 字当场报 topic_body_limit_exceeded（⛔ 原样重发只会再被闸一次）")
+    ap.add_argument("--topics-only", action="store_true",
+                help="放行「只给 --topics 不给 --set-content」这一种用法。"
+                     "⛔ 修存量时**不要用**：死话题文本还留在正文里，只追加实体会变成「文本＋实体」重复排")
     ap.add_argument("--sync-ledger", metavar="账号名或ID", help="手工触发台账同步（幂等）")
     ap.add_argument("--backfill-purpose", metavar="账号名或ID", help="手工触发核心目的回填（幂等）")
     ap.add_argument("--account", help="操作类命令的目标账号（名称或 id）")
@@ -796,17 +810,49 @@ def main():
                 ("add_images", args.add_image), ("remove_image_indexes", args.remove_image_index),
                 ("expected_image_count", args.expected_image_count),
             ) if v not in (None, "")}
+            if args.topics:
+                # 服务端收 list[str]；⚠️ 带不带 # 它都规整，这里只去空白与去重（保序）
+                seen, tps = set(), []
+                for t in args.topics:
+                    t = t.strip().lstrip("#").strip()
+                    if t and t not in seen:
+                        seen.add(t)
+                        tps.append(t)
+                if not tps:
+                    ap.error("--topics 给了但全是空白（服务端会 422）")
+                requested["topics"] = tps
             if args.set_title is not None:   # 空串是「清空标题」的合法值，不能被过滤掉
                 requested["title"] = args.set_title
             if args.set_original_declaration:
                 # 只在开启时才带这个键：服务端只支持开启，显式传 false 会 422
                 requested["set_original_declaration"] = True
+            # 🔴 **守卫做进参数，⛔ 不只写在 help 里**（2026-08-20 发布线原话：
+            # 那三行 ⚠️「我看见了也读了，照样撞」——因为两处提示指向相反）。
+            # 🩸 **修存量时 topics-only 是错的**：死话题文本还留在正文里，
+            #    只追加实体 ⇒ 变成「文本＋实体」重复排。正解是 combo：
+            #    `content`＝现读正文**去掉尾部话题文本**，`topics`＝从该死文本解析出的名单。
+            # ⇒ 默认**拒**，要绕过必须显式 `--topics-only`——⚠️ 显式声明的人不会是"没读到"的人。
+            if requested.get("topics") and "content" not in requested and not args.topics_only:
+                ap.error(
+                    "--topics 没有配 --set-content[-file]。\n"
+                    "🔴 **修存量（正文里已有死话题文本）必须 combo**："
+                    "`--set-content-file` 给**去掉尾部话题文本**的正文 ＋ `--topics` 给解析出的名单；\n"
+                    "   只追加实体会变成「文本＋实体」重复排。\n"
+                    "⭕ 确实只是给一篇干净笔记加话题（正文里没有话题文本）：加 `--topics-only` 显式放行。")
+            if requested.get("topics") and args.wait_timeout < 600:
+                # ⚠️ **不是建议，是把成功报成失败的门槛**：整体替换正文要先逐段清空再逐字重填
+                #    （~80ms/字），实测一篇 890 字用满 900s 才拿到 done。
+                print(f"⚠ --wait-timeout={args.wait_timeout:g}s 对带 topics 的编辑**太短**："
+                      f"整体替换正文最坏 6–8 分钟（实测 890 字用满 900s）⇒ "
+                      f"**建议 --wait-timeout 600，长正文/批量给 900**。\n"
+                      f"  ⛔ 超时不代表失败——任务在服务端照跑，"
+                      f"⚠️ 但脚本会把成功的单报成 unknown。", file=sys.stderr)
             if not requested:
                 ap.error("--set-components 至少要给一项：--collection-id / "
                          "--remove-collection-id / --quoted-note-id / "
                          "--activity-id / --related-counselor / --set-original-declaration / "
                          "--set-title / --set-content[-file] / "
-                         "--add-image / --remove-image-index")
+                         "--add-image / --remove-image-index / --topics")
             for w in check_component_request(requested):
                 print(f"⚠ {w}", file=sys.stderr)
             aid, label, warn = resolve_account(api_base, key, args.account)

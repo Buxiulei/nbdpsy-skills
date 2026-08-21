@@ -513,3 +513,93 @@ def test_没有note_id时给的是可粘贴的完整命令(tmp_path, monkeypatch
     msg = str(e.value)
     assert "--sync-ledger 7" in msg, "⛔ 别留 <账号> 让人猜——account_id 就在 job 回执里"
     assert "幂等" in msg
+
+
+# ────── 发布入口停用热线硬闸（2026-08-20 发布线派） ──────
+
+@pytest.mark.parametrize("name,text,should_block", [
+    ("正常危机声明块", "心理援助热线 12356，北京心理危机研究与干预中心 010-82951332（24小时）。", False),
+    ("停用热线", "如果撑不住，请拨打希望24热线 4001619995", True),
+    ("停用热线·带连字符", "400-161-9995", True),
+    ("停用热线·带空格", "希望 24 热线", True),
+    ("更正稿豁免", "此前写过的希望24热线 4001619995 已停止服务，请改用 010-82951332", False),
+    ("12356 标 24 小时", "12356 全国心理援助热线，24 小时在线", True),
+])
+def test_发布入口热线闸(name, text, should_block):
+    """🔴 **放在发布路径最前面，⛔ 不能只放稿件闸门**——2026-08-20 全仓扫出 42 个在途稿件
+    仍带停用热线，而它们是从**排期稿**抓到的：**在途稿可以绕过稿件闸门直接发**。
+
+    🩸 **首版是恒红闸门**：标准危机声明块「12356，北京 010-82951332（24小时）」两个号码同一行，
+    那个「24小时」修饰的是**北京号**，首版正则一跨就中 ⇒ **每一条合规的稿子都会被拦**。
+    ⚠️ **写完判据必须拿一条"本来就该放行的"去试**——只测反例测不出恒红。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import compliance_core as cc
+    r = cc.gate_hotlines(text)
+    assert bool(r) == should_block, f"{name}: {r}"
+    if should_block:
+        assert "希望24" in r[0] or "12356" in r[0], "⛔ 拒绝理由必须指向真问题（响错理由最贵）"
+
+
+def test_热线闸不做前置解析():
+    """🩸 发布线的稿件机检**本来就有这道闸**，B2r 还是漏了——`check()` 第一步找不到
+    「## 口播全文」段就 `return`，**图文稿在此直接退出，热线检查一次都没跑到**。
+    ⚠️ 而它**报了红**（"找不到口播全文段"）⇒ 照那个红去查的人会去补口播段，**不会发现那个空号**。
+
+    > **闸门失效有三种：不响、恒响、响错理由。第三种最贵——因为它看起来在工作。**
+
+    ⇒ `gate_hotlines` **拿到什么文本就扫什么**，⛔ 没有任何"找不到 X 就 return"的分支。"""
+    src = (SCRIPTS / "compliance_core.py").read_text(encoding="utf-8")
+    body = src[src.index("def gate_hotlines"):src.index("def check(units")]
+    assert "return []" not in body.split("reasons = []")[0], "⛔ 前置 return 会让整道闸跳过"
+    assert "for i, line in enumerate(text.splitlines()" in body
+
+
+# ────── typeset_longimage 封面凭证（2026-08-21 牧阳助理派，死线 9/15） ──────
+
+def test_typeset落P01凭证且两端同步(tmp_path):
+    """🩸 这条产线此前**零凭证** ⇒ 文字版长图的笔记到闸门 A **全会被拒**
+    （7/30 前发的三篇是闸门上线前混过去的）。
+
+    🔴 **两端必须一起改**：产线端落了凭证而 `COVER_SOURCES` 不认 ⇒ **照样拒**，
+    而产线那边看起来"已经做了"。⛔ 任一端单独改都是"看起来做了"。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import typeset_longimage as T, publish_note as pn
+    png = tmp_path / "P01.png"; png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    m = T.write_cover_meta(png, theme="clean", style_profile="文字版 v2",
+                           page_w=1080, page_h=1440, pages=6)
+    assert m.name == "P01.meta.json", "⚠️ 叫 .meta.json 不叫 .json——后者被调用方占了"
+    d = json.loads(m.read_text(encoding="utf-8"))
+    assert d["source"] == "typeset_longimage"
+    assert d["source"] in pn.COVER_SOURCES, "🔴 闸门端没同步 ⇒ 落了凭证照样被拒"
+    assert d["style_profile"] == "文字版 v2" and d["theme"] == "clean"
+
+
+def test_typeset凭证变异测试(tmp_path):
+    """🔴 **变异测试真正分辨的是「你走了哪条路」**（技术侧 2026-08-21）：
+    > **「让它不红」和「把它改成恒绿」在输出上一模一样——只有故意破坏一次才分得开。**
+    ⇒ 每次改完闸门都跑一次破坏例，⛔ 别只跑正例。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import typeset_longimage as T, publish_note as pn
+    png = tmp_path / "P01.png"; png.write_bytes(b"\x89PNG\r\n\x1a\n")
+    m = T.write_cover_meta(png, theme="clean", style_profile=None,
+                           page_w=1080, page_h=1440, pages=6)
+    # 变异①：凭证挪走 ⇒ 闸门此时必须红（没有凭证可读）
+    m.rename(tmp_path / "P01.meta.json.bak")
+    assert not m.exists()
+    # 变异②：source 换成白名单外的值 ⇒ 必须不被认
+    assert "手工PIL叠图" not in pn.COVER_SOURCES
+    # ⚠️ style_profile 没有就是 None——⛔ 不编默认值（错标比缺失更毒）
+    d = json.loads((tmp_path / "P01.meta.json.bak").read_text(encoding="utf-8"))
+    assert d["style_profile"] is None
+
+
+def test_存量三种source没被改坏():
+    """⚠️ 加新形态时的回归项：⛔ 别为覆盖新的改坏旧的。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import publish_note as pn
+    for s in ("gen_images", "render_cover", "manual_confirmed"):
+        assert s in pn.COVER_SOURCES
