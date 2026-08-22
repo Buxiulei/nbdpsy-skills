@@ -375,13 +375,97 @@ def test_aborted_before_submit_is_the_one_safe_retry():
 
 
 def test_topics_dropped_surfaced_on_success():
-    """改正文会丢掉既有话题实体——成功也要把这件事说出来，否则运营发现不了。"""
+    """旧单（0.24.14 之前，回执里没有那三个新键）：`topics_dropped` 仍是**旧语义的丢失清单**，
+    成功也要把这件事说出来，否则运营发现不了。
+
+    🩸 **这条测试此前锁着一句有害的话术**：断言 hint 里有「丢掉既有话题」，
+    而那句 hint 的后半是「要保住这些话题，得把它们写进新正文**重新发布**」——
+    **那会造出一篇重复笔记，是非幂等真提交**，server 明说这个建议在任何版本下都是错的。
+    ⇒ **测试把错误行为固化了**（把红灯写进规格当成绿灯）。现在断言反过来钉死：
+    话术仍要提示"丢了话题"，但**绝不许再出现「重新发布」**。"""
     import note_ops
     out, code = note_ops.components_result(
         {"status": "done", "applied": {"content": True}, "topics_dropped": ["CPTSD", "情绪内耗"]},
         "j1", {"content": "新正文"})
     assert out["outcome"] == "done" and code == 0
-    assert out["topics_dropped"] == ["CPTSD", "情绪内耗"] and "丢掉既有话题" in out["hint"]
+    assert out["topics_dropped"] == ["CPTSD", "情绪内耗"] and "丢掉了既有话题" in out["hint"]
+    # ⚠️ 判据要抓**句法方向**，⛔ 不是抓「重新发布」这个词——现在的话术里它出现在
+    #    「**别为此**重新发布」当中，是**禁止**不是建议。抓词会把劝阻误判成教唆。
+    assert "写进新正文重新发布" not in out["hint"], "⛔ 这条建议会造出重复笔记"
+    assert "别为此重新发布" in out["hint"], "光不提还不够：得**明确劝阻**，否则运营还是会去重发"
+
+
+def test_新单按保留语义说话而不是丢失语义():
+    """0.24.14+ 的 content 单：`topics_dropped` ＝**替换前的实体名单**（与 preserved 成对读），
+    ⛔ 不再是丢失清单。拿它当"丢失"报，等于**把一次正常回执渲染成事故**。"""
+    import note_ops
+    out, _ = note_ops.components_result(
+        {"status": "done", "applied": {"content": True},
+         "topics_dropped": ["CPTSD", "情绪内耗"],
+         "topics_preserved": ["CPTSD", "情绪内耗"],
+         "topics_tail_stripped": ["#情绪内耗"]},
+        "j1", {"content": "新正文"})
+    assert out["topics_preserved"] == ["CPTSD", "情绪内耗"]
+    assert out["topics_tail_stripped"] == ["#情绪内耗"]
+    assert "自动保留既有话题" in out["hint"]
+    assert "丢掉了既有话题" not in out["hint"], "新单不能再按丢失语义说话"
+    assert "重新发布" not in out["hint"]
+
+
+def test_新键不再被白名单静默丢掉():
+    """🩸 根子是**白名单是写下那刻的世界快照**：server 一加键，客户端就静默丢掉，
+    而且**没有任何迹象说明有东西被丢了**。"""
+    import note_ops
+    out, _ = note_ops.components_result(
+        {"status": "done", "applied": {"content": True},
+         "topics_preserved": ["A"], "topics_tail_stripped": ["#A"], "submit_confirmed": True},
+        "j1", {"content": "新正文"})
+    for k in ("topics_preserved", "topics_tail_stripped", "submit_confirmed"):
+        assert k in out, f"{k} 又被丢了"
+
+
+def test_不认识的新键也要有地方落():
+    """下次 server 再加键，⛔ 不许再丢一遍。"""
+    import note_ops
+    out, _ = note_ops.components_result(
+        {"status": "done", "applied": {"content": True}, "某个未来的新键": "值"},
+        "j1", {"content": "新正文"})
+    assert out["extra_fields"] == {"某个未来的新键": "值"}
+    assert "还不认识" in out["extra_fields_hint"]
+
+
+def test_submit_confirmed_false_可安全重试():
+    """`false` ＝一次发布都没点，与 aborted_before_submit=true 同义。"""
+    import note_ops
+    out, code = note_ops.components_result(
+        {"status": "error", "applied": {}, "submit_confirmed": False, "reason": "x"},
+        "j1", {"content": "新正文"})
+    assert out["outcome"] == "aborted" and "可以安全重试" in out["hint"]
+
+
+def test_submit_confirmed_null_禁重试():
+    """🔴 **`false` 与 `null` 都是 falsy，语义却相反**：
+    `null` ＝点了发布但没等到响应确认 ⇒ **fail-closed，禁直接重试**。
+    写成 `not view.get("submit_confirmed")` 会把「禁重试」渲染成「可安全重试」，
+    而运营照着那句去重跑，就是一次实打实的重复提交。"""
+    import note_ops
+    out, _ = note_ops.components_result(
+        {"status": "error", "applied": {}, "submit_confirmed": None, "reason": "timeout"},
+        "j1", {"content": "新正文"})
+    assert out["outcome"] != "aborted", "⛔ null 绝不能被判成「没提交、可安全重试」"
+    assert "禁直接重试" in out["submit_confirmed_hint"]
+
+
+def test_submit_confirmed_空值有语义不许被过滤掉():
+    """`submit_confirmed: false` 与 `topics_preserved: null/[]` 都是"空"，
+    ⚠️ 但**空值本身就是信息**——被按"空"过滤掉之后，回执看起来跟"一切正常"一模一样。"""
+    import note_ops
+    out, _ = note_ops.components_result(
+        {"status": "done", "applied": {"content": True},
+         "submit_confirmed": False, "topics_preserved": None},
+        "j1", {"content": "新正文"})
+    assert out["submit_confirmed"] is False
+    assert "topics_preserved" in out and out["topics_preserved"] is None
 
 
 def test_image_ops_require_expected_count_guard():

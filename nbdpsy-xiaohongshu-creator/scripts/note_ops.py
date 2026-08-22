@@ -263,6 +263,74 @@ def _items(view: dict, key: str):
     return list(v) if isinstance(v, list) else []
 
 
+# ── 回执里除状态机字段之外、值得给运营看的那些 ────────────────────────────────
+#
+# 🩸 **根子是白名单，⛔ 不是"漏了三个键"**：这里原本硬编码五个键名，
+#    server 0.24.14 加了 `topics_preserved` / `topics_tail_stripped` / `submit_confirmed`
+#    ⇒ 客户端**静默丢掉**，运营看不到，而且**没有任何迹象说明有东西被丢了**。
+#    ⚠️ **白名单是写下那刻的世界快照** —— 修法不是把这三个补进去（下次加键还会再丢一遍），
+#    是让不认识的键**也有地方落**。
+#
+# 🔴 已知键与未知键**分开放**：已知的照旧升到顶层（现有消费者与话术都按顶层读），
+#    不认识的收进 `extra_fields` 并明说「客户端还不认识」。
+#    ⇒ 既不丢信息，也不把来路不明的字段混进顶层假装我们懂它。
+# 语义以 server 0.24.14 契约为准（2026-08-22 向 xhs-server 取的准话）。
+# ⚠️ **三键只在「请求带 content 的编辑单」回执里出现**；键不存在＝非 content 单或 0.24.14 之前的旧单。
+_EXTRA_KNOWN = (
+    # 🔴 `topics_dropped` **语义已变**：0.24.14 起＝**替换前的既有实体名单**，与 preserved 成对读，
+    #    ⛔ **不再是"丢失清单"**。老话术照它报"你丢了话题"＝把正常回执渲染成事故。
+    "topics_dropped", "topics_truncated",        # 两个名字都收：契约写前者、老代码读后者
+    "topics_preserved", "topics_tail_stripped",
+    "submit_confirmed",
+    "images_before", "images_after", "ledger_synced",
+)
+#: 🔴 **这几个键的"空值"本身有语义**，给了就展示，⛔ 不许按"空"过滤掉：
+#:   · `topics_preserved`：`null`＝平台读不出、**不知道**（⛔ 不是失败）；
+#:     `[]`＝两种来路，靠同回执的 `aborted_before_submit` 分辨（弃提交／本来就无话题可保）。
+#:   · `submit_confirmed`：`false`＝一次发布都没点（可安全重试）；
+#:     **`null`＝点了但没等到响应确认 ⇒ fail-closed，禁直接重试**。
+#: ⚠️ 把这三种空值过滤掉之后，回执看起来**跟"一切正常"一模一样**——
+#:    而 `submit_confirmed: null` 恰恰是最不能被吞掉的那一个。
+_EXTRA_MEANINGFUL_EMPTY = frozenset({"topics_preserved", "submit_confirmed"})
+#: 状态机自己会渲染的字段，⛔ 别在 extras 里再重复一遍
+_EXTRA_SKIP = frozenset({
+    "status", "applied", "not_applied", "failed", "reason", "job_id", "requested",
+    "aborted_before_submit", "outcome", "hint", "result", "account_id",
+    "created_at", "updated_at", "finished_at", "note_id",
+})
+
+
+def _empty(v) -> bool:
+    """🔴 **「值为空」只算 None/空容器/空串**，⛔ 不用 truthy 判断。
+    `submit_confirmed: false` 与 `images_after: 0` 都是 falsy，**却正是最要紧的两个信号**
+    ——用 `if view.get(k)` 过滤会把它们连同"没给"一起丢掉，
+    而**「没提交成功」被丢掉后，看起来跟"一切正常"一模一样**。"""
+    return v is None or v == [] or v == {} or v == ""
+
+
+def _extras(view: dict) -> dict:
+    """已知键升顶层、未知键收进 `extra_fields`（见上方那段）。"""
+    out = {k: view[k] for k in _EXTRA_KNOWN
+           if k in view and (k in _EXTRA_MEANINGFUL_EMPTY or not _empty(view[k]))}
+    unknown = {k: v for k, v in view.items()
+               if k not in _EXTRA_SKIP and k not in _EXTRA_KNOWN and not _empty(v)}
+    # 🔴 `submit_confirmed: null`＝点了发布但**没等到平台响应确认**（超时族）。
+    # fail-closed：**当作已提交**，⛔ 禁直接重试。这条要跟着每一条回执走，
+    # ⚠️ 因为它出现的那几次，回执的其余部分看起来跟"正常失败"没有区别。
+    if "submit_confirmed" in view and view["submit_confirmed"] is None:
+        out["submit_confirmed_hint"] = (
+            "⚠️ **没等到平台的提交响应确认**（不是「没提交」）：按已提交处置，"
+            "⛔ **禁直接重试**——先 `--note <note_id>`（或 extract refresh）现读实际生效情况再决定")
+    if unknown:
+        out["extra_fields"] = unknown
+        out["extra_fields_hint"] = (
+            "服务端下发了本客户端还不认识的字段（多半是 server 升了版）："
+            + "、".join(sorted(unknown))
+            + "。⚠️ 原样透出、**本脚本不解读它们**——别照字面猜语义就去重提交，"
+              "先问服务端要契约（本类操作非幂等）")
+    return out
+
+
 def _split_applied(view: dict):
     """`applied` 是逐项三态映射 {collection: true/false/null}：true=生效，false=没生效，
     **null=本次没请求这项**（不是失败）。归一成 (生效项, 没生效项)。
@@ -286,16 +354,20 @@ def components_result(view: dict, job_id: str, requested: dict):
     # ⚠️ `topics_truncated` 与 `topics_dropped` 两个名字都收：契约文档写的是前者、
     #    现有代码读的是后者——**服务端给哪个就报哪个**，⛔ 别赌它叫什么
     #    （赌错的后果是"截掉了哪些话题"这条信息静默消失）。
-    extras = {k: view[k] for k in ("topics_dropped", "topics_truncated",
-                                   "images_before", "images_after",
-                                   "ledger_synced") if view.get(k) not in (None, [], {})}
+    extras = _extras(view)
     if status == "gone":
         return {"outcome": "unknown", "job_id": job_id, "requested": requested,
                 "hint": "任务台账查不到了（server 可能重启）：本操作非幂等，"
                         "先用 --note <note_id> 核对当前实际生效情况，再决定要不要重提交"}, 0
 
-    # aborted_before_submit：文本/图片某步失败，整单没提交、笔记原样——这是唯一可以放心重试的失败
-    if view.get("aborted_before_submit"):
+    # 整单没提交、笔记原样——这是唯一可以放心重试的失败。
+    # 🔴 **两个判据都要认，且都必须是精确比较**（server 0.24.14 契约）：
+    #   `aborted_before_submit is True` ／ `submit_confirmed is False`（一次发布都没点）。
+    # ⚠️ **`submit_confirmed` 是三态，`false` 与 `null` 都是 falsy，语义却是相反的**：
+    #   `false`＝没提交（可安全重试）；**`null`＝点了发布但没等到响应确认（fail-closed，禁直接重试）**。
+    #   ⇒ 写成 `not view.get("submit_confirmed")` 会把**禁重试**渲染成**可安全重试**，
+    #     而运营照着那句去重跑，就是一次实打实的重复提交。**这就是"响错理由"能造成的真实损失。**
+    if view.get("aborted_before_submit") is True or view.get("submit_confirmed") is False:
         return {"outcome": "aborted", "job_id": job_id, "requested": requested,
                 "failed": failed, "reason": view.get("reason"), **extras,
                 "hint": "整单在提交前就中止了，**笔记保持原样，可以安全重试**"
@@ -328,9 +400,28 @@ def components_result(view: dict, job_id: str, requested: dict):
 
     if status in ("done", "partially_applied"):
         out = {"outcome": "done", "job_id": job_id, "requested": requested, "applied": ok, **extras}
-        if extras.get("topics_dropped"):
-            out["hint"] = ("改正文会**丢掉既有话题实体**（含发布时精选的），平台行为、不重建。"
-                           "要保住这些话题，得把它们写进新正文重新发布时精选")
+        # 🩸 **这里原本印着一条双重作废的 hint**（2026-08-22 向 xhs-server 取准话后拆掉）：
+        #   原文是「改正文会**丢掉既有话题实体**……要保住这些话题，得把它们**写进新正文重新发布**」。
+        #   ① 事实作废：0.24.14 起服务端会**自动保留**既有话题，**保不住就整单弃提交**
+        #      （笔记原样未动），所以"改正文必丢话题"这个前提已经不成立；
+        #   ② 🔴 **它教人做的事在任何版本下都是错的**：为保住话题去"重新发布"会**造出一篇重复笔记**，
+        #      而这是**非幂等真提交**——脚本自印的过期话术，比没有话术危险得多。
+        #   ⚠️ 触发条件也早就错了：`topics_dropped` 现在＝**替换前的既有实体名单**（与 preserved 成对读），
+        #      拿它当"丢失"判据，等于**把一次正常回执渲染成事故**。
+        if "topics_preserved" in extras or "topics_tail_stripped" in extras:
+            out["hint"] = ("改正文时服务端会**自动保留既有话题**（以 `topics_preserved` 为准）；"
+                           "正文尾部的话题标记会被剥离、转成真实体（`topics_tail_stripped`，"
+                           "**运营不用做任何事**）。⚠️ `topics_dropped` 是**替换前的实体名单**，"
+                           "⛔ 不是丢失清单。收到 `topic_preserve_*` 失败＝**笔记原样未动**，"
+                           "按 reason 处置后可整单重试")
+        elif not _empty(extras.get("topics_dropped")):
+            # 旧单（0.24.14 之前，回执里没有那三个键）：`topics_dropped` 仍是**旧语义的丢失清单**。
+            # ⚠️ 话术保留，但**「重新发布」那半必须删**——server 明说：那会造出一篇重复笔记，
+            #    **在任何版本下都是错的建议**。
+            out["hint"] = ("改正文丢掉了既有话题实体（含发布时精选的），平台行为、不重建。"
+                           "⛔ **别为此重新发布**——那会造出一篇重复笔记。"
+                           "服务端 0.24.14 起会自动保留话题（保不住就整单弃提交、笔记原样），"
+                           "升级后不再发生这件事")
         return out, 0
 
     # running：轮询超时未达终态
