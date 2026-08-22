@@ -281,7 +281,16 @@ def do_recheck(args, api_base, key):
     what = parts[1] if len(parts) > 1 else str(view.get("title") or "—")
     who = account_display(api_base, key, view.get("account_id"),
                           parts[2] if len(parts) > 2 else None)
-    intent_txt = parts[4][4:] if len(parts) > 4 else intent_summary(intent)
+    # 🔴 **按段前缀找，⛔ 不按位置取段**（2026-08-22 我自己引入的回归）。
+    # 🩸 原来写的是 `parts[4][4:]`——第 5 段切掉前 4 字符（"意图: "）。
+    #    我 8/21 把 `note=` 段插在 `job=` 之后，意图段就从 parts[4] 挪到了 parts[5]
+    #    ⇒ `parts[4]` 取到 `note=6a88ec1e…`，`[4:]` 切掉 "note" 正好剩 **`=6a88ec1e…`**
+    #    ⇒ 台账里「这条当初想设哪张封面」被覆盖掉了（8/22 的 357/358 两条）。
+    # ⚠️ **我加段时守住了"前 4 段位次不动"，却没想到有人在数第 5 段。**
+    #    ⇒ 位置解析的脆弱不在"加段的人"，在**读的人按位置读**——
+    #    ⛔ 行格式一旦可扩展，就不许再按下标取段。
+    _intent_seg = next((x for x in parts if x.startswith("意图: ")), None)
+    intent_txt = _intent_seg[len("意图: "):] if _intent_seg else intent_summary(intent)
     return finish(view, intent, lp, args.recheck, ts, what, who, intent_txt,
                   api_base=api_base, key=key)
 
@@ -365,6 +374,20 @@ def do_fix_cover(args, api_base, key):
     # ⇒ 拆开：入队即写索引（`remedies[comp] = cjob` 是覆盖式赋值 ⇒ **重复写同值天然幂等**），
     #   **终态判定仍然只由 `--recheck` 回 server 读**，⛔ 这里不下闭环结论、不会造成假闭环。
     remedy = record_remedy(args, "cover", cjob)
+    # 🔴 **登记失败必须出声，⛔ 不能只塞进返回值里**（2026-08-22 bug-B）。
+    # 🩸 job 358：component job **在库里干干净净 done、无 502、无 unknown**——
+    #    服务端把结果如实给了，**漏写发生在客户端登记这一步**，而三个失败分支
+    #    只把 `recorded: false` 塞进 JSON，调用方**既不告警也不改退出码** ⇒ **静默**。
+    # ⚠️ 与 8/19 那次**是不同路径**：那次是 502 断轮询「**没等到结果**」（v2.19.1 修的是它）；
+    #    这次是「**拿到了结果却没写**」——⛔ 别以为修过一次就把这条路堵严了。
+    # ⚠️ 后果同一个：recheck 不知道读哪个 component job ⇒ 只能读发布 job 的原始回执
+    #    （永远 `cover=error`）⇒ **台账永远闭不掉**。
+    if not remedy.get("recorded"):
+        print(f"\n🔴 **补救号没登记进台账**（cjob={cjob}）——⚠️ 封面很可能已经补上了，"
+              f"但 `--recheck` 会因为找不到这个号而**永远闭不掉那一行**。\n"
+              f"   原因：{remedy.get('reason', '未知')}\n"
+              f"   ⇒ 处置：`--record-remedy {cjob} --job <发布任务号>` 补登，"
+              f"⛔ 别重跑 --fix-cover（每次重跑都是一次真提交）。", file=sys.stderr)
 
     deadline = time.monotonic() + args.wait_timeout
     cview = {}
@@ -434,6 +457,10 @@ def main():
     ap.add_argument("--recheck", type=int, metavar="JOB_ID", help="回读该发布任务、重算差集并闭环台账")
     ap.add_argument("--fix-cover", action="store_true", help="发布后补封面（配 --job 或 --account+--note-id）")
     ap.add_argument("--job", type=int, help="--fix-cover 用：原发布任务号（据它取 account/note_id）")
+    ap.add_argument("--record-remedy", metavar="cjob",
+                    help="**补登补救号**：把已知的 note-components 任务号写进台账那一行。"
+                         "⚠️ 用于「封面其实已补上、但登记那一步失败」的情况——"
+                         "⛔ 别为此重跑 --fix-cover（每次重跑都是一次真提交）。需配 --job")
     ap.add_argument("--note-id", help="--fix-cover 用：平台笔记 id（没有 --job 时给）")
     ap.add_argument("--check-cover", type=Path, metavar="封面", help="只校验封面产出凭证，不发布")
     ap.add_argument("--confirm-cover", type=Path, metavar="封面",
@@ -483,6 +510,13 @@ def main():
     try:
         if args.recheck is not None:
             sys.exit(do_recheck(args, api_base, key))
+        if args.record_remedy:
+            # ⚠️ 只写台账、**零网络零提交** —— 它修的是「登记」那一步，⛔ 不重跑补救
+            r = record_remedy(args, "cover", args.record_remedy)
+            print(json.dumps({"outcome": "recorded" if r.get("recorded") else "failed",
+                              "ledger_remedy": r}, ensure_ascii=False))
+            return 0 if r.get("recorded") else 1
+
         if args.fix_cover:
             if not args.cover:
                 raise ValueError("--fix-cover 必须给 --cover")

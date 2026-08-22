@@ -670,3 +670,63 @@ def test_机器档凭证也要署名(tmp_path):
     # 🔬 破坏例：调用方已给 actor ⇒ ⛔ 不许被覆盖（调用方比这里更知道自己是谁）
     r2 = rc.write_receipt(tmp_path / "b.meta.json", {"source": "x", "actor": "调用方给的"})
     assert json.loads(Path(r2).read_text(encoding="utf-8"))["actor"] == "调用方给的"
+
+
+# ────── 8/22 两个台账 bug（小红书运营实测 job 355–359） ──────
+
+def test_bugA_台账取段必须按前缀不按位置(tmp_path):
+    """🩸 **我自己引入的回归**：8/21 我把 `note=` 段插在 `job=` 之后，
+    而 `publish_video.py` 的 recheck 路径用 `parts[4][4:]` **按位置取第 5 段**
+    ⇒ `parts[4]` 取到 `note=6a88ec1e…`，`[4:]` 切掉 "note" 正好剩 **`=6a88ec1e…`**
+    ⇒ 台账里「这条当初想设哪张封面」被覆盖（8/22 的 357/358 两条）。
+
+    🔴 **我加段时守住了"前 4 段位次不动"，却没想到有人在数第 5 段。**
+    ⇒ 位置解析的脆弱不在"加段的人"，在**读的人按位置读** ——
+    ⛔ 行格式一旦可扩展，就不许再按下标取段。"""
+    import sys
+    sys.path.insert(0, str(SCRIPTS))
+    import publish_note as pn
+    row = pn.ledger_row(False, "T", "a.md", "号5", 357, "topics=6 cover=x.png", "—", "—",
+                        note_id="6a88ec1e")
+    parts = row.split(" | ")
+    assert parts[4].startswith("note="), "note 段确实占了原来意图段的位置"
+    # 🔬 旧解析会得到 bug 现象
+    assert parts[4][4:] == "=6a88ec1e", "复现：按位置取段得到孤立的 ="
+    # ✅ 新解析按前缀找
+    seg = next((x for x in parts if x.startswith("意图: ")), None)
+    assert seg and seg[len("意图: "):] == "topics=6 cover=x.png"
+    # ⚠️ 只看**代码行**——⛔ 别全文 in：注释里正引用着这个字符串在讲它为什么是错的
+    #    （与早先「测试写死白名单拼接串」同族：断言把注释也算进去了）
+    code = [ln for ln in (SCRIPTS / "publish_video.py").read_text(encoding="utf-8").splitlines()
+            if not ln.lstrip().startswith("#")]
+    assert not any("parts[4][4:]" in ln for ln in code), "⛔ 别再按下标取段"
+    assert any('x.startswith("意图: ")' in ln for ln in code)
+
+
+def test_bugB_登记失败必须出声且可补登(tmp_path):
+    """🩸 8/22 job 358：component job **在库里干干净净 done、无 502、无 unknown**
+    —— 服务端如实给了结果，**漏写发生在客户端登记这一步**，
+    而三个失败分支只把 `recorded: false` 塞进 JSON，调用方**既不告警也不改退出码** ⇒ 静默。
+
+    ⚠️ 与 8/19 那次**是不同路径**：那次是 502 断轮询「**没等到结果**」；
+    这次是「**拿到了结果却没写**」——⛔ 别以为修过一次就把这条路堵严了。"""
+    import sys
+    from argparse import Namespace
+    sys.path.insert(0, str(SCRIPTS))
+    import publish_note as pn, publish_video as pv
+    lp = tmp_path / pn.LEDGER_NAME
+    lp.write_text(pn.ledger_row(False, "T", "a.md", "号5", 358, "x", "—", "cover=FAIL") + "\n",
+                  encoding="utf-8")
+    # 正例：补登写得进去
+    r = pv.record_remedy(Namespace(job=358, ledger=str(lp), account=None, note_id=None),
+                         "cover", "c1ab982b")
+    assert r["recorded"] and "补救: cover=c1ab982b" in lp.read_text(encoding="utf-8")
+    # 🔬 破坏例：台账里没有那个 job ⇒ 必须 false 且原因指向台账
+    r2 = pv.record_remedy(Namespace(job=99999, ledger=str(lp), account=None, note_id=None),
+                          "cover", "cxxx")
+    assert not r2["recorded"] and "没有 job=" in r2["reason"]
+    # 🔴 关键：调用方必须出声，且告诉人怎么补（⛔ 别让人去重跑 fix-cover）
+    src = (SCRIPTS / "publish_video.py").read_text(encoding="utf-8")
+    tail = src.split('if not remedy.get("recorded")')[1][:800]
+    assert "file=sys.stderr" in tail and "--record-remedy" in tail
+    assert "别重跑 --fix-cover" in tail, "⛔ 必须明说别重跑（那是一次真提交）"
