@@ -861,15 +861,33 @@ def resolve_style_profile(note, override):
         if len(toks) >= 2:
             return {"套名": toks[0], "version": toks[1].lstrip("vV")}
         return {"套名": str(override).strip(), "version": ""}
+    hit, _ = _style_trace_hit(note)
+    return {"套名": hit[0], "version": hit[1]} if hit else None
+
+
+def _style_trace_hit(note):
+    """找留痕行：返回 `((套名, 版本) | None, 读到它的那个文件路径 | None)`。
+
+    🔴 **查找顺序只有这一份**——`resolve_style_profile` 与「报来源」都走它，
+    ⛔ 别为了拿路径再抄一遍查找逻辑（两处一漂，报出来的来源就是假的）。
+
+    ⚠️ **为什么要把来源报出来**（2026-08-22，服务号线提的）：
+    `render_cover.py` 是**两条线共用**的（公众号线经 `gen_gzh_images.py` 调它）。
+    公众号线自己不传 `--style-profile`、目录里通常也没有 `00-overview.md` ⇒ 不受影响；
+    ⚠️ 但两条线的稿子**只隔一层目录**（`content/wechat/` vs `content/xiaohongshu/`），
+    哪天有人照着小红书流程在 `wechat/<slug>/` 下放一份 `00-overview.md`，
+    公众号出图就会**突然开始拒渲**，而红灯说的是「风格档案对不上档案库」——
+    **在公众号线的语境里没人看得懂那是什么**。
+    ⇒ 报出「我是从哪个文件读到这句的」，跨线的人才有入手点。**带方向的错误信息。**"""
     if not note:
-        return None
+        return None, None
     for d in (Path(note).parent, Path(note).parent.parent):
         f = d / "00-overview.md"
         if f.is_file():
             hit = parse_style_trace(f.read_text(encoding="utf-8"))
             if hit:
-                return {"套名": hit[0], "version": hit[1]}
-    return None
+                return hit, str(f)
+    return None, None
 
 
 def cover_prompt_excerpt(prompt, limit=600):

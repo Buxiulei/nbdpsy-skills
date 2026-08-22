@@ -184,6 +184,26 @@ def resolve_style_profile(data_path: pathlib.Path, override):
     return gen_images.resolve_style_profile(str(data_path), override)
 
 
+def style_source(data_path: pathlib.Path, override) -> str:
+    """这句 `<套名> v<N>` **是从哪来的**——写进拒渲文案，给跨线的人一个入手点。
+
+    🔴 **为什么必须报来源**（2026-08-22，服务号线提的）：本脚本是**两条线共用**的
+    （公众号线经 `gen_gzh_images.py` 调它）。两条线的稿子**只隔一层目录**
+    （`content/wechat/` vs `content/xiaohongshu/`），哪天有人照着小红书流程在
+    `wechat/<slug>/` 下放一份 `00-overview.md`，公众号出图就会**突然开始拒渲**，
+    而红灯说的是「风格档案对不上档案库」——**在公众号线的语境里没人看得懂那是什么**。
+    ⇒ **带方向的错误信息**：报"我是从哪读到这句的"，人才知道该去动哪个文件。"""
+    if override:
+        return "命令行 --style-profile"
+    sys.path.insert(0, str(HERE))
+    try:
+        import gen_images                               # noqa: E402
+        _, src = gen_images._style_trace_hit(str(data_path))
+        return f"留痕行：{src}" if src else "（没找到留痕行）"
+    except Exception:
+        return "（来源不明）"
+
+
 # ── 凭证校验：**声明的那套档案**对不对得上档案库、**实际渲出的色**对不对得上它 ──────
 #
 # 🩸 这一段补的是「验了在不在，没验对不对」：凭证里一直同时躺着 `style_profile`（声明）
@@ -909,7 +929,8 @@ def main():
     style_profile = resolve_style_profile(dpath, args.style_profile)
     sp_check = check_style_profile(style_profile, timeout=args.style_timeout)
     if sp_check['verified'] is False:
-        return die(f"风格档案对不上档案库：凭证要写的是「{sp_check.get('tag')}」，但 {sp_check['reason']}"
+        return die(f"风格档案对不上档案库：凭证要写的是「{sp_check.get('tag')}」"
+                   f"（来源：{style_source(dpath, args.style_profile)}），但 {sp_check['reason']}"
                    f"——⛔ 已拒渲。先 `python3 style_profile.py --list-profiles` 看他到底有哪几套、"
                    f"各是第几版，再改 --style-profile 或 00-overview.md 的留痕行",
                    style_profile=style_profile, style_profile_check=sp_check)
