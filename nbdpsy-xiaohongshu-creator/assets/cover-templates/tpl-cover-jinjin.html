@@ -835,6 +835,24 @@ window.__fit = function () {
     landscape_layer4_hidden: landHid4,
     hero_fs: +heroFs.toFixed(1),
     hero_lines: lines.length,
+    /* 🔴 **递进行的实际折行数**（2026-08-22 补）：`.step .tx` 是 inline 元素，
+       `getClientRects().length` 就是它真正占了几行。
+       🩸 **为什么必须从 DOM 出来**：递进区与 hero 的排版策略**相反**——
+       hero 是**压字号避免折行**（所以 `hero_fs` 掉到多低就是它的告警），
+       **递进行是允许折行的**（`.step .mk` 的注释写着"条目折行也不跑位"）。
+       ⇒ 一条 46 字的递进行实测折成 **4 行**、把递进区撑到近半屏，
+       而 `step_fs` 反而是 42px（比压缩时的 22px 还大）——**看数字完全正常**。
+       ⚠️ 也就是说：**递进区失衡这件事，此前没有任何量具在报**。 */
+    /* 🩸 **量法返工过一次**：首版写 `el.getClientRects().length`，对一条**实测折成 4 行**
+       的递进行报 **1**——`.tx` 是 `flex:1 1 auto` 的 **flex item（block-level）**，
+       它自己只有**一个**边框盒，行数在它**内容**里。
+       ⚠️ 那个 1 看起来完全合理，**拿"已知折 4 行"的样本去验才发现是假的**。
+       ⇒ 改用 `Range.selectNodeContents` —— Range 的 getClientRects **按行返回**。 */
+    step_lines: [...document.querySelectorAll('.step .tx')].map(el => {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      return r.getClientRects().length;
+    }),
     /* 🔴 **决定 hero 字高的是「最长那一行」的字数，⛔ 不是总字数**
        （小红书发布线 2026-08-18，13 个真实渲染样本，完美单调）：
          最长行 5 字 → 11.12%｜6 字 → 9.22–9.37%｜7 字 → 8.00%🔴｜8 字 → 6.25–7.01%🔴

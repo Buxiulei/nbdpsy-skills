@@ -111,7 +111,7 @@ FIT_KEYS = {
     # 退出码会撞上「1＝出图了但不合格」，把版本不同步伪装成质量不合格。
     # 🔴 反面也真出过：`hero_glyph_band_canvas` 随根因修复从模板移除、这张表却还列着它，
     # **每一张都渲不出来**、报「模板与脚本版本对不上」。⇒ 删模板字段时必须同步删这里。
-    'jinjin': ('hero_fs', 'hero_lines', 'sub_fs', 'step_fs', 'name_fs', 'role_fs',
+    'jinjin': ('hero_fs', 'hero_lines', 'step_lines', 'sub_fs', 'step_fs', 'name_fs', 'role_fs',
                'overflow_px', 'safe_3x4_ok', 'crop_3x4',
                'hero_glyph_pct_band', 'hero_ink_ratio', 'hero_max',
                'hero_fill_pct', 'hero_fill_min', 'hero_fill_low', 'hero_at_max',
@@ -263,6 +263,34 @@ def match_palette(chk: dict, palette: list) -> dict:
         out['palette_reason'] = ('声明的色值全部渲出来了' if not missing
                                  else f'档案声明了 {missing}，实际渲出的调色板里没有')
     return out
+
+
+def step_wrap_warning(step_lines):
+    """递进行折行告警。返回一条 warning 字符串，或 None。
+
+    🩸 **hero 与递进行的排版策略相反**：hero 靠**压字号**避免折行（所以 `hero_fs` 掉到多低
+    就是它的告警）；**递进行是允许折行的**（模板里 `.step .mk` 的注释写着"条目折行也不跑位"）。
+    ⇒ 实测一条 46 字的递进行折成 **4 行**、吃掉近一半画面，
+    而 `step_fs` 反而是 **42px**（比压缩时的 22px 还大）——**看数字完全正常**。
+    ⚠️ 此前**没有任何量具在报这件事**。
+
+    阈值来自**实测 6 个真实样本**（`cover-html-proto` 那批）：`step_lines` 几乎全是
+    `[2,2,2]`、个别 `[1,2,2]` ⇒ **2 行是常态**。
+    ⚠️ 样本只有 6 个且同批，所以判据取保守侧：**3 行只提示、4 行才报红**，⛔ 不拿 2 行卡人。
+    """
+    nums = [n for n in (step_lines or []) if isinstance(n, int) and not isinstance(n, bool)]
+    if not nums:
+        return None
+    mx = max(nums)
+    if mx >= 4:
+        return (f"🔴 递进行折到 {mx} 行（各条 {nums}）——真实样本常态是 2 行。"
+                f"递进区会吃掉近一半画面、把后面几条挤到画布下缘。"
+                f"⚠️ **`step_fs` 这时候是正常的**（甚至偏大），光看字号看不出来。"
+                f"⇒ 把这一条拆短，或挪进正文")
+    if mx == 3:
+        return (f"递进行折到 3 行（各条 {nums}），比常态的 2 行多一行——"
+                f"看一眼递进区是不是挤了（⛔ 不是硬红）")
+    return None
 
 
 def die(msg, **extra):
@@ -1083,6 +1111,9 @@ def main():
         warnings.append(f"🔴 字体没落在预期字族上：实际拿去光栅化的是 {landed[0]}（全部命中：{landed}），"
                         f"预期 {list(EXPECTED_FONTS)} 之一。字宽一变，hero 的线性求解会解出**另一个字号**、"
                         f"整幅版式静默漂移——先装字体（apt install fonts-noto-cjk）再出图")
+    _sw = step_wrap_warning(fit.get('step_lines'))
+    if _sw:
+        warnings.append(_sw)
     if fit.get('orn_unknown'):
         warnings.append(f"🔴 陪衬 `{fit['orn_unknown']}` 不在模板 ORN 库里，右下角**什么都没画**。"
                         f"可选：{fit['orn_known']}（注意是连字符不是下划线）")
@@ -1199,6 +1230,9 @@ def main():
         'sub_fs': fit['sub_fs'],
         'hero_sub_ratio': fit['hero_sub_ratio'],
         'step_fs': fit['step_fs'],
+        # 递进行**实际折了几行**（每条一个数）。⚠️ 与 hero 不同：hero 靠压字号避免折行，
+        # 递进行是**允许折行**的 ⇒ `step_fs` 看着正常时，递进区可能已经被撑到半屏。
+        'step_lines': fit.get('step_lines'),
         'name_fs': fit['name_fs'],
         'role_fs': fit['role_fs'],
         'ident_orn_overlap': fit['ident_orn_overlap'],
