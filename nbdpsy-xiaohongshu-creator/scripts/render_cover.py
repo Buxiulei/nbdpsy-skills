@@ -111,7 +111,12 @@ FIT_KEYS = {
     # 退出码会撞上「1＝出图了但不合格」，把版本不同步伪装成质量不合格。
     # 🔴 反面也真出过：`hero_glyph_band_canvas` 随根因修复从模板移除、这张表却还列着它，
     # **每一张都渲不出来**、报「模板与脚本版本对不上」。⇒ 删模板字段时必须同步删这里。
-    'jinjin': ('hero_fs', 'hero_lines', 'step_lines', 'sub_fs', 'step_fs', 'name_fs', 'role_fs',
+    # 🩸 `hero_max_line` 2026-08-22 补进来：它**被红灯文案硬取**（「最长那一行 {ml} 字」），
+    #    却一直不在这张表里。⚠️ 而取值写的是 `.get()` ⇒ 模板哪天不交回，
+    #    红灯会**静默变成「最长那一行 None 字」**，⛔ 不会报「模板与脚本版本对不上」。
+    #    ——正是这张表要防的情况，它自己漏了这一个。
+    'jinjin': ('hero_fs', 'hero_lines', 'step_lines', 'hero_max_line',
+               'sub_fs', 'step_fs', 'name_fs', 'role_fs',
                'overflow_px', 'safe_3x4_ok', 'crop_3x4',
                'hero_glyph_pct_band', 'hero_ink_ratio', 'hero_max',
                'hero_fill_pct', 'hero_fill_min', 'hero_fill_low', 'hero_at_max',
@@ -263,6 +268,45 @@ def match_palette(chk: dict, palette: list) -> dict:
         out['palette_reason'] = ('声明的色值全部渲出来了' if not missing
                                  else f'档案声明了 {missing}，实际渲出的调色板里没有')
     return out
+
+
+#: 中文文案里混入的半角标点。⚠️ **只在紧邻中文语境时才算**——
+#: `NBDpsy 心理`、`3.5 小时`、`P01.png` 里的半角是**正常的**，拿裸子串判会恒响。
+#: 🩸 首版只认「紧邻**汉字**」，于是 `所以解法不是「少想」.` 漏判——
+#:    那个半角句号前面是**全角引号**，⛔ 不是汉字。⇒ 中文语境要含**全角标点**
+#:    （`\u3000-\u303f` 的〈「」…〉与 `\uff00-\uffef` 的〈，。！？〉）。
+_CN_CTX = r"\u4e00-\u9fff\u3000-\u303f\uff00-\uffef"
+_HALF_IN_CN = re.compile(rf"(?:(?<=[{_CN_CTX}])[,.;:!?]|[,.;:!?](?=[{_CN_CTX}]))")
+
+
+def halfwidth_punct_warning(data: dict):
+    """中文文案里混入半角标点 → **提示级** warn。返回一条字符串或 None。
+
+    🔴 **理由是「中文排版规范」，⛔ 不是「拉崩字高」**（收口人 2026-08-22 定）。
+    🩸 那个因果一度被转述反了：「半角逗号使字高 9.79%→8.33%」——
+    **6 组对照实测正好相反**：无标点 11.04% ／ **全角 9.67%** ／ **半角 11.58%（反而更高）**。
+    **压字高的是全角**（占 1.0 字宽＝多一个字），半角只占 0.6、几乎不吃宽度。
+    ⇒ 字高这件事已由 `hero_max_line`（改成**按宽度计**）交给既有的最长行判据接住，
+    ⛔ 这条 warn **不再承担那个理由**——否则就是「warn 无害写法、放过真凶」。
+
+    ⚠️ **提示级，⛔ 不阻断、⛔ 不自动改**：中文里偶尔出现半角有正当场合
+    （品牌写法、英文夹注），判在人。"""
+    hits = []
+    for key in ("hero", "subtitle", "footer"):
+        v = data.get(key)
+        for t in (v if isinstance(v, list) else [v]):
+            if isinstance(t, str) and _HALF_IN_CN.search(t):
+                hits.append(f"{key}「{t.strip()}」")
+    for i, t in enumerate(data.get("steps") or [], 1):
+        if isinstance(t, str) and _HALF_IN_CN.search(t):
+            hits.append(f"steps[{i}]「{t.strip()}」")
+    if not hits:
+        return None
+    return ("中文文案里混入了半角标点（`,.;:!?`）：" + "；".join(hits[:3])
+            + ("…" if len(hits) > 3 else "")
+            + "——中文排版规范用全角。⛔ 不阻断也没自动改（品牌写法/英文夹注里半角是对的，判在人）。"
+              "⚠️ 这条**与字高无关**：真正吃字宽的是**全角**标点（1.0 字宽），"
+              "那件已由最长行判据接住")
 
 
 def step_wrap_warning(step_lines):
@@ -1114,6 +1158,9 @@ def main():
     _sw = step_wrap_warning(fit.get('step_lines'))
     if _sw:
         warnings.append(_sw)
+    _hw = halfwidth_punct_warning(data)
+    if _hw:
+        warnings.append(_hw)
     if fit.get('orn_unknown'):
         warnings.append(f"🔴 陪衬 `{fit['orn_unknown']}` 不在模板 ORN 库里，右下角**什么都没画**。"
                         f"可选：{fit['orn_known']}（注意是连字符不是下划线）")
@@ -1233,6 +1280,8 @@ def main():
         # 递进行**实际折了几行**（每条一个数）。⚠️ 与 hero 不同：hero 靠压字号避免折行，
         # 递进行是**允许折行**的 ⇒ `step_fs` 看着正常时，递进区可能已经被撑到半屏。
         'step_lines': fit.get('step_lines'),
+        # 决定 hero 字高的就是它（模板注释里那张实证表按它卡），⛔ 别只让红灯文案私享
+        'hero_max_line': fit.get('hero_max_line'),
         'name_fs': fit['name_fs'],
         'role_fs': fit['role_fs'],
         'ident_orn_overlap': fit['ident_orn_overlap'],
