@@ -140,9 +140,9 @@ def test_typeset对不上就拒渲():
 def _receipt(tmp_path, style_profile):
     """造一份**能走到 style_profile 判据那一步**的凭证。
 
-    ⚠️ 用 `gen_images` 档，⛔ 不用 `typeset_longimage`：后者走 `else` 分支，
-    会先被 `confirmed_by` / `confirmed_at` / `prompt_excerpt` 挡住，测不到我们要测的那一行。
-    🔴 **而那正是一个独立缺陷**（见 `test_typeset档在闸门A那边还没开分岔`）。"""
+    ⚠️ 用 `gen_images` 档：它的必填字段最少却仍**逐项判**，能干净地走到 style_profile 那一行。
+    （typeset 档现在也过得去了——见 `test_typeset凭证能过闸门A`——但它走的是另一条分岔，
+      拿它测这里会同时验到两件事，红了分不清是哪件坏的。）"""
     cover = tmp_path / "P01.png"
     cover.write_bytes(b"\x89PNG\r\n\x1a\n")
     pn.cover_meta_path(cover).write_text(json.dumps({
@@ -175,19 +175,88 @@ def test_闸门A对齐全的dict放行(tmp_path):
     assert r["ok"] is True and r["style_profile"]["套名"] == "文字版"
 
 
-def test_typeset档在闸门A那边还没开分岔():
-    """🔴 **登记一个已知缺陷，⛔ 不是把它当成正确行为固化**。
+def _typeset_receipt(tmp_path, **over):
+    """用**产线真函数**造 typeset 凭证，⛔ 不手搓——手搓的凭证证明不了产线真会写成这样。"""
+    cover = tmp_path / "P01.png"
+    cover.write_bytes(b"\x89PNG\r\n\x1a\n")
+    tl.write_cover_meta(cover, theme="clean", style_profile={"套名": "文字版", "version": "1"},
+                        page_w=1080, page_h=1920, pages=8, theme_over={},
+                        style_check={"verified": True, "reason": "ok", "declared": []})
+    if over:
+        mp = pn.cover_meta_path(cover)
+        m = json.loads(mp.read_text(encoding="utf-8")); m.update(over)
+        mp.write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+    return cover
 
-    `typeset_longimage` 走 `else` 分支 ⇒ 要 `confirmed_by` / `confirmed_at` / `prompt_excerpt`。
-    但它是**确定性排版渲染，压根没有提示词**——闸门自己的注释都写着
-    「⛔ 别对 HTML 路要一段不存在的提示词」，却只给 `render_cover` 开了分岔。
-    ⇒ 这条线的封面凭证**过不了闸门 A**（第二个"恒拒"）。
-    ⚠️ 本测试钉住现状，**修好之后它会红** —— 那时请连同这段注释一起更新，
-    ⛔ 别只把断言反过来了事。"""
+
+def test_typeset凭证能过闸门A(tmp_path):
+    """🩸 **此前这条产线一张封面都发不出去**（第二个恒拒）：`typeset_longimage` 一直在
+    `COVER_SOURCES` 白名单里，却**没开分岔** ⇒ 被要求 `confirmed_by`/`confirmed_at`/
+    `prompt_excerpt`，而它是确定性排版渲染、**压根没有提示词**。
+    ⚠️ 闸门自己的注释当时就写着「⛔ 别对 HTML 路要一段不存在的提示词」——
+    **规则写对了，只有一条路被接上**。⇒ 这就是「提醒只保护它点名的那一处」。"""
+    r = pn.check_cover_receipt(_typeset_receipt(tmp_path))
+    assert r["ok"] is True and r["theme"] == "clean" and r["palette"]
+
+
+@pytest.mark.parametrize("src_val,extra", [
+    ("manual_confirmed", {}),
+    ("gen_images", {"job_id": 1, "session_id": "s1"}),
+])
+def test_豁免不外溢到别的来源(tmp_path, src_val, extra):
+    """🔴 豁免只给**确定性渲染**那两条路。⛔ 别让它变成一句"换个 source 就免检"。"""
+    with pytest.raises(ValueError):
+        pn.check_cover_receipt(_typeset_receipt(tmp_path, source=src_val, **extra))
+
+
+@pytest.mark.parametrize("over,why", [
+    ({"palette": []}, "没有调色板就没有凭据"),
+    ({"theme": ""}, "主题是这条路的版式背书"),
+    ({"cover_file": "P09.png"}, "张冠李戴"),
+    ({"style_profile": {"套名": "文字版"}}, "缺 version 判不了按哪一版出的"),
+])
+def test_豁免不是旁路(tmp_path, over, why):
+    """⚠️ 免的是**确认戳与提示词**，⛔ 不是免凭据——确定性字段一个都不能少。
+    「字段缺失＝放行」正是闸门最常见的死法。"""
+    with pytest.raises(ValueError):
+        pn.check_cover_receipt(_typeset_receipt(tmp_path, **over))
+
+
+def test_确定性来源免确认戳但只免这两条():
     src = (SCRIPTS / "publish_note.py").read_text(encoding="utf-8")
-    assert 'elif source == "render_cover":' in src
-    assert 'elif source == "typeset_longimage":' not in src, \
-        "typeset 分岔已开——请更新本测试与它的注释，并核对 prompt_excerpt 是否已豁免"
+    assert 'DETERMINISTIC_SOURCES = ("render_cover", "typeset_longimage")' in src
+    assert "elif source in DETERMINISTIC_SOURCES:" in src
+
+
+def test_单出闸只给typeset免不给render_cover免():
+    """🩸 首版把 `cover_only` 免除给了整个 `DETERMINISTIC_SOURCES`，
+    **连带削弱了 render_cover** —— 而它一次渲染只出一张图，写的 `cover_only: True`
+    是**真话**、本来就过得去。⇒ **能靠说真话过的，就别给它开豁免。**
+    （被 `test_render_cover_still_needs_style_profile_and_single_out` 当场抓住。）"""
+    src = (SCRIPTS / "publish_note.py").read_text(encoding="utf-8")
+    i = src.index("confirmed_by = str(meta.get")
+    seg = src[i:i + 900]
+    assert 'if source == "typeset_longimage":' in seg
+    assert "if source in DETERMINISTIC_SOURCES:" not in seg, "又把单出闸免给 render_cover 了"
+
+
+def test_typeset不谎报cover_only():
+    """🔴 **⛔ 不让产线写一个不真实的 `cover_only: True` 混过闸**——它一次出 N 页，那是谎。
+    逼产线编一个好看的值来过闸，**正是这条闸门要防的东西本身：造假留痕**。
+    ⇒ 宁可在闸门那边显式免除并写明理由。"""
+    assert '"cover_only"' not in TL_SRC, "typeset 开始写 cover_only 了——检查是不是在谎报单出"
+
+
+def test_typeset凭证带得出溯源三件套():
+    """确定性渲染没有提示词，凭据换成：**给哪张图 / 哪个主题 / 实际什么色**。"""
+    for k in ('"cover_file": png_path.name', '"palette": theme_palette(', '"theme": theme'):
+        assert k in TL_SRC, f"凭证少了 {k}"
+
+
+def test_palette取的是实际生效那份而不是主题默认():
+    """⚠️ 档案覆盖了 accent，凭证里就该是覆盖后的色——否则凭证记的是"许诺"不是"实际"。"""
+    assert tl.theme_palette("clean")[2] == "#B3282D"
+    assert tl.theme_palette("clean", {"accent": "#A34B3A"})[2] == "#A34B3A"
 
 
 # ────────── 示例串：⛔ 不写"看起来能直接用"的具体值 ──────────

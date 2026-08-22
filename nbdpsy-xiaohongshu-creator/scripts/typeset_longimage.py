@@ -112,8 +112,25 @@ COVER_SOURCE = "typeset_longimage"
 ⇒ 两端一起改，⛔ 别只做一端。"""
 
 
+def theme_palette(theme: str, theme_over=None) -> list:
+    """这次**实际生效**的调色板（`#RRGGBB` 大写去重）。
+
+    ⚠️ 取的是 `THEMES[theme]` 叠加 `style_overrides` 之后那一份——**HTML 就是拿它生成的**，
+    ⛔ 不是"数据里许诺的色"。这条产线是确定性排版渲染，这份字典与成图之间没有第二条路径。
+    （对照 `render_cover`：那边从渲好的页面 `:root` 上读，因为它的模板里写死了色值、
+      与调用方给的数据是两回事；这里没有那层分离。）"""
+    t = dict(THEMES.get(theme) or {})
+    t.update({k: v for k, v in (theme_over or {}).items() if v})
+    out = []
+    for key in ("bg", "fg", "accent", "accent_soft"):
+        v = str(t.get(key) or "").strip().upper()
+        if re.fullmatch(r"#[0-9A-F]{6}", v) and v not in out:
+            out.append(v)
+    return out
+
+
 def write_cover_meta(png_path, *, theme, style_profile, page_w, page_h, pages,
-                     style_check=None):
+                     style_check=None, theme_over=None):
     """渲完 **P01（封面）** 落同名 `.meta.json` 凭证。
 
     🩸 **这条产线此前零凭证** ⇒ 文字版长图的笔记到闸门 A **全会被拒**
@@ -129,6 +146,12 @@ def write_cover_meta(png_path, *, theme, style_profile, page_w, page_h, pages,
     """
     meta = {
         "source": COVER_SOURCE,
+        # 🔴 **这份凭证是给哪张图的**——闸门 A 靠它防张冠李戴（`render_cover` 同款判据）。
+        #    ⚠️ 此前整个缺失 ⇒ 这条路的凭证连"是不是这张图的"都证明不了。
+        "cover_file": png_path.name,
+        # 🔴 **这次实际生效的调色板**：确定性渲染没有提示词，凭据换成确定性字段
+        #    （与 `render_cover` 的 palette 同一位置、同一用途）。
+        "palette": theme_palette(theme, theme_over),
         "style_profile": style_profile,          # ⚠️ 没有就是 null，⛔ 不编默认值
         # 上面那句声明**核过没有**（2026-08-22）：三态 verified。
         # ⚠️ `null` ＝这次没核成（离线/没配 key/服务端没答上来），
@@ -860,7 +883,7 @@ def main():
                 # ⇒ 改用 `load_style_meta`，口径与 render_cover / gen_images 完全一致：`{套名, version}`。
                 write_cover_meta(fp, theme=theme, style_profile=_sp or None,
                                  page_w=PAGE_W, page_h=PAGE_H, pages=len(pages),
-                                 style_check=_sp_check)
+                                 style_check=_sp_check, theme_over=theme_over)
 
         if counselor:                                  # 末页推介：藏正文、显推介卡，再截一张
             overflow = page.evaluate("""() => {

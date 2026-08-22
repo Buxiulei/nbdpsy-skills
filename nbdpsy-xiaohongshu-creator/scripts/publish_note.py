@@ -299,6 +299,41 @@ def cover_meta_path(cover: Path) -> Path:
     return cover.with_suffix(".meta.json")
 
 
+#: 确定性渲染的两条路：没有 server job、**没有提示词**，凭据换成确定性字段。
+#: 🩸 2026-08-22：`typeset_longimage` 一直在 `COVER_SOURCES` 白名单里，却**没开分岔** ⇒
+#:    它被要求 `confirmed_by`/`confirmed_at`/`prompt_excerpt`，而它是确定性排版渲染、
+#:    **压根没有提示词** ⇒ 这条产线的封面**一张都发不出去**（恒拒）。
+#:    ⚠️ 闸门自己的注释当时就写着「⛔ 别对 HTML 路要一段不存在的提示词」——
+#:    **规则写对了，只有一条路被接上**。⇒ 这就是「提醒只保护它点名的那一处」。
+DETERMINISTIC_SOURCES = ("render_cover", "typeset_longimage")
+
+
+def typeset_evidence(cover: Path, mp: Path, meta: dict) -> dict:
+    """`source=typeset_longimage` 的校验项①与④——与 `render_cover_evidence` 同构。
+
+    确定性排版渲染没有提示词，判三样确定性事实：**这份凭证是给哪张图的 / 用了哪个主题 /
+    实际生效的调色板**。⚠️ 缺字段一律拒（fail-closed）：允许"字段没有就跳过"
+    等于给闸门开一整条旁路。"""
+    img = str(meta.get("cover_file") or "").strip()
+    if not img:
+        raise ValueError(f"封面凭证 {mp.name} 没记这份凭证是给哪张图的（`cover_file`）——"
+                         "校验不了张冠李戴，拒发")
+    if Path(img).stem != cover.stem:
+        raise ValueError(f"封面凭证张冠李戴：凭证记的是 {Path(img).name} ≠ 实际文件 {cover.name}")
+    theme = str(meta.get("theme") or "").strip()
+    if not theme:
+        raise ValueError(f"封面凭证 {mp.name} 缺字段 `theme`——文字版这条路靠主题背书"
+                         "（它决定了字体/配色/版心，相当于 AI 路的具名版式）")
+    pal = meta.get("palette")
+    pal_txt = " ".join(str(x) for x in pal) if isinstance(pal, (list, tuple)) else str(pal or "")
+    hexes = re.findall(r"#[0-9A-Fa-f]{6}\b", pal_txt)
+    if not hexes:
+        raise ValueError(f"封面凭证 {mp.name} 的 `palette` 里没有色值（#RRGGBB）——"
+                         "这条路不判提示词，改判**实际渲出来的调色板**，缺了就没有凭据")
+    return {"theme": theme, "palette": hexes,
+            "deterministic": bool(meta.get("deterministic"))}
+
+
 def render_cover_evidence(cover: Path, mp: Path, meta: dict) -> dict:
     """`source=render_cover` 的校验项①与④——**确定性渲染没有提示词，凭据换成确定性字段**。
 
@@ -415,8 +450,14 @@ def check_cover_receipt(cover: Path) -> dict:
     if source == "gen_images":
         need("job_id")
         need("session_id")
-    elif source == "render_cover":
-        pass                     # 本地确定性渲染，没有 server job；凭据见 render_cover_evidence
+    elif source in DETERMINISTIC_SOURCES:
+        # 本地确定性渲染，没有 server job；凭据见 *_evidence。
+        # 🔴 **为什么这两条路不要人工确认戳**：`confirmed_by` 防的是「批量重出的 P1 覆盖掉
+        #    已确认封面，而闸门全程无感」。确定性渲染**重渲 byte 级不变**
+        #    （typeset 发布线实测 37 张一致），覆盖了也和原来一模一样 ⇒ **那个风险不存在**。
+        # ⚠️ 免的是**确认戳**，⛔ 不是免凭据——凭据换成了确定性字段（图名/模板/调色板），
+        #    比一段人写的提示词更硬。
+        pass
     else:
         need("confirmed_by")     # 谁认可的——空串/纯空白不算数
         need("confirmed_at")
@@ -426,7 +467,19 @@ def check_cover_receipt(cover: Path) -> dict:
     # ⚠️ 老凭证没有 cover_only 字段 → 判为"不是单出"（fail-closed）：宁可让人补一次确认戳，
     # 也不给"字段缺失＝默认放行"留口子。source=manual_confirmed 天然带确认戳，不受这条影响。
     confirmed_by = str(meta.get("confirmed_by") or "").strip()
-    if not meta.get("cover_only") and not confirmed_by:
+    # 🔴 **确定性渲染免这一关**（2026-08-22）：这条闸门防的是「批量重出的 P1 覆盖掉**已确认**
+    #    的封面，而闸门全程无感」。确定性渲染**重渲 byte 级不变**（typeset 发布线实测 37 张一致）
+    #    ⇒ 覆盖了也与原来一模一样，**那个风险不存在**。
+    # ⚠️ 为什么不让 typeset 写 `cover_only: True` 混过去：**它一次出 N 页，那是谎**。
+    #    逼产线写一个不真实的字段来过闸，正是这条闸门要防的东西本身——**造假留痕**。
+    #    ⇒ 宁可在闸门这边显式免除并说明理由，⛔ 不在产线那边编一个好看的值。
+    # ⚠️ **只给 typeset 免，⛔ 不给整个 DETERMINISTIC_SOURCES**：`render_cover` 一次渲染
+    #    只出一张图，它写的 `cover_only: True` 是**真话**，本来就过得去——给它免除等于凭空
+    #    削弱一道它已经满足的闸门（🩸 首版就是这么写的，被 test_render_cover_still_needs_
+    #    style_profile_and_single_out 当场抓住）。**能靠说真话过的，就别给它开豁免。**
+    if source == "typeset_longimage":
+        pass
+    elif not meta.get("cover_only") and not confirmed_by:
         ran = str(meta.get("run_pages") or "").strip()
         raise ValueError(
             f"封面凭证 {mp.name}：" + COVER_BATCH_REJECT_MSG + "\n"
@@ -440,6 +493,8 @@ def check_cover_receipt(cover: Path) -> dict:
     # 压根没有提示词，判模板/调色板/版式三个确定性字段。⛔ 别对 HTML 路要一段不存在的提示词。
     if source == "render_cover":
         extra = render_cover_evidence(cover, mp, meta)
+    elif source == "typeset_longimage":
+        extra = typeset_evidence(cover, mp, meta)
     else:
         extra = {}
         excerpt = str(need("prompt_excerpt"))
