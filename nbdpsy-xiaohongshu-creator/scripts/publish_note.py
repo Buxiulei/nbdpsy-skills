@@ -450,6 +450,14 @@ def check_cover_receipt(cover: Path) -> dict:
             raise ValueError(f"封面凭证的 prompt_excerpt 里没有具名版式"
                              f"（{'/'.join(COVER_LAYOUTS)}）——封面版式工程没走，见 illustration-spec §2-b")
     sp = meta.get("style_profile") or {}
+    # 🩸 **类型防御**（2026-08-22）：`typeset_longimage` 一度把 style_profile 写成**套名字符串**
+    #    （更早还因为取错字段恒为 null）。字符串没有 `.get` ⇒ 这里会抛 **AttributeError**，
+    #    ⚠️ 那是**崩溃**不是**拒绝**——闸门崩掉时给的是一条堆栈，人看不出"凭证格式不对"，
+    #    更看不出该去修哪条产线。⇒ 显式判类型，把它变成一条能照着修的拒绝理由。
+    if not isinstance(sp, dict):
+        raise ValueError(f"封面凭证的 style_profile 是 {type(sp).__name__} 而不是对象——"
+                         f"三条产线的口径是 {{套名, version}}（值：{sp!r}）。"
+                         f"这份凭证是旧格式或产线写错了，重出封面即可")
     if not sp.get("套名") or sp.get("version") in (None, ""):
         raise ValueError(f"封面凭证缺 style_profile（套名 + version）——"
                          "审查端要按这一版档案判封面，缺了没法判")

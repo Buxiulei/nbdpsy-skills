@@ -31,6 +31,60 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 
 ---
 
+## [2.32.0] — 2026-08-22
+
+### 新增 — 风格档案校验补齐到**三条封面产线**
+
+v2.28.0 只做了 `render_cover`。本版补上另两条，三处**共用同一个 `verify_declaration`**
+（⛔ 别各写一遍：口径一漂闸门就形同虚设）。
+
+- **`gen_images`**：拦在 **`create_job` 之前**——出图是**花钱**的，与 R4 结构闸门并列在
+  「拒跑，⛔ 不出图不烧额度」那个位置。`--job` 复查路径**不拦**（钱已经花了，拦了只是让人
+  拿不到图），但**仍自己补核一次写进凭证**——核只为溯源。
+- **`typeset_longimage`**：新增 `--style-profile` / `--style-timeout`，凭证按三线统一口径写
+  `{套名, version}`。
+- 两处凭证都新增 `style_profile_check`（三态 verified）。
+
+### 修复 — typeset 线的封面凭证**恒缺 style_profile**（一条恒响的闸门）
+
+🩸 这条线原来取的是 `(typeset段).get("name")`，而 **typeset 段的键只有**
+`theme/bg/accent/accent_soft/font/title_font/indent/texture` —— **压根没有 `name`**。
+⇒ `style_profile` **恒为 `null`** ⇒ 发布时闸门 A **恒拒**（它要求 `套名` + `version` 都在）。
+根因：`load_style` 剥掉 `--get` 外壳时把 **`set` / `version` 一起丢了**，而身份就在那层壳上。
+⇒ 新增 `load_style_meta` 专门取身份，⛔ 不动 `load_style`。
+🔴 **一条恒响的闸门等于没有闸门**——这条线的封面此前根本发不出去。
+
+### 修复 — 闸门 A 遇到非 dict 的 style_profile 会**崩溃**而不是拒绝
+
+typeset 一度把它写成**套名字符串**，字符串没有 `.get` ⇒ 抛 **AttributeError**。
+⚠️ 那是**崩溃**不是**拒绝**：给的是一条堆栈，人看不出"凭证格式不对"，更看不出该修哪条产线。
+⇒ 显式判类型，变成一条能照着修的拒绝理由。
+
+### 修复 — 示例串第 15 个传播点长在**告警文本**里
+
+`gen_images` 的告警写着 `--style-profile "图文 v3"` —— **档案库里不存在的组合**
+（「图文」只有 v2），而且**人看到告警就会照抄**。
+连同两处 docstring 示例一并改成占位符 `<套名> v<N>`。
+⚠️ 分类处理：**事故复盘里的引用⛔不动**（那是在讲那次事故，用法正确），
+只改**会被当值抄走的位置**。新增测试钉死这条区分。
+
+### 登记 — 一个**没在本版修**的缺陷
+
+`typeset_longimage` 档在闸门 A 那边走 `else` 分支，要 `confirmed_by` / `confirmed_at` /
+**`prompt_excerpt`** —— 而它是**确定性排版渲染、压根没有提示词**。
+闸门自己的注释都写着「⛔ 别对 HTML 路要一段不存在的提示词」，却**只给 `render_cover`
+开了分岔，typeset 漏了**。⇒ 这条线的凭证仍过不了闸门 A（**第二个"恒拒"**）。
+⚠️ 改发布端行为影响面大且不在本轮批准范围，**已用测试钉住现状并写明这是缺陷**
+（`test_typeset档在闸门A那边还没开分岔`，修好后它会红，⛔ 别只把断言反过来了事）。
+
+### 测试
+
+新增 `tests/test_style_gate_three_lines.py`（25 例），全量 **1976 → 2001 全绿**。
+**五项变异全部被杀**：gen_images 不再核／永不拒跑／typeset 永不拒渲／
+闸门 A 去掉类型防御／告警里放回可抄的错标。
+
+---
+
 ## [2.31.0] — 2026-08-22
 
 ### 新增 — `check_video_crisis.py`：判-6 的确定性量具（确-5）

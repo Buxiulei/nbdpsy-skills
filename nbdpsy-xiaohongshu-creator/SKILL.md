@@ -357,7 +357,7 @@ python3 {SKILL_DIR}/scripts/style_profile.py --get --kind typeset > {note_dir}/_
 ⚠️ 与第 0.5 步「红线三层」那条 `参考样本覆盖：…` 留痕行**是两行、各写各的，互不替代**：
 
 ```
-风格档案：图文 v3（本人档案，读取于 2026-07-28）
+风格档案：<套名> v<N>（本人档案，读取于 YYYY-MM-DD）
 ```
 
 - ✅ **别自己拼这一行**：`--get` 的输出 JSON 里三层都带好了一个 `trace_line` 字段，**原样抄进 `00-overview.md`** 即可（脚本 stderr 也会把它打出来）。

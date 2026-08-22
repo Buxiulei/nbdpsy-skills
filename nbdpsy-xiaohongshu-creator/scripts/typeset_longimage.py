@@ -112,7 +112,8 @@ COVER_SOURCE = "typeset_longimage"
 ⇒ 两端一起改，⛔ 别只做一端。"""
 
 
-def write_cover_meta(png_path, *, theme, style_profile, page_w, page_h, pages):
+def write_cover_meta(png_path, *, theme, style_profile, page_w, page_h, pages,
+                     style_check=None):
     """渲完 **P01（封面）** 落同名 `.meta.json` 凭证。
 
     🩸 **这条产线此前零凭证** ⇒ 文字版长图的笔记到闸门 A **全会被拒**
@@ -129,6 +130,10 @@ def write_cover_meta(png_path, *, theme, style_profile, page_w, page_h, pages):
     meta = {
         "source": COVER_SOURCE,
         "style_profile": style_profile,          # ⚠️ 没有就是 null，⛔ 不编默认值
+        # 上面那句声明**核过没有**（2026-08-22）：三态 verified。
+        # ⚠️ `null` ＝这次没核成（离线/没配 key/服务端没答上来），
+        #    ⛔ 既不等于"档案错"也不等于"核过且对得上"。
+        "style_profile_check": style_check,
         "theme": theme,
         # ⚠️ created_at/actor 走 shared 的 receipt_stamp——⛔ 三个写入点别各写各的
         **compliance_core.receipt_stamp(),
@@ -287,6 +292,44 @@ def load_style(path):
     if not isinstance(ts, dict):
         raise ValueError('档案里的 typeset 段不是对象，读不出排版字段')
     return ts
+
+
+def load_style_meta(path, override=None) -> dict:
+    """本批风格档案的**身份**（套名 + 版本），写进凭证的 `style_profile`。
+
+    🩸 **为什么要单开一个函数**（2026-08-22）：`load_style` 会把 `--get` 整份输出的外层剥掉
+    只留 `typeset` 段，而 **`set` / `version` 就在那层外壳上**——剥完就没了。
+    于是这条线原来取的是 `(typeset段).get("name")`，而 typeset 段的键只有
+    `theme/bg/accent/accent_soft/font/title_font/indent/texture`，**压根没有 `name`**
+    ⇒ `style_profile` **恒为 null** ⇒ 发布时闸门 A **恒拒**（它要求 `套名` + `version` 都在）。
+    🔴 **一条恒响的闸门等于没有闸门**——这条线的封面此前根本发不出去，只能靠别的档绕。
+
+    口径与另两处产线**完全一致**（render_cover / gen_images 都是 `{套名, version}`）：
+    `--style-profile "<套名> v<N>"` 优先，否则从 `--style` 那份 JSON 的外壳取。
+    ⚠️ 拿不到就返回 `{}` → 凭证里这一项缺 → 闸门 A 拒（fail-closed，与另两处同）。
+
+    ⚠️ **本地 JSON 是工作副本，⛔ 不是真源**：真源是档案库。所以取到的 `{套名, version}`
+    还要过一次 `verify_declaration`（见调用处）——**副本可能是几天前导出的，那一版可能已经不在了**。
+    """
+    if override:
+        toks = str(override).split()
+        if len(toks) >= 2:
+            return {"套名": toks[0], "version": toks[1].lstrip("vV")}
+        return {"套名": str(override).strip(), "version": ""}
+    if not path:
+        return {}
+    try:
+        data = json.loads(pathlib.Path(path).expanduser().read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # `--get` / `--version N` 的整份输出：套名在 `set`，版本在 `version`
+    name = data.get("set") or data.get("profile_name")
+    ver = data.get("version")
+    if name and ver not in (None, ""):
+        return {"套名": str(name), "version": str(ver)}
+    return {}
 
 
 def style_overrides(typeset):
@@ -609,6 +652,14 @@ def main():
     ap.add_argument('--style', metavar='PROFILE.JSON',
                     help='运营个人风格档案里 kind="typeset" 的那一套（style_profile.py --get '
                          '--kind typeset 的产物）；其 typeset 段覆盖主题默认值，null 的字段不覆盖')
+    ap.add_argument('--style-profile', metavar='"套名 vN"',
+                    help='本批风格档案的**身份**，写进凭证的 style_profile（闸门 A 要）。'
+                         '不给就从 --style 那份 JSON 的外壳（set/version）取。'
+                         '⚠️ 口径与 render_cover / gen_images 完全一致：{套名, version}。'
+                         '🔴 会**联网核**这个组合在不在档案库里，对不上直接拒渲')
+    ap.add_argument('--style-timeout', type=float, default=20,
+                    help='核档案库的超时（秒，默认 20）。⚠️ 超时按「没核成」处理：'
+                         'warn 放行 + 凭证记 verified:null，⛔ 不会当成核过')
     ap.add_argument('--title', help='首页大标题，默认取 frontmatter title')
     ap.add_argument('--no-meta', action='store_true', help='不渲染「全文N字｜阅读需M分钟」副信息行')
     ap.add_argument('--counselor', metavar='EMP_NO',
@@ -642,6 +693,33 @@ def main():
                                '字段口径见 references/longform-typeset-spec.md 的 typeset 段']},
                 ensure_ascii=False))
             return 1
+
+    # —— 风格档案身份 + 档案库核对（**渲染之前**）——
+    # ⚠️ 本地 JSON 是**工作副本**，⛔ 不是真源：真源是档案库。副本可能是几天前导出的，
+    #    那一版可能已经不在了——所以取到身份之后还要过一次 verify。
+    _sp = load_style_meta(args.style, args.style_profile)
+    _sp_check = {"verified": None, "reason": "没有 style_profile 可核", "declared": []}
+    if _sp:
+        try:
+            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+            import style_profile as _spmod          # noqa: E402  同目录
+            _sp_check = _spmod.verify_declaration(_sp, timeout=args.style_timeout)
+        except Exception as exc:                    # 装不全 ≠ 档案错
+            _sp_check = {"verified": None, "declared": [],
+                         "reason": f"读不到档案库客户端（{exc}）"}
+        if _sp_check["verified"] is False:
+            print(json.dumps({
+                'ok': False,
+                'error': f"风格档案对不上档案库：凭证要写的是「{_sp_check.get('tag')}」，"
+                         f"但 {_sp_check['reason']}——⛔ 已拒渲",
+                'style_profile': _sp, 'style_profile_check': _sp_check,
+                'how_to_fix': ['python3 style_profile.py --list-profiles 看有哪几套、各第几版',
+                               '再改 --style-profile 或重新导出 --style 那份工作副本']},
+                ensure_ascii=False))
+            return 2
+        if _sp_check["verified"] is None:
+            print(f"⚠ 这批没核过档案库（{_sp_check['reason']}）——凭证会记 verified:null，"
+                  f"⛔ 别当成「核过且对得上」", file=sys.stderr)
 
     theme = resolve_theme(args.theme, style_typeset, meta)
     if theme not in THEMES:
@@ -775,12 +853,14 @@ def main():
             page.screenshot(path=str(fp), clip={'x': 0, 'y': 0, 'width': PAGE_W, 'height': PAGE_H})
             files.append(str(fp))
             if idx == 1:
-                # ⚠️ 套名从**档案本身**取（`load_style` 的产物），⛔ 不另编一个来源：
-                #    两个来源迟早漂，而凭证漂了就是错标——比缺失更毒。
-                #    档案没传时是 None ⇒ 凭证里如实写 null。
-                _sp = (style_typeset or {}).get("name") or (style_typeset or {}).get("profile")
-                write_cover_meta(fp, theme=theme, style_profile=_sp,
-                                 page_w=PAGE_W, page_h=PAGE_H, pages=len(pages))
+                # 🩸 原来取的是 `(typeset段).get("name")`——**那一段里压根没有 name**
+                #    （键只有 theme/bg/accent/accent_soft/font/title_font/indent/texture），
+                #    ⇒ `style_profile` **恒为 null** ⇒ 闸门 A **恒拒**这条线的封面。
+                #    根因：`load_style` 剥掉 `--get` 外壳时把 `set`/`version` 一起丢了。
+                # ⇒ 改用 `load_style_meta`，口径与 render_cover / gen_images 完全一致：`{套名, version}`。
+                write_cover_meta(fp, theme=theme, style_profile=_sp or None,
+                                 page_w=PAGE_W, page_h=PAGE_H, pages=len(pages),
+                                 style_check=_sp_check)
 
         if counselor:                                  # 末页推介：藏正文、显推介卡，再截一张
             overflow = page.evaluate("""() => {

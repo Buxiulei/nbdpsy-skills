@@ -72,7 +72,7 @@ _PAGE_HEADING = re.compile(r"^###\s+(P\d+)\b")
 _CLAIM_LINE = re.compile(r"^\s*\*\*论点行\*\*\s*[:：]\s*(.*)$")
 _STORYLINE_LINE = re.compile(r"^\s*故事线\s*[:：]\s*(.+)$", re.M)
 # 风格档案留痕行（00-overview.md 开头，格式见 SKILL.md「开跑前 · 读风格档案」）：
-#   风格档案：图文 v3（本人档案，读取于 2026-07-28）
+#   风格档案：<套名> v<N>（本人档案，读取于 YYYY-MM-DD）   ⛔ 示例一律占位符，别写具体值
 _TRACE_LINE = re.compile(r"^风格档案\s*[:：]\s*(.+)$", re.M)
 
 
@@ -837,7 +837,7 @@ def emit_result(pages_out, sid, jid, cover_only, anchor, warnings, cover_receipt
 
 def parse_style_trace(text):
     """从 00-overview.md 的风格档案留痕行解析 (套名, 版本)。格式见 SKILL.md：
-        风格档案：图文 v3（本人档案，读取于 2026-07-28）
+        风格档案：<套名> v<N>（本人档案，读取于 YYYY-MM-DD）   ⛔ 尖括号里每一项都来自 --get 的真实 trace_line
     2026-07-28 前的存量格式整行没有套名（`风格档案：v3（…）`）→ **按「图文」判**（那时只有轮播这条线有档案）。
     解析不出 → None。"""
     m = _TRACE_LINE.search(text or "")
@@ -853,7 +853,7 @@ def parse_style_trace(text):
 
 
 def resolve_style_profile(note, override):
-    """本批风格档案（套名 + 版本）：命令行 `--style-profile "图文 v3"` 优先，
+    """本批风格档案（套名 + 版本）：命令行 `--style-profile "<套名> v<N>"` 优先，
     否则读 `00-overview.md` 的留痕行（笔记同目录 → 上一级）。都拿不到 → None（凭证里就缺这一项，
     发布时闸门 A 会拒——那是对的：审查端要按这一版档案判封面，缺了没法判）。"""
     if override:
@@ -892,7 +892,7 @@ def cover_prompt_excerpt(prompt, limit=600):
 
 
 def write_cover_receipt(cover_path, prompt, sid, jid, anchor, style_profile,
-                        cover_only=False, run_pages="all", gates=None):
+                        cover_only=False, run_pages="all", gates=None, style_check=None):
     """封面页出图成功后**自动**落盘同名 `.meta.json`（闸门 A 的生产端）。
 
     为什么必须是脚本写、不是人抄：手抄的凭证只证明"有人抄了一遍"，抄错抄漏都发现不了；
@@ -910,7 +910,9 @@ def write_cover_receipt(cover_path, prompt, sid, jid, anchor, style_profile,
     if not style_profile:
         warns.append("拿不到风格档案套名与版本（00-overview.md 缺「风格档案：{套名} v{N}（…）」留痕行）："
                      "凭证里这一项会缺，发布时闸门 A 会拒——补留痕行后重出封面，"
-                     "或出图时显式传 --style-profile \"图文 v3\"")
+                     "或出图时显式传 --style-profile \"<套名> v<N>\"。"
+                     "⛔ 别照抄这个占位符里的值——2026-08-21 十三份凭证就是把文档里的示例串"
+                     "当真值抄（标了「图文 v3」，而档案库里「图文」只有 v2）")
     if not cover_only:
         warns.append(
             f"这张封面是**批量顺带**产出的（本次 --pages {run_pages or 'all'}），"
@@ -939,6 +941,10 @@ def write_cover_receipt(cover_path, prompt, sid, jid, anchor, style_profile,
         # ⚠️ null ＝ **本次没跑过**（--job 复查拿不到稿件时），⛔ 不等于通过。
         "gates": gates,
         "style_profile": style_profile or {},
+        # 上面那句声明**核过没有**（2026-08-22）：三态 verified。
+        # ⚠️ `null` ＝ 这次没核成（离线/没配 key/服务端没答上来），⛔ 不等于"档案是错的"，
+        #    也⛔ 不等于"核过且对得上"——凭证如实记，发布端据此知道这份没核过。
+        "style_profile_check": style_check,
         "prompt_excerpt": excerpt,
         "generated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
     }
@@ -967,8 +973,24 @@ def is_cover_single(cover_only_flag, run_pages):
     return bool(cover_only_flag) or str(run_pages).strip() in ("1", "P1")
 
 
+def style_gate(note, style_override, timeout=20) -> dict:
+    """核一次「凭证要写的那句 `<套名> v<N>`」在档案库里存不存在。
+
+    ⚠️ 主体在 `style_profile.verify_declaration`——**三处凭证产线共用那一份**
+    （另两处是 render_cover / typeset_longimage）。⛔ 别在这里复制实现。
+    三态：`True` 对得上／`False` 档案库明确说没有／`None` 这次没核成（离线等）。"""
+    sp = resolve_style_profile(note, style_override)
+    try:
+        import style_profile as spmod                 # noqa: E402  同目录
+    except Exception as e:                            # 装不全 ≠ 档案错
+        return {"verified": None, "reason": f"读不到档案库客户端（{e}）", "declared": [],
+                "name": None, "version": None, "tag": None}
+    return spmod.verify_declaration(sp, timeout=timeout)
+
+
 def maybe_write_cover_receipt(pages_out, note, sid, jid, anchor, style_override,
-                              cover_only=False, run_pages="all", gates=None):
+                              cover_only=False, run_pages="all", gates=None,
+                              style_check=None, style_timeout=20):
     """本次出图里若包含 **P1（封面页）** 且落盘成功 → 写凭证。返回 (凭证路径|None, [告警…])。
     复查路径（--job）没给 --note 时拿不到提示词 → 不写，如实告警，别写一份没有 prompt_excerpt 的空凭证。
     cover_only/run_pages 记「这张封面是单出的还是批量顺带的」，交发布时的闸门 A 判（裁决 B）。"""
@@ -981,10 +1003,14 @@ def maybe_write_cover_receipt(pages_out, note, sid, jid, anchor, style_override,
                       "否则发布时闸门 A 会拒发"]
     prompt = next((p["prompt"] for p in extract_pages(Path(note).read_text(encoding="utf-8"))
                    if p["page"] == "P1"), None)
+    # 出图前那一跑已经核过就把结果带下来；**复查路径（--job）没核过，这里自己补核一次**
+    # ——⚠️ 复查时钱已经花了，**核只为把溯源写进凭证**，⛔ 不用来拦人。
+    if style_check is None:
+        style_check = style_gate(note, style_override, timeout=style_timeout)
     return write_cover_receipt(Path(p1["path"]), prompt, sid, jid, anchor,
                                resolve_style_profile(note, style_override),
                                cover_only=is_cover_single(cover_only, run_pages),
-                               run_pages=run_pages, gates=gates)
+                               run_pages=run_pages, gates=gates, style_check=style_check)
 
 
 def resolve_images_dir(note, images_dir):
@@ -1072,6 +1098,9 @@ def main():
     ap.add_argument("--session", help="--job 复查用的 session_id（缺省则从状态文件恢复）")
     ap.add_argument("--style-profile", metavar='"套名 vN"',
                     help="本批风格档案（写进封面产出凭证）；不传则读 00-overview.md 的风格档案留痕行")
+    ap.add_argument("--style-timeout", type=float, default=20,
+                    help="核档案库的超时（秒，默认 20）。⚠️ 超时按「没核成」处理："
+                         "放行 + 凭证记 verified:null，⛔ 不会当成核过")
     ap.add_argument("--skip-term-gate", action="store_true",
                     help="跳过「术语必定义」闸门（默认关闭）；用了会在封面凭证记 "
                          "term_gate_skipped=true，可追责")
@@ -1145,6 +1174,23 @@ def main():
         for w in warnings:
             print(f"⚠ {w}", file=sys.stderr)
 
+        # —— 风格档案闸门：**在 create_job 之前**核，⛔ 别等出完图才说 ——
+        # 与上面 R4 结构闸门同一位置、同一理由：**拒跑，不出图不烧额度**。
+        # 🩸 错标比缺失更毒：缺失会被闸门 A 拒（有声音），错标畅通无阻，
+        #    而凭证的意义就是溯源——错标＝溯源断（2026-08-21 十三份凭证实证）。
+        # ⚠️ 只有档案库**明确说没有**（404）才拦；离线/超时/5xx 一律放行并在凭证记 verified:null
+        #    ——「这次没核成」⛔ 不等于「档案是错的」，拿它拦人会拒掉一张好图。
+        sp_check = style_gate(note, args.style_profile, timeout=args.style_timeout)
+        if sp_check["verified"] is False:
+            raise ValueError(
+                f"风格档案对不上档案库：凭证要写的是「{sp_check.get('tag')}」，但 {sp_check['reason']}"
+                f"——⛔ 已拒跑，**一张图都没出、没烧额度**。先 "
+                f"`python3 style_profile.py --list-profiles` 看他到底有哪几套、各是第几版，"
+                f"再改 --style-profile 或 00-overview.md 的留痕行")
+        if sp_check["verified"] is None:
+            print(f"⚠ 这批没核过档案库（{sp_check['reason']}）——凭证会记 verified:null，"
+                  f"⛔ 别当成「核过且对得上」", file=sys.stderr)
+
         prompts = [p["prompt"] for p in selected]
         page_labels = [p["page"] for p in selected]
         print(f"提交出图：{note.name} {len(selected)} 页（{', '.join(page_labels)}）→ {api_base} …",
@@ -1176,7 +1222,7 @@ def main():
             pages_out, note, sid, jid, anchor, args.style_profile,
             cover_only=cover_only,
             run_pages=run_pages_spec(cover_only, args.pages),
-            gates=gates)
+            gates=gates, style_check=sp_check)
         for w in rwarns:
             print(f"⚠ {w}", file=sys.stderr)
         emit_result(pages_out, sid, jid, cover_only, anchor, warnings + rwarns, receipt)
