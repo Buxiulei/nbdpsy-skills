@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 SCRIPTS = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator" / "scripts"
+ROOT = Path(__file__).parent.parent / "nbdpsy-xiaohongshu-creator"
 SCRIPT = SCRIPTS / "render_cover.py"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -1269,3 +1270,44 @@ def test_hero报错指向最长行而不是总长度():
            / "scripts" / "render_cover.py").read_text(encoding="utf-8")
     assert "最长那一行" in src and "砍总字数不解决问题" in src
     assert "3+7" in src and "5+5" in src, "报错里要带上那对反例，否则人不知道差别在哪"
+
+
+# ────── 账号贴图位（2026-08-21 牧阳助理立项，选②：模板加次级位） ──────
+
+def test_不传贴图时三个键一个都不写():
+    """🔴 **验收硬条件：不传贴图 ⇒ 输出与改动前逐字节相同。**
+
+    ⚠️ 实测方式：`git show HEAD:` 取改动前的脚本+模板跑一次，`cmp` 比 PNG ——
+    **比的是 PNG 字节，⛔ 不是 HTML 文本**（CSS 规则在但没有元素 ⇒ 不参与绘制）。
+    2026-08-21 实测：逐字节相同 ✅"""
+    src = (SCRIPTS / "render_cover.py").read_text(encoding="utf-8")
+    assert "if args.sticker:" in src, "必须条件写入——⛔ 不传时一个键都不能写"
+    tpl = (ROOT / "assets/cover-templates/tpl-cover-jinjin.html").read_text(encoding="utf-8")
+    assert "${D.sticker ?" in tpl, "模板必须条件渲染整个元素（与 avatar 同一写法）"
+
+
+def test_贴图与avatar并存_不占用avatar位():
+    """🩸 **占位冲突实锤**：kepu 批（`cover-zhuhao-v2.json`）的 `avatar` 被**真人署名头像**
+    占着（`avatar-EMP20260109003.jpg` + identity 刘琼），拆解/科普署名规范要求真人头像
+    ⇒ ⛔ **不能拿猫顶掉**。
+
+    ⚠️ 模板里 `avatar` 是**单槽**且被老板明令定成"主要元素"（`--avatar-d: 315px` ＝画面宽 36%）
+    ⇒ 三档里只有 ②（次级贴图位）能让两者并存。"""
+    tpl = (ROOT / "assets/cover-templates/tpl-cover-jinjin.html").read_text(encoding="utf-8")
+    assert ".sticker {" in tpl and "id=\"avatar\"" in tpl, "两个位必须同时存在"
+    # 位置分离：sticker 贴角、avatar 在 .bottom 行 —— ⛔ 「不挡内容」靠位置不靠层次
+    assert ".sticker.tr {" in tpl and "position: absolute" in tpl
+
+
+def test_凭证记贴图但不记dataURI():
+    """🩸 **凭证被 data URI 撑到 513KB**（`input.data` 原样回显整个 data 字典）。
+    ⚠️ **凭证是给人读的，撑成半兆就没人会打开它，等于又回到"捞不出来"** ⇒ 剔除后回到 58KB。
+    ⛔ 剔除写在**同一处**（`icons_svg` 旁边），别新建一份剔除逻辑。
+
+    ⚠️ 没贴图时写 `None` 而**不是省略键**：
+    「这张没贴」与「这版本还不支持贴图」必须分得开 —— 省略键会让老凭证和新凭证长得一样。"""
+    src = (SCRIPTS / "render_cover.py").read_text(encoding="utf-8")
+    assert "if k not in ('icons_svg', 'sticker')" in src, "data URI 必须剔出 input.data"
+    assert "'sticker': ({'file':" in src and "if getattr(args, 'sticker', None) else None)" in src
+    # ⛔ 凭证里不许出现 data URI 本身
+    assert "'sticker': data['sticker']" not in src

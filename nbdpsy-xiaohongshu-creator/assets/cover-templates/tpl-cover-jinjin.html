@@ -83,6 +83,23 @@
     overflow: hidden;
     background: var(--paper);
   }
+  /* ── 账号贴图位（咪问猫等；`D.sticker` 没给就整个元素不存在）─────────
+     🔴 **不给贴图时输出与改动前 byte 级一致**：这条 CSS 规则在、但**没有元素**
+        ⇒ 不参与绘制。⚠️ 验收实测的是 **PNG 字节**，⛔ 不是 HTML 文本。
+     🔴 **"不挡内容"靠位置分离，⛔ 不靠层次**（视频线 2026-08-19 同一条）：
+        默认贴在**右上角**——`.bottom` 那一行有 avatar(315px 主元素)+ident 占着，
+        `.hero/.steps` 在中部；右上是这套版式里唯一常空的角。
+     ⚠️ `z-index` 只保证它不被纸纹柔光盖住，⛔ 不拿它当"不挡字"的依据。 */
+  .sticker {
+    position: absolute; z-index: 3; pointer-events: none;
+    width: var(--sticker-d, 200px); height: var(--sticker-d, 200px);
+    background-size: contain; background-repeat: no-repeat; background-position: center;
+  }
+  .sticker.tr { top: var(--sticker-pad, 56px); right: var(--sticker-pad, 56px); }
+  .sticker.tl { top: var(--sticker-pad, 56px); left:  var(--sticker-pad, 56px); }
+  .sticker.br { bottom: var(--sticker-pad, 56px); right: var(--sticker-pad, 56px); }
+  .sticker.bl { bottom: var(--sticker-pad, 56px); left:  var(--sticker-pad, 56px); }
+
   /* 柔光：中上偏亮、四角略沉，模拟纸面受光 */
   .canvas::before {
     content: ""; position: absolute; inset: 0; pointer-events: none;
@@ -372,6 +389,8 @@ if (ERR) {
   }).join('');
 
   cv.innerHTML = `
+    ${D.sticker ? `<div class="sticker ${D.sticker_pos || 'tr'}" id="sticker"
+         style="background-image:url('${D.sticker}')${D.sticker_size ? `;--sticker-d:${D.sticker_size}px` : ''}"></div>` : ''}
     <div class="stage" id="stage">
       <div class="hero" id="hero">${heroHTML}</div>
       ${subtitle ? `<div class="subtitle" id="sub">${subHTML(subtitle)}</div>` : ''}

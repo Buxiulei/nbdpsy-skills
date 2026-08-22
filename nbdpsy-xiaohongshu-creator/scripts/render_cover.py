@@ -396,6 +396,17 @@ def verify_image(path: pathlib.Path, target_ratio: float):
     }
 
 
+def _inline_image(path) -> str:
+    """图片 → data URI。⚠️ **零外部依赖**：⛔ 别让成品 HTML 指向本机路径——
+    换台机器打开就是个空框，而**页面不会报错**（视频线 2026-08-19 同一条）。"""
+    import base64, mimetypes
+    f = pathlib.Path(path).expanduser()
+    if not f.is_file():
+        die(f'--sticker 找不到文件：{f}')
+    mime = mimetypes.guess_type(f.name)[0] or 'image/png'
+    return f'data:{mime};base64,' + base64.b64encode(f.read_bytes()).decode()
+
+
 def build_html(tpl: str, data: dict) -> str:
     blob = json.dumps(data, ensure_ascii=False)
     # </script> 会提前关掉承载数据的那个标签，必须打断
@@ -732,6 +743,14 @@ def main():
                     help='本批风格档案，写进凭证的 style_profile（闸门 A 要）。'
                          '不给就从 --data 同级 → 上一级的 00-overview.md 留痕行读；'
                          '⚠️ 都拿不到就**不写**这个键，发布时闸门 A 会拒（与 gen_images 同口径）')
+    ap.add_argument('--sticker', metavar='图片',
+                    help='账号贴图（咪问猫等）：贴在封面角落，**与 avatar 并存**。'
+                         '⚠️ 图片会内联成 data URI（零外部依赖）。'
+                         '⛔ 不传时输出与不带本参数**逐字节相同**')
+    ap.add_argument('--sticker-pos', choices=('tr', 'tl', 'br', 'bl'), default='tr',
+                    help='贴图角位：tr=右上（默认，本版式唯一常空的角）/tl/br/bl。'
+                         '⚠️ 「不挡内容」靠**位置分离**，⛔ 不靠层次')
+    ap.add_argument('--sticker-size', type=int, default=200, help='贴图边长 px（默认 200）')
     args = ap.parse_args()
 
     dpath = pathlib.Path(args.data).resolve()
@@ -739,6 +758,17 @@ def main():
         return die(f'封面数据文件不存在：{dpath}')
     try:
         data = json.loads(dpath.read_text(encoding='utf-8'))
+        # 🔴 **账号贴图位**（2026-08-21 牧阳助理立项，选②：模板加次级位、⛔ 不改渲染器成合成器）
+        # 🩸 起因：咪问「每条带猫」，现状是在**过闸底图上 PIL 手工叠猫** ⇒ 产物**没有管线凭证**
+        #    ⇒ 闸门 A 必拒，已连卡两批（靠手写 manual_confirmed 止血）。
+        # ⚠️ **⛔ 不能占 avatar 位**：kepu 批的 avatar 被**真人署名头像**占着
+        #    （拆解/科普署名规范要求真人头像，⛔ 不能拿猫顶掉）。
+        # ⚠️ **不传 --sticker 时这三个键一个都不写** ⇒ 模板条件渲染整个元素不存在
+        #    ⇒ **输出与改动前逐字节相同**（⛔ 这是验收硬条件，已实测）。
+        if args.sticker:
+            data['sticker'] = _inline_image(args.sticker)
+            data['sticker_pos'] = args.sticker_pos
+            data['sticker_size'] = args.sticker_size
     except json.JSONDecodeError as e:
         return die(f'封面数据不是合法 JSON：{e}')
 
@@ -904,9 +934,20 @@ def main():
         **({'style_profile': style_profile} if style_profile else {}),
         'input': {
             'data_file': str(dpath),
-            'data': {k: v for k, v in data.items() if k != 'icons_svg'},
+            # ⚠️ **内联的大字段一律剔除**：`icons_svg` 与 `sticker`（data URI）
+            # 🩸 2026-08-21 实测：把猫的 data URI 塞进 data 后，凭证从 60KB 涨到 **513KB**
+            #    —— **凭证是给人读的**，撑成半兆就没人会打开它，等于又回到"捞不出来"。
+            # ⛔ 别新写一份剔除逻辑：加内联字段时**在这一行加名字**。
+            'data': {k: v for k, v in data.items()
+                     if k not in ('icons_svg', 'sticker')},
             'argv': {'template': args.template, 'canvas': args.canvas, 'out': args.out},
         },
+        # 🔴 **贴图进凭证：记文件名/位置/尺寸，⛔ 不记 data URI**（三条验收硬要求之一）。
+        # ⚠️ 没贴图时写 `None` 而不是省略键：**「这张没贴」与「这版本还不支持贴图」
+        #    必须分得开** —— 省略键会让老凭证和新凭证长得一样。
+        'sticker': ({'file': pathlib.Path(args.sticker).name,
+                     'pos': args.sticker_pos, 'size': args.sticker_size}
+                    if getattr(args, 'sticker', None) else None),
         'template': {'path': str(tpl_path), 'kind': kind,
                      'alias': args.template if args.template in TEMPLATES else None},
         'canvas': {'w': W, 'h': H, 'ratio': round(W / H, 4),
