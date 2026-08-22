@@ -579,9 +579,9 @@ NBDpsy 官网博客已有 `blog_posts` 表与站内图片上传基建。把成�
 刷发布（账号是核心资产）。本 skill 对这两家能做到的上限是**出成品包 + 把该拦的在上传前拦住**：
 
 > ⚠️ **小红书是例外**：我们自建的 nbdpsy-server 有一条 job 队列（在服务端跑，与运营本机、与 Chrome 插件无关），
-> 视频笔记发布**必经** `nbdpsy-xiaohongshu-creator/scripts/publish_video.py`，且是**两段式四步**
-> （发布 → 补封面 → 回读 → 闭台账）——见下面「小红书视频笔记发布 · 两段式四步主路径」一节，
-> 那一节是硬闸门，不是可选路径，**四步也不是四选一**。
+> 视频笔记发布**必经** `nbdpsy-xiaohongshu-creator/scripts/publish_video.py`。
+> **2026-08-22 起（server 0.24.16）发布是原子的**：带封面发，**要么 done（封面已核指纹），
+> 要么 error（整单弃发、笔记没发出去）**——见下面「小红书视频笔记发布 · 原子发布主路径」一节。
 
 ```bash
 python3 {SKILL_DIR}/scripts/video_pack.py \
@@ -596,45 +596,71 @@ python3 {SKILL_DIR}/scripts/video_pack.py \
 > 抽的一帧，只够内部预览/自查用。投放封面一律走下面「封面」一节的主流程③，
 > 并把③的产物用 `--cover <③产出的封面.jpg>` 显式传进来。
 
-### 小红书视频笔记发布 · **两段式四步主路径**（必经脚本层，⛔ 无 job 直调）
+### 小红书视频笔记发布 · **原子发布主路径**（必经脚本层，⛔ 无 job 直调）
 
-脚本由 `nbdpsy-xiaohongshu-creator` 维护（`--help` 为准），下面这四步是**常规工序的全部**，
-**不是"出错了才走的补救"**——⛔ 只跑第①步就报「发完了」＝ 这条片子线上没有封面。
+脚本由 `nbdpsy-xiaohongshu-creator` 维护（`--help` 为准）。**发布是一步，不是四步。**
 
-> **为什么是两段式**（xhs-server 2026-08-16 定性，实证 `docs/2026-08-14-视频笔记发布事故实证-供skill重塑反例.md` §⑧）：
-> **发布链路那条设封面入口自上线起 31 次调用 0 成功（31/31 全败）**，不是偶发。
-> 「先发布、再走 `note-components` 补封面」是 server 修复前的**官方绕行路径**。
-> 此前本节把「发布时带上封面」写成主路径，于是每批都要临场决定"要不要补"——
-> **一旦会话中断，那个"回头再补"就整个消失**（2026-08-13 那批就是这么丢的，第二天老板人肉发现）。
+> 🩸 **这一节 2026-08-22 整段重写，旧版必须死透**（server 0.24.16 上线）。
+> 旧版把主路径写成**四步**（发布 → 补封面 → 回读 → 闭台账），并在第①步旁边写着：
+> 「⚠️ **预期就是 exit 3 + `applied.cover.status=error`——这是当前预期值，不是意外，⛔ 别重发**」。
+> 🔴 **那句话是「把红灯写进规格当成绿灯」的原型案例**：闸门一直在响，是我们把它的声音写进了预期。
+> 背景是发布链路那条设封面入口**自上线起 31/31 全败**，于是「先发布、再补封面」成了官方绕行路径。
+> ⇒ **0.24.16 把它根治了**：那条内联链（`apply_video_cover`）整体删除，发布页改与更新页共用弹窗链。
+> **现在不存在「发出去了但封面失败」这种状态。**
 
 ```bash
 XHS=~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts
 
-# ① 发布（--cover 照传：闸门 A 靠它校验封面产出凭证，不传当场 ValueError；server 根治后自动生效）
+# ① 原子发布（**唯一主路径**；--cover 必传，闸门 A 靠它校验封面产出凭证）
 python3 $XHS/publish_video.py --note <post-NN.md> --account <账号名或id> \
     --video <成片.mp4> --cover <③产出的封面.jpg> [--collection-id … --collection-name …]
-#   判据：exit 0=已发且差集空 / 1=没发出去或被闸门拦 / 2=未到终态（⛔ 绝不重发，稍后 --recheck） / 3=已发但有欠账
-#   ⚠️ 预期就是 exit 3 + applied.cover.status=error（cover_exception）——这是当前预期值，不是意外，⛔ 别重发
+#   判据：exit 0=已发且差集空 / 1=**没发出去** / 2=未到终态（⛔ 绝不重发，稍后 --recheck） / 3=已发但有欠账
+#
+#   🔴 外层错误码 `cover_failed_publish_aborted` ＝ 封面设不上 ⇒ **整单弃发**：
+#      **笔记没有发出去，⛔ 不会有重复笔记**（这是与旧版最大的区别——旧版是"发了但没封面"）
+#      ⚠️ **server 已自动退避重试 3 次（2/10/30min）才落到这个终态** ⇒ **退避已经用光了**，
+#         原样重试大概率原样死。⇒ 要重发是**人工判断后的整单重发**，⛔ 不是惯性重跑。
+#      内层码给归因，按它决定要不要人工重发：
+#        preview_unchanged / still_uploading / state_unreadable_after_confirm /
+#        state_unexpected_custom / cover_exception
 
-# ② 补封面（必然要走的一步；这条链走弹窗结构、已真号验证可用）
-python3 $XHS/publish_video.py --fix-cover --job <发布job_id> --cover <同一张封面.jpg>
-#   判据：stdout "applied_cover": true 且 exit 0 才算补上；exit 3=没换上（看 reason 取证，⛔ 别盲目重跑，每次重跑都是真提交）
-#   ⚠️ --job 必给：补救任务号靠它登记进台账，第③步才找得到这条补救
-#   ⚠️ 报「没有 note_id」＝台账没回填平台 id：先 note_ops.py --sync-ledger <账号>（2026-08-14 卡 2 小时就卡这）
-
-# ③ 回读验证（发布 job 的快照里 cover 永远停在 error，靠②登记的补救任务号回服务端验 applied）
-python3 $XHS/publish_video.py --recheck <发布job_id>
-#   判据：exit 0=差集空、台账那行翻成 - [x]（到这里这一条才算闭环）；3=还有欠账；2=未到终态
-
-# ④ 台账差集闭环（报完成前的最后一道）
+# ② 台账差集闭环（报完成前的最后一道）
 python3 $XHS/publish_video.py --ledger-check [台账路径]
 #   判据：exit 0=全闭环（才可以报完成）；3=还有 - [ ]；4=台账压根不存在＝没有证据，⛔ 不是绿
+
+# （未到终态时）复查
+python3 $XHS/publish_video.py --recheck <发布job_id>
 ```
 
-- **一批多条：每条各走完整四步，⛔ 不许"先把几条都发了、回头一起补封面"**——2026-08-13 那批正是
-  这么丢的。**整批报完成的前提是 `--ledger-check` exit 0**，中途任一条停在 `- [ ]` 都不算发完。
+- **一批多条：每条各自发完、各自闭台账**。**整批报完成的前提是 `--ledger-check` exit 0**，
+  中途任一条停在 `- [ ]` 都不算发完。
+  🩸 2026-08-13 那批丢封面的根因是"回头再补"——**原子发布之后这个坑不存在了**，但
+  「⛔ 不许攒着一起收尾」这条纪律照旧：会话一中断，没闭的台账行就没人认领。
+
+#### `--fix-cover` 现在的位置：**老帖事后换封面**，⛔ 不再是发布的第②步
+
+```bash
+python3 $XHS/publish_video.py --fix-cover --job <发布job_id> --cover <封面.jpg>
+#   判据：stdout "applied_cover": true 且 exit 0 才算换上
+```
+
+它走的是 **`note-components` 更新页语境**那条链，**0.24.16 刻意没有收紧、语义一字未动**
+（server 2026-08-22 生产实查确认）。⇒ 它**不删**，但**降级**：
+
+- ⭕ **该用它的场合**：存量素脸帖补封面；**0.24.17「素脸哨兵」告警时的指定处置动作**
+  —— ⚠️ 哨兵的恢复判据就是「该笔记出现过 `note-components` 带 cover 且 `applied.cover is True` 的补救单」，
+  **摘掉这个工具，告警就没有对应的处置手段**。
+- ⛔ **不该用它的场合**：发布主路径。新语义下发布已是原子的，**不存在"发出去了但封面失败"**，
+  那一步没有存在理由。
+- ⚠️ **两个语境的错误码处置不同，⛔ 别搬混**（server 点名）：同一组码
+  （`cover_preview_unchanged` / `cover_still_uploading` / `cover_state_unreadable_after_confirm`）
+  在**更新语境**下「原样重试一次 / 去 read-components 核实况」的老指引**照旧适用**；
+  在**发布语境**下则以外层裁决为准（见上面①）。**同读数在两个语境判不同，是刻意的语境分叉。**
+- ⚠️ 新回执的双基线字段（`fingerprint_before` / `fingerprint_settle_baseline`）是**发布语境专属**，
+  update 回执不会出现，⛔ 别等它。
 - ⚠️ `--fix-cover` 换封面**同样过闸门 A**（复用 `check_cover_receipt`），补的那张也得有产出凭证——
   ⛔ 别为了补而随手截一帧顶上。
+
 - ⛔ **手搓 payload 直调 `POST /api/publish-jobs` 是禁令。** job **337** 就是这么发的：`#标签` 只写在
   正文里是纯文本、不成话题实体，回执里 `"topics_requested": []`、`"topics_applied": []`——五个话题
   一个没挂上，而 job 状态是 `published`，**没有任何报错**。图文走 `publish_note.py` 有
@@ -648,7 +674,7 @@ python3 $XHS/publish_video.py --ledger-check [台账路径]
   （`content`/`title` 编辑被 server 以 422 拒："文本/图片编辑只对图文笔记验证过"）——
   **漏挂无补救通道：要么接受缺话题、要么删稿重发**（代价是换链接、数据清零）。
   ⛔ **别拿 `note_ops.py --set-components` 试**——试不出来，只会烧掉该号的会话额度（12 会话/号/时）。
-  所以第一条走完四步再发第二条。
+  所以第一条发完、台账闭掉，再发第二条。
 - `outcome=unknown` / 轮询超时 **绝不重发**（会重复发出去），用 `--job <id>` 复查到终态。
 - 视频文件**不走图床**（图床白名单只收图片扩展名）：走服务器同机落盘路径，⛔ 别把大文件经隧道来回传。
 
@@ -673,11 +699,13 @@ python3 $XHS/publish_video.py --ledger-check [台账路径]
   + `../nbdpsy-xiaohongshu-creator/references/cover-notes-shilu.md（包内副本；NBDpsy 仓原件 seo-geo/content/video/koubo-ziwoguanhuai/cover/cover-notes.md 仅供溯源）`（hero 四判据（见 illustration-spec §2-b）、副题要答"然后呢"、
   特殊人群的特殊安排不得放大成通用承诺——三轮打回逐条留痕）。
 - 封面比例 **3:4 竖版**（1080×1440），与成片 9:16 不同是正常的（信息流按 3:4 展示）。
-- ⚠️ **形态边界（别把视频这套推广出去）**：**只有视频/播客的封面事后能补**（`--fix-cover`，见上一节第②步）；
+- ⚠️ **形态边界（别把视频这套推广出去）**：**只有视频/播客的封面事后能补**（`--fix-cover`，见上一节——⚠️ 它是**老帖补救**，⛔ 不是发布的一步）；
   **图文/文字版没有独立封面通道**——首图即封面，`publish_note.py` 传 `--cover` 当场
   `ValueError：图文笔记没有独立封面（封面就是第一张图）`、绕过脚本直调服务端 **422**，
   **发出去即定、事后无补救通道，唯一出路是删稿重发**（换链接、数据清零）。
-  换句话说：**图文的封面闸门卡在出图阶段，视频的封面闸门卡在发布后的第②步**——两者都不许跳，跳法不同。
+  换句话说：**两者的封面闸门都卡在出图阶段**（凭证在才准发）；区别只在**发出去之后还能不能换**——
+  视频/播客能（`--fix-cover`），图文不能。⚠️ 0.24.16 起视频发布也是**原子**的，
+  封面设不上就整单弃发 ⇒ ⛔ 别再把「事后能补」当成「发的时候可以先不管封面」。
 
 ### 三平台限制（最紧的那条决定"一份文件通传"的天花板）
 
@@ -753,9 +781,12 @@ H.264 是唯一三家都稳的——h265 在视频号 Chrome 上传直接失败�
 - Seedance CLI 仅 720p；要更高分辨率需另寻（非本产线）。
 - **封面无旁路**：三形态共用 `nbdpsy-xiaohongshu-creator` 主流程第③步，凭证（`cover-*.meta.json`）在才准发；
   ⛔ 抽帧/截帧/自造 HTML 封面一律不算（2026-08-14 两次打回实证）。
-- **发小红书必经 `publish_video.py` 的两段式四步**（有 job 行 = 台账先行）：① 发布（`--cover` 照传）→
-  ② `--fix-cover --job <id>` 补封面（**该发布入口 31/31 全败，这一步是常规工序**）→ ③ `--recheck <id>` 回读 →
-  ④ `--ledger-check` exit 0；⛔ 手搓 payload 直调 `POST /api/publish-jobs`，⛔ 只跑①就报「发完了」，
-  ⛔ 多条攒到最后一起补封面。**差集非空不许报完成**。
+- **发小红书必经 `publish_video.py`，发布是原子的**（有 job 行 = 台账先行）：
+  ① 发布（`--cover` **必传**）→ ② `--ledger-check` exit 0。
+  🔴 **2026-08-22（server 0.24.16）起不存在「发出去了但封面失败」**：带封面发要么 done（封面已核指纹），
+  要么 `cover_failed_publish_aborted` ＝ **整单弃发、笔记没发出去、⛔ 不会有重复笔记**。
+  ⚠️ server 已退避重试 3 次才落终态 ⇒ **⛔ 别惯性重发**，要重发是人工判断后的整单重发。
+  ⛔ 手搓 payload 直调 `POST /api/publish-jobs`。**差集非空不许报完成**。
+  ⚠️ `--fix-cover` 已降级为**老帖事后换封面 / 素脸哨兵告警的处置动作**，⛔ 不再是发布的一步。
 - **报「已完成」必带实证句柄**：回执（`applied_cover=true`）／台账已翻 `- [x]` 的那一行／刚拉的线上回读，
   三选一同句给出；给不出只能报「进行中」。

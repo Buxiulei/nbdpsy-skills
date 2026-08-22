@@ -219,6 +219,54 @@ def do_publish(args, api_base, key):
                   intent_txt=intent_summary(intent), api_base=api_base, key=key)
 
 
+# ── 「封面设不上 ⇒ 整单弃发」这个终态（server 0.24.16 起）───────────────────
+#
+# 🔴 **这与旧语义相反，⛔ 别按旧的读**：
+#   旧（≤0.24.15）：发布链那条设封面入口 31/31 全败 ⇒ **发出去了但没封面**，
+#                   规格里甚至把 `exit 3 + cover=error` 写成「当前预期值，不是意外」。
+#   新（0.24.16+）：带封面发是**原子**的 ⇒ **要么 done（封面已核指纹），要么整单弃发**。
+#                   `cover_failed_publish_aborted` ＝ **笔记根本没发出去，⛔ 不会有重复笔记**。
+#
+# 🔴 **「⛔ 不惯性重发」必须做进语义，⛔ 不能只写进 hint**（收口人 2026-08-22 定）：
+#   **服务端已经自动退避重试 3 次（2/10/30min）才落到这个终态** ⇒ **退避已经用光了**。
+#   客户端再重发就是**第 4 次盲试**，原样重试大概率原样死。
+#   ⇒ 回执里给结构化的 `published: false` / `retry_exhausted: true`，让调用方**读字段就能判**，
+#     ⛔ 不必去解析一句人话。
+COVER_ABORT_CODE = "cover_failed_publish_aborted"
+#: 内层码归因——处置看它，⛔ 别只看外层码就决定重不重发。
+#: ⚠️ **每个都带 `cover_` 前缀**（server 2026-08-22 逐条实查给的取值域）——
+#:    我第一版按契约摘要里的简称写成了 `preview_unchanged`，**少了前缀就永远匹配不上**。
+COVER_INNER_CODES = ("cover_preview_unchanged", "cover_still_uploading",
+                     "cover_state_unreadable_after_confirm", "cover_state_unexpected_custom",
+                     "cover_exception")
+#: 内层码在同一条 error 串里，**固定引导词之后第一个冒号前的 token**。
+#: ⛔ 别全文搜码名：前段人话里不会出现码名，但以引导词定位最稳（server 建议）。
+COVER_INNER_LEAD = "封面步回执:"
+
+
+def cover_abort_info(view: dict):
+    """认出「封面设不上 ⇒ 整单弃发」。返回 `{"inner": 内层码|None}`，不是这个终态则 None。
+
+    **精确契约**（server 2026-08-22 逐条实查，带行号）：
+    - 外层码在 `GET /api/publish-jobs/{job_id}` 回执的**顶层 `error` 键**（`publish_rest.py:100`），
+      是一条**字符串**，以字面前缀 `cover_failed_publish_aborted: ` 开头。
+      ⛔ **没有独立的结构化错误码字段** ⇒ 判据就是 `error.startswith(...)`。
+    - 内层码在**同一条 error 串**里，固定引导词 `封面步回执:` 之后第一个冒号前的 token。
+    ⚠️ 串里还有「当场取证 / 封面区 HTML」两段，是**首验取证用的临时字段**，
+       发布页封面区结构一钉死就会撤 ⇒ ⛔ **别依赖它们存在**，只依赖前缀 + 内层码。"""
+    if not isinstance(view, dict):
+        return None
+    err = view.get("error")
+    if not isinstance(err, str) or not err.startswith(COVER_ABORT_CODE):
+        return None
+    inner = None
+    if COVER_INNER_LEAD in err:
+        tail = err.split(COVER_INNER_LEAD, 1)[1].lstrip()
+        token = tail.split(":", 1)[0].strip()
+        inner = token if token in COVER_INNER_CODES else (token or None)
+    return {"inner": inner}
+
+
 def finish(view, intent, lp, pending_row_or_job, ts, what, who, intent_txt,
            api_base=None, key=None):
     jid = view.get("job_id") or pending_row_or_job
@@ -244,14 +292,39 @@ def finish(view, intent, lp, pending_row_or_job, ts, what, who, intent_txt,
                 "gap_count": ngap})
     if remedies:
         out["remedies"] = {"recorded": remedies, "verified": verified}
-    if status in ("failed", "canceled"):
+    abort = cover_abort_info(view)
+    if abort:
+        # 🔴 **整单弃发：笔记没发出去** ⇒ exit 1（与"没发出去"同档），
+        #    并给出**结构化**的不可重试信号，⛔ 不让调用方去解析人话。
+        out.update({"published": False, "retry_exhausted": True,
+                    "cover_abort": {"code": COVER_ABORT_CODE, **abort}})
+        out["hint"] = (
+            f"🔴 封面设不上 ⇒ **整单弃发**：**这条笔记没有发出去，⛔ 不会有重复笔记**"
+            f"（内层码 {abort['inner'] or '未给'}）。\n"
+            f"  ⚠️ **服务端已自动退避重试 3 次（2/10/30min）才落到这个终态 ⇒ 退避已经用光了**，"
+            f"原样重试大概率原样死。\n"
+            f"  ⇒ 要重发是**人工判断后的整单重发**，⛔ 不是惯性重跑；先按内层码查因。\n"
+            f"  ⛔ **别走 `--fix-cover`**——那是老帖事后换封面／素脸哨兵告警的处置动作，"
+            f"这里根本没有「已发布的笔记」可补。")
+        code = 1
+    elif status in ("failed", "canceled"):
         code = 1
     elif status != "published":
-        out["hint"] = f"未到终态，⛔ 别重发：稍后 --recheck {view.get('job_id')}"
+        # ⚠️ **`pending` + `next_retry_at` ＝ 服务端在退避重试中（2/10/30min），⛔ 不是卡死**
+        #    （server 0.24.16 契约点名）。把它读成"卡住了"会引出一次多余的重发——
+        #    而这条路径上的重发就是重复发出去。
+        retry_at = view.get("next_retry_at")
+        out["hint"] = (
+            f"服务端**正在退避重试**（下次 {retry_at}）——⛔ 这不是卡死，也⛔ 别重发；"
+            f"稍后 --recheck {view.get('job_id')}"
+            if retry_at else
+            f"未到终态，⛔ 别重发：稍后 --recheck {view.get('job_id')}")
+        if retry_at:
+            out["retrying"] = True
         code = 2
     elif ngap:
         out["hint"] = ("**published 但有欠账，这不是成功**：按差集逐项补救"
-                       "（cover=FAIL 走 --fix-cover；话题缺失换词重挂），"
+                       "（话题缺失换词重挂；⚠️ cover 失败在 0.24.16 起＝**整单弃发、笔记没发出去**，⛔ 不是走 --fix-cover 补，也⛔ 别惯性重发），"
                        f"补完 --recheck {view.get('job_id')} 闭环台账")
         code = 3
     else:
