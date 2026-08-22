@@ -1012,6 +1012,11 @@ def test_check_fields仍是二元组():
 # 死结：闸门只认 AI 生图那套（prompt_excerpt + 色值 + 具名版式），而确定性渲染没有提示词
 # ⇒ 如实做发不出去，能发出去的唯一做法正是文档自己定义的「伪造凭证」。这几个键补的就是它。
 
+# ⚠️ 这里的 `图文 v2` **必须是档案库里真实存在的组合**，⛔ 别写回 `图文 v3`：
+# 🩸 2026-08-22：render_cover 上了「声明的档案要对得上档案库」的闸门后，这三个测试当场红了
+#    ——因为它们一直用着 `图文 v3`，而档案库里**「图文」只有 v2**（v3 是「暖米大字」的）。
+#    那正是 2026-08-21 让 13 份凭证错标一路绿灯的同一个示例串，**测试是它的第 14 个受害者**。
+# ⇒ 文档/测试里的示例会被当成真值抄走，写具体值就要写真的。
 def _receipt(tmp_path, data, *extra):
     _need_render()
     r, out = _run_real(tmp_path, data, *extra)
@@ -1020,18 +1025,18 @@ def _receipt(tmp_path, data, *extra):
 
 
 def test_凭证带齐闸门A要的键(tmp_path):
-    m = _receipt(tmp_path, _cover(6), "--style-profile", "图文 v3")
+    m = _receipt(tmp_path, _cover(6), "--style-profile", "图文 v2")
     assert m["source"] == "render_cover"
     assert m["cover_only"] is True, "⛔ 缺这个键闸门 fail-closed 会判「不是单出」直接拒"
     assert m["layout"] == "通栏大字压顶"
-    assert m["style_profile"] == {"套名": "图文", "version": "3"}
+    assert m["style_profile"] == {"套名": "图文", "version": "2"}
     assert "prompt_excerpt" not in m, "⛔ 确定性渲染没有提示词，⛔ 不许编一段出来顶"
 
 
 def test_调色板是量出来的hex(tmp_path):
     """⛔ 不从 cover.json 抄。⚠️ `--paper` 是 color-mix 不会解析成 hex、
     `backgroundColor` 在当前 Chromium 返回 `color(srgb …)` 不是 `rgb()`——只收声明里的 hex 最稳。"""
-    m = _receipt(tmp_path, _cover(6), "--style-profile", "图文 v3")
+    m = _receipt(tmp_path, _cover(6), "--style-profile", "图文 v2")
     pal = m["palette"]
     assert len(pal) >= 5 and all(re.fullmatch(r"#[0-9A-F]{6}", c) for c in pal), pal
     assert "#A34B3A" in pal and "#E8D8C4" in pal, "赭红与暖米白是品牌色，必须量得到"
@@ -1040,7 +1045,7 @@ def test_调色板是量出来的hex(tmp_path):
 
 def test_layout只从模板kind映射不从数据抄(tmp_path):
     """🔴 从 cover.json 抄调用方声明的版式，那只是换个地方说谎。"""
-    m = _receipt(tmp_path, _cover(6, layout="留白场"), "--style-profile", "图文 v3")
+    m = _receipt(tmp_path, _cover(6, layout="留白场"), "--style-profile", "图文 v2")
     assert m["layout"] == "通栏大字压顶", "⛔ 数据里写什么都不作数，只认模板 kind"
     src = SCRIPT.read_text(encoding="utf-8")
     assert "LAYOUT_BY_KIND = {'jinjin': '通栏大字压顶'}" in src

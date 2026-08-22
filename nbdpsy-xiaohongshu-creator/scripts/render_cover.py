@@ -184,6 +184,67 @@ def resolve_style_profile(data_path: pathlib.Path, override):
     return gen_images.resolve_style_profile(str(data_path), override)
 
 
+# ── 凭证校验：**声明的那套档案**对不对得上档案库、**实际渲出的色**对不对得上它 ──────
+#
+# 🩸 这一段补的是「验了在不在，没验对不对」：凭证里一直同时躺着 `style_profile`（声明）
+#    与 `palette`（实测），**从来没人把这两个数相减**。字段在、判据在、每次都过。
+#    实证：13 份凭证标着 `图文 v3` 一路绿灯到发布前，而档案库里「图文」**只有 v2**。
+#
+# 🔴 三条判据，⛔ 一条都别放宽：
+#   ① **套名/版本对不上 → 拒渲**（在起浏览器之前就拒，别渲完才说）。这是硬错、且真发生过。
+#   ② **色值方向是「档案声明的 ⊆ 实际渲出的」，⛔ 不是反过来。**
+#      🩸 实测：jinjin 渲出 6 色，档案「暖米大字」v3 声明 5 色，5 个全中；但模板还有个
+#      正当的中性墨蓝 `#2B3A4A` **档案里根本没记**。写成「实测 ⊆ 声明」就恒红，
+#      而**恒红的闸门等于没有闸门**（人会绕过去）。
+#   ③ **量不出来 ≠ 不匹配**：still-life 的 `:root` 里一个 hex 都没有 ⇒ 实测为空集。
+#      空集要记 `null` 不记 `false`——把"没量到"说成"不匹配"，是在自造假红。
+#
+# ⚠️ 离线（没配 key / 网络不通）**warn 放行**并在凭证记 `verified: null`：
+#    这是个**看得见的洞**（断网即可绕过），⛔ 但不能变成静默的洞——所以凭证必须留痕，
+#    发布端闸门据此知道"这份没核过"。
+def check_style_profile(sp_decl, timeout=20) -> dict:
+    """渲染**前**核一次：`sp_decl` 那句「<套名> v<N>」在档案库里存不存在。
+
+    三态，⛔ 不是布尔：`True` 核过且对得上／`False` 档案库说没有这一版（拒渲）／
+    `None` 没核成（离线、或压根没声明档案）。
+
+    ⚠️ 主体在 `style_profile.verify_declaration`——**三处凭证产线共用那一份**
+    （另两处是 gen_images / typeset_longimage）。⛔ 别在这里复制一份实现：
+    要同源，就 import 那个函数本身。"""
+    sys.path.insert(0, str(HERE))
+    try:
+        from style_profile import verify_declaration       # noqa: E402  同目录
+    except Exception as e:                                  # 装不全 ≠ 档案错
+        return {'verified': None, 'reason': f'读不到档案库客户端（{e}）', 'declared': [],
+                'name': None, 'version': None, 'tag': None}
+    return verify_declaration(sp_decl, timeout=timeout)
+
+
+def match_palette(chk: dict, palette: list) -> dict:
+    """渲染**后**补上色值比对：档案声明的每个色，是不是真的渲出来了。
+
+    判据方向见上：**声明 ⊆ 实测**。两种「量不出来」一律记 `None`，⛔ 不记 `False`。"""
+    # 🔴 **两边必须走同一个规范化**：首版只把实测侧 `.upper()`、声明侧原样比，
+    #    `#a34b3a` 与 `#A34B3A` 这两个同一个颜色就会判成"没渲出来"（测试当场抓到）。
+    #    ⇒ 要同源，就 import 那个函数本身，⛔ 不是各写一遍自己的大小写处理。
+    sys.path.insert(0, str(HERE))
+    from style_profile import norm_hex                  # noqa: E402  同目录，⛔ 别复制它
+    out = dict(chk)
+    norm = lambda seq: [h for h in (norm_hex(c) for c in (seq or [])) if h]   # noqa: E731
+    declared, actual = norm(out.get('declared')), norm(palette)
+    if not actual:
+        out['palette_ok'], out['palette_reason'] = None, '模板没交回可解析的 hex，量不出实际调色板'
+    elif not declared:
+        out['palette_ok'], out['palette_reason'] = None, '这一版档案没声明任何色值，无从比对'
+    else:
+        missing = [c for c in declared if c not in actual]
+        out['palette_ok'] = not missing
+        out['missing_colors'] = missing
+        out['palette_reason'] = ('声明的色值全部渲出来了' if not missing
+                                 else f'档案声明了 {missing}，实际渲出的调色板里没有')
+    return out
+
+
 def die(msg, **extra):
     print(json.dumps({'ok': False, 'error': msg, **extra}, ensure_ascii=False))
     return 2
@@ -742,7 +803,11 @@ def main():
     ap.add_argument('--style-profile', metavar='"套名 vN"',
                     help='本批风格档案，写进凭证的 style_profile（闸门 A 要）。'
                          '不给就从 --data 同级 → 上一级的 00-overview.md 留痕行读；'
-                         '⚠️ 都拿不到就**不写**这个键，发布时闸门 A 会拒（与 gen_images 同口径）')
+                         '⚠️ 都拿不到就**不写**这个键，发布时闸门 A 会拒（与 gen_images 同口径）。'
+                         '🔴 v2.28.0 起会**联网核**这个套名/版本在不在档案库里，对不上直接拒渲')
+    ap.add_argument('--style-timeout', type=float, default=20,
+                    help='核档案库的超时（秒，默认 20）。⚠️ 超时按「没核成」处理：'
+                         'warn 放行 + 凭证记 verified:null，⛔ 不会当成核过')
     ap.add_argument('--sticker', metavar='图片',
                     help='账号贴图（咪问猫等）：贴在封面角落，**与 avatar 并存**。'
                          '⚠️ 图片会内联成 data URI（零外部依赖）。'
@@ -838,6 +903,19 @@ def main():
         # 凭证写到输入数据头上＝把喂进来的数据抹掉，且不可恢复
         return die(f'产出凭证会写到 {receipt_path}，正好是 --data 那个文件——换个 --out 名字，'
                    f'⛔ 不会覆盖你的输入数据')
+    # —— 声明的那套档案在不在档案库里：**起浏览器之前就核**，⛔ 别渲完才说 ——
+    # 拒渲而不是"渲完记个红"，是因为**错标比缺失更毒**：缺失会被闸门 A 拒（有声音），
+    # 错标畅通无阻，而凭证的意义就是溯源——错标＝溯源断。
+    style_profile = resolve_style_profile(dpath, args.style_profile)
+    sp_check = check_style_profile(style_profile, timeout=args.style_timeout)
+    if sp_check['verified'] is False:
+        return die(f"风格档案对不上档案库：凭证要写的是「{sp_check.get('tag')}」，但 {sp_check['reason']}"
+                   f"——⛔ 已拒渲。先 `python3 style_profile.py --list-profiles` 看他到底有哪几套、"
+                   f"各是第几版，再改 --style-profile 或 00-overview.md 的留痕行",
+                   style_profile=style_profile, style_profile_check=sp_check)
+    if sp_check['verified'] is None and style_profile:
+        warnings.append(f"⚠️ 这批没核过档案库（{sp_check['reason']}）——凭证会记 `verified: null`，"
+                        f"⛔ 别当成「核过且对得上」")
     out_png.parent.mkdir(parents=True, exist_ok=True)
     html_path = out_png.with_suffix('.html')
     html_path.write_text(build_html(tpl_path.read_text(encoding='utf-8'), data), encoding='utf-8')
@@ -918,7 +996,8 @@ def main():
     # 图标真正要留痕的是**从哪个文件读来的**（icons_resolved），一眼看出走没走本地库。
     # 闸门 A 要的四样（见 LAYOUT_BY_KIND 那段的三条红线）。⛔ 不写进 receipt 的话，
     # 照文档主路径出的封面**发不出去**，而唯一能发出去的做法就是手搓一份假凭证。
-    style_profile = resolve_style_profile(dpath, args.style_profile)
+    # 声明 vs 实测的那一次相减（`style_profile` 与 `sp_check` 都在起浏览器之前就备好了）
+    sp_check = match_palette(sp_check, palette)
     receipt = {
         'schema': 'render_cover/receipt@1',
         'kind': kind,
@@ -932,6 +1011,10 @@ def main():
         'palette': palette,
         # 拿不到就不写 → 闸门红（与 gen_images 同口径的 fail-closed），⛔ 不填个空壳糊弄
         **({'style_profile': style_profile} if style_profile else {}),
+        # 上面那句声明**核过没有**：verified 三态 + 声明的色是不是真渲出来了。
+        # ⚠️ 声明了档案才写这个键——没声明时整段不写，让「没声明」与「声明了但没核成」
+        #    在凭证里长得不一样（**缺失 ≠ 值为空**）。
+        **({'style_profile_check': sp_check} if style_profile else {}),
         'input': {
             'data_file': str(dpath),
             # ⚠️ **内联的大字段一律剔除**：`icons_svg` 与 `sticker`（data URI）
@@ -967,6 +1050,14 @@ def main():
                                  receipt, receipt_path, W, H)
 
     # —— 闸门：能量出来的坏消息一律显式报，⛔ 不让它静默混过验收 ——
+    # 色值对不上**不拒渲**（图已经在磁盘上了，拒也拒不回来），但要留声音 + 让凭证判红：
+    # 换模板 / 模板加了个中性色都可能让它响，那属于"要人来看一眼"，⛔ 不属于"该拦下重来"。
+    if sp_check.get('palette_ok') is False:
+        warnings.append(
+            f"🔴 声明的档案「{sp_check.get('tag')}」与实际渲出的配色对不上："
+            f"{sp_check['palette_reason']}（实测 {palette}）——"
+            f"⚠️ 凭证声明的是这一套、渲出来的却不是它的色，**溯源就断在这里**。"
+            f"要么换对模板，要么把档案里那几个色更到与模板一致")
     if landed and landed[0] not in EXPECTED_FONTS:
         warnings.append(f"🔴 字体没落在预期字族上：实际拿去光栅化的是 {landed[0]}（全部命中：{landed}），"
                         f"预期 {list(EXPECTED_FONTS)} 之一。字宽一变，hero 的线性求解会解出**另一个字号**、"

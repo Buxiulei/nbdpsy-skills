@@ -130,6 +130,7 @@
 """
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -545,6 +546,136 @@ def profile_form(profile):
         return None
     video = profile.get("video")
     return video.get("form") if isinstance(video, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# 凭证校验（2026-08-22）：把凭证里那句「本批用的是 <套名> v<N>」跟档案库对一次。
+#
+# 🩸 为什么要有这一段：凭证里**一直**同时躺着两样东西——`style_profile`（声明用了哪套）
+#    和 `palette`（实际渲出来的色值）——而**从来没有人把这两个数相减**。
+#    ⇒ 声明 A 档案、渲出 B 配色，凭证照样绿。这是「验了在不在，没验对不对」：
+#    字段在、判据在、每次都过，连"量不出来"的迹象都不给。
+#    🩸 实证：2026-08-21 十三份凭证标着 `图文 v3` 一路绿灯到发布前才被人肉发现，
+#    而档案库里**「图文」只有 v2**（v3 是「暖米大字」的）。这一段就是那次的闸门。
+# ---------------------------------------------------------------------------
+
+_HEX6 = "0123456789ABCDEF"
+
+
+def norm_hex(v):
+    """规范成 `#RRGGBB` 大写；不是色值就返回 None（⛔ 别返回原串——那会让"不是颜色"
+    混进调色板里参与比对，比对不上时人还以为是配色错了）。"""
+    s = str(v or "").strip().upper().lstrip("#")
+    if len(s) == 3 and all(c in _HEX6 for c in s):
+        s = "".join(c * 2 for c in s)           # #ABC → #AABBCC，两种写法是同一个颜色
+    return "#" + s if len(s) == 6 and all(c in _HEX6 for c in s) else None
+
+
+def declared_palette(profile) -> list:
+    """一套档案**声明**的色值（`#RRGGBB` 大写、去重保序）。
+
+    图文那类读 `visual` 的三处（palette[].hex / text_color / accent_color），
+    文字版那类读 `typeset` 的三处（bg / accent / accent_soft，**null 是合法值**＝听主题的，跳过）。
+    ⚠️ 视频那类没有封面凭证，⛔ 不在这里编一套它的色。"""
+    out = []
+
+    def add(v):
+        h = norm_hex(v)
+        if h and h not in out:
+            out.append(h)
+
+    if not isinstance(profile, dict):
+        return out
+    visual = profile.get("visual")
+    if isinstance(visual, dict):
+        for item in visual.get("palette") or []:
+            add(item.get("hex") if isinstance(item, dict) else item)
+        add(visual.get("text_color"))
+        add(visual.get("accent_color"))
+    typeset = profile.get("typeset")
+    if isinstance(typeset, dict):
+        for k in ("bg", "accent", "accent_soft"):
+            add(typeset.get(k))
+    return out
+
+
+def fetch_declared(name, version, key, api_base, timeout=20) -> dict:
+    """取「`name` 这一套的第 `version` 版」的内容，用来核凭证。
+
+    返回 `{"found": bool, "reason": str, "profile": dict|None, "palette": [...]}`。
+    ⚠️ `Unreachable` **照抛不误**——「档案库连不上」与「档案库说没有这一版」是两件事，
+    合并成一个 False 就会把离线误报成错标（然后拒渲一张其实没问题的图）。
+
+    `version` 给 0 或空 ⇒ 核**默认配置**（新运营还没有自己的档案时留痕行就写 v0）。
+    ⛔ 别在这里放行了事：v0 是合法状态，但它照样有一份调色板可比，
+    放行等于留一个「写 v0 就绕过校验」的洞。"""
+    v = str(version).strip().lstrip("vV") if version is not None else ""
+    if v in ("", "0"):
+        view = call("GET", with_query(ADMIN_DEFAULT_PATH, set=name or None), key, api_base,
+                    timeout=timeout)
+        prof = view.get("profile")
+        return {"found": isinstance(prof, dict) and bool(prof),
+                "reason": "默认配置（留痕行是 v0，⛔ 不是他自己的档案）",
+                "profile": prof, "palette": declared_palette(prof)}
+    try:
+        view = call("GET", with_query(f"{PROFILE_PATH}/versions/{quote(v, safe='')}",
+                                      set=name or None), key, api_base, timeout=timeout)
+    except ValueError as e:
+        # 🔴 **只有 404 才是「档案库说没有这一版」**，其余 4xx/5xx 一律是「没核成」。
+        # 🩸 2026-08-22 实测抓到：源站抖了一下回 **HTTP 530**（Cloudflare「源站不可达」），
+        #    首版把它并进这一支 ⇒ 一张完全正常的图被拒渲，红灯却写着「风格档案对不上档案库」。
+        #    ⇒ 照那个红去查，人会去改留痕行、改档案，而**真正的问题是源站挂了**。
+        #    这就是「响错理由」：看起来在工作，照它去查会修错东西。
+        # ⚠️ `call()` 已经把 401/403 转成 Unreachable，剩下的 4xx（400/422）是「请求发错了」，
+        #    同样不该说成「档案错」——所以判据收窄到**只认 404**，⛔ 不是"排除 5xx"。
+        if not re.match(r"HTTP 404\b", str(e)):
+            raise Unreachable("http_error", str(e),
+                              "档案库这次没答上来（既不是套名错也不是版本错）：稍后重试；"
+                              "持续如此找系统管理员看 mcp.nbdpsy.com 源站") from e
+        # 404 的两种「没有」服务端分得很清，原样透出：套名拼错和版本号写错，改法完全不同
+        return {"found": False, "reason": str(e), "profile": None, "palette": []}
+    prof = view.get("profile")
+    return {"found": isinstance(prof, dict) and bool(prof),
+            "reason": f"档案库有这一版（set={view.get('set')} v{view.get('version')}）",
+            "profile": prof, "palette": declared_palette(prof)}
+
+
+def verify_declaration(sp_decl, timeout=20) -> dict:
+    """核一次「凭证要写的那句 `<套名> v<N>`」在档案库里存不存在。**三处凭证产线共用这一份**
+    （render_cover / gen_images / typeset_longimage）——⛔ 别各写一遍：口径一漂闸门就形同虚设。
+
+    返回 `{"verified": True|False|None, "reason", "declared", "name", "version", "tag"}`。
+    🔴 **三态，⛔ 不是布尔**：
+      · `True`  核过、档案库里有这一版
+      · `False` 档案库明确说没有（**只有 404 才是这一档**）→ 调用方应拒渲
+      · `None`  这次没核成（没声明档案 / 没配 key / 连不上 / 超时 / 服务端没答上来）
+                → warn 放行，**并在凭证里记 `verified: null`**
+    ⚠️ 把 `None` 记成 `False` 会拒掉一张好图并把红指向错的地方；
+       把 `None` 记成 `True` 则是静默降级——**两个方向都不许塌**。"""
+    if not sp_decl:
+        return {"verified": None, "reason": "凭证里没有 style_profile 可核", "declared": [],
+                "name": None, "version": None, "tag": None}
+    name, ver = sp_decl.get("套名"), sp_decl.get("version")
+    tag = f"{name} v{ver}" if ver not in (None, "") else str(name)
+    try:
+        key = nbdpsy_common.get_secret(nbdpsy_common.XHS_API_KEY)
+    except Exception as e:
+        return {"verified": None, "reason": f"读不到凭据（{e}）", "declared": [],
+                "name": name, "version": ver, "tag": tag}
+    if not key:
+        return {"verified": None, "reason": f"没配 {nbdpsy_common.XHS_API_KEY}，这批没核过档案库",
+                "declared": [], "name": name, "version": ver, "tag": tag}
+    base = (nbdpsy_common.xhs_api_base() or "").rstrip("/")
+    try:
+        hit = fetch_declared(name, ver, key, base, timeout=timeout)
+    except Unreachable as e:              # 连不上 ≠ 档案错，⛔ 别合并成一件事
+        return {"verified": None, "reason": f"没连上风格档案服务（{e.reason}）：{e.error}",
+                "declared": [], "name": name, "version": ver, "tag": tag}
+    except Exception as e:
+        return {"verified": None, "reason": f"核档案库时出错（{type(e).__name__}: {e}）",
+                "declared": [], "name": name, "version": ver, "tag": tag}
+    return {"verified": bool(hit["found"]), "reason": hit["reason"],
+            "declared": hit["palette"], "name": name, "version": ver, "tag": tag}
 
 
 def pick_by_form(sets, form, key, api_base, timeout, path=None):
