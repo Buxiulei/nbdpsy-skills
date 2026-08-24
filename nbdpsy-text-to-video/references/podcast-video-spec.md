@@ -199,6 +199,7 @@ python3 scripts/record_podcast.py <workdir>/podcast.json --theme zhishang --fade
   最早写「补救」→ 2026-08-16 因发布链设封面入口 **31/31 全败**改成「主路径第②步」（官方绕行）→
   **2026-08-22 改回「补救」**：0.24.16 把那条内联链整体删除、发布改为**原子**，
   **不存在"发出去了但封面失败"**。⇒ 它现在用于**存量素脸帖 / 素脸哨兵告警的处置**。
+  ⚠️ **素脸帖的完整处置是两步**：`--fix-cover` 补完封面后，还要 `note_ops.py --set-visibility --privacy 0` **人工转回公开**（0.24.18 起真素脸帖已被系统自动转私密；🔴 顺序必须**先补后转**，反序＝素脸公开裸奔且告警不会再响）。完整流程与坑见 text-to-video SKILL「`--fix-cover` 现在的位置」节。
   ⚠️ 更早那条「已发布笔记的封面改不了」**仍然作废**——改得了，走 `note-components` 更新页语境。
 - **发布是原子的，一条命令**（全文见 text-to-video SKILL「小红书视频笔记发布 · 原子发布主路径」）：
   ① `publish_video.py --note … --audio … --cover <③的封面>`（**`--cover` 必传**，闸门 A 靠它校验凭证）→

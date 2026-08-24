@@ -2047,7 +2047,7 @@ python3 {SKILL_DIR}/scripts/comprehension_check.py {note_dir}/post-01.md
 |---|---|---|---|---|
 | **图文轮播** | **首图 P01 就是封面**，没有独立封面通道 | `publish_note.py`（**⛔ 不传 `--cover`**）；闸门 A 校验的是 `images/post-NN/P01.meta.json` | **不能** | **无补救通道，唯一出路＝删稿重发**（代价：换链接、数据清零）。⛔ 别在 `note_ops.py --set-components` 上反复试——`--add-image` 只能追加、换不掉第一张，试不出来只烧会话额度 |
 | **文字版（长图）** | 同图文（第一张长图即封面） | 同图文 | **不能** | 同图文 |
-| **视频／字卡／放映** | 工序③ 单出的 `cover-*.jpg`（**3:4 竖版 1080×1440**，与成片 9:16 不同是正常的） | `publish_video.py --video … --cover <③的封面>`（**`--cover` 必填**） | **能**（走 `note-components` 更新页语境，0.24.16 刻意未收紧） | `publish_video.py --fix-cover --job <发布job> --cover <同一张>` —— ⚠️ **这是老帖事后换封面／素脸哨兵告警的处置动作，⛔ 不是发布的一步**（0.24.16 起发布已原子，那一步没有存在理由） |
+| **视频／字卡／放映** | 工序③ 单出的 `cover-*.jpg`（**3:4 竖版 1080×1440**，与成片 9:16 不同是正常的） | `publish_video.py --video … --cover <③的封面>`（**`--cover` 必填**） | **能**（走 `note-components` 更新页语境，0.24.16 刻意未收紧） | `publish_video.py --fix-cover --job <发布job> --cover <同一张>` —— ⚠️ **这是老帖事后换封面／素脸哨兵告警的处置动作，⛔ 不是发布的一步**（0.24.16 起发布已原子，那一步没有存在理由）。🔴 **素脸帖补完封面没有完**：0.24.18 起真素脸帖已被系统自动转私密（台账 `operator_id=0`），还要 `note_ops.py --set-visibility --privacy 0` **人工转回公开**（🔴 顺序必须**先补封面后转公开**，反序＝素脸公开裸奔且告警已冻结不会再响；转完**现读核一次**，`permission_code` 只有 `==0` 才是公开）。完整流程与四条坑见 text-to-video SKILL「`--fix-cover` 现在的位置」节 |
 | **播客** | 同视频 | `publish_video.py --audio … --cover <③的封面>` | **能** | 同视频 |
 
 **图文传 `--cover` 会当场撞死**（这是设计，不是 bug）——脚本原话：
@@ -2362,7 +2362,7 @@ python3 {SKILL_DIR}/scripts/publish_video.py --ledger-check {note_dir}/publish-l
 
 | 差集 | 怎么补 |
 |---|---|
-| `cover=FAIL` / `cover_failed_publish_aborted`（**只可能出现在视频/播客笔记**） | 🔴 **2026-08-22 起这不是"发了但封面没上"，是「整单弃发」——笔记根本没发出去，⛔ 不会有重复笔记**。⚠️ server 已自动退避重试 3 次（2/10/30min）才落这个终态 ⇒ **退避已用光，原样重试大概率原样死**；要重发是**人工判断后的整单重发**，⛔ 不是惯性重跑。先看内层码归因（preview_unchanged / still_uploading / state_unreadable_after_confirm / state_unexpected_custom / cover_exception）。⛔ **别再走 `--fix-cover`**——它已降级为老帖事后换封面／素脸哨兵告警的处置动作，⛔ 不是发布的一步。⚠️ **图文线不会出现这一行**——图文没有独立 cover 通道（首图即封面，传 `--cover` 当场 `ValueError`/422），**图文封面事后无补救通道，唯一出路是删稿重发**。图文回执里真出现 cover 字段 = **走错脚本了**，先查是不是拿 `publish_video.py` 发了图文 |
+| `cover=FAIL` / `cover_failed_publish_aborted`（**只可能出现在视频/播客笔记**） | 🔴 **2026-08-22 起这不是"发了但封面没上"，是「整单弃发」——笔记根本没发出去，⛔ 不会有重复笔记**。⚠️ server 已自动退避重试 3 次（2/10/30min）才落这个终态 ⇒ **退避已用光，原样重试大概率原样死**；要重发是**人工判断后的整单重发**，⛔ 不是惯性重跑。先看内层码归因（preview_unchanged / still_uploading / state_unreadable_after_confirm / state_unexpected_custom / cover_exception）。⛔ **别再走 `--fix-cover`**——它已降级为老帖事后换封面／素脸哨兵告警的处置动作，⛔ 不是发布的一步（真去处置素脸帖时记住：**补完封面还要转回公开**，0.24.18 起素脸帖已被系统转私密，顺序=先补后转，详见 text-to-video SKILL「`--fix-cover` 现在的位置」节）。⚠️ **图文线不会出现这一行**——图文没有独立 cover 通道（首图即封面，传 `--cover` 当场 `ValueError`/422），**图文封面事后无补救通道，唯一出路是删稿重发**。图文回执里真出现 cover 字段 = **走错脚本了**，先查是不是拿 `publish_video.py` 发了图文 |
 | **图文首图发错**（不是差集，是发布事故） | **唯一补救＝删稿重发**（`note_ops.py --add-image` 只能追加、换不掉第一张；`--remove-image-index` 删完须剩 ≥1）。⛔ 别在 `--set-components` 上反复试——试不出来，只会烧掉该号的会话额度（12 会话/号/时）。删稿重发的代价是**换链接、数据清零**，所以图文封面必须在发之前就对（工序③） |
 | `topics=缺N` | `reason=no_exact_match` ＝平台话题库没这个词（话题是下拉精选实体，不是随便打字）→ **图文换词重挂**；**视频正文与话题发布后改不了（编辑 422），漏挂无补救通道：要么接受缺话题、要么删稿重发**，⛔ 别拿 `note_ops.py --set-components` 试 |
 | `collection=FAIL` | `note_ops.py --set-components --collection-id … --collection-name …` 补挂（幂等，可安全重跑） |
