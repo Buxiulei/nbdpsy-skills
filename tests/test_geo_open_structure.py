@@ -129,6 +129,19 @@ def test_证据出处逐字在规格里():
         assert token in spec, f"规格里缺证据要素：{token}"
 
 
+#: 🔴 **所有落了 GEO 原则的规格文件**——判据要覆盖它们**全部**。
+#: 🩸 变异实测：判据只查 `SPEC` 时，往 `DIST` 里写方向错的话**照样绿**
+#:    （「③抽掉头条裁定 / ④方向说反 / ⑤把单次确认的分值写回去」三项变异全部存活）。
+#:    ⇒ **判据的覆盖面本身要被审视** —— 与 [[量具失明族⑦：「全文」只是一个文件]] 同族。
+def _geo_specs():
+    out = []
+    for f in (SPEC, DIST, ROOT / "nbdpsy-xiaohongshu-creator" / "references" / "xiaohongshu-spec.md"):
+        if f.is_file() and "2311.09735" in f.read_text(encoding="utf-8"):
+            out.append(f)
+    assert len(out) >= 3, f"落了 GEO 原则的规格文件只找到 {len(out)} 个，请重审覆盖面"
+    return out
+
+
 def test_Rank1为负的方向不许说反():
     """🔴 **这是这组测试里最要紧的一条** —— 它防的是**方向错**，⛔ 不是数字不准。
 
@@ -140,25 +153,24 @@ def test_Rank1为负的方向不许说反():
     ⚠️ **我上一版的测试会放行这个错误**：它只断言「出现 115 时附近要有『低排名/第 1 位』字样」
     —— **条件说明在，但说反了**。**判据钉住了"有没有说"，没钉住"说得对不对"**
     （服务号线 2026-08-25 指出）。⇒ 本条改为**钉方向**。"""
-    spec = SPEC.read_text(encoding="utf-8")
-    assert "−30.3" in spec, "Rank-1 的负值必须出现，⛔ 不能只说「低排名页受益」"
-    # ⛔ 不许把负值说成中性——⚠️ 但**禁令句本身**（「⛔ 别写成「…几乎无变化」」）要放行：
-    #    判据钉的是「有没有人当作事实这么写」，⛔ 不是「这几个字出现过没有」。
-    #    （同族：本仓多次踩过「抓词不抓语境」，把讲错误的留档一并判成错误。）
-    for bad in ("几乎无变化", "几乎没有变化", "影响不大", "基本无影响"):
+    for f in _geo_specs():                      # ⛔ 不只查 pillar-spec
+      spec = f.read_text(encoding="utf-8")
+      assert "−30.3" in spec, f"{f.name}：Rank-1 的负值必须出现，⛔ 不能只说「低排名页受益」"
+      # ⛔ 不许把负值说成中性——⚠️ 但**禁令句本身**要放行：判据钉的是「有没有人当作事实这么写」。
+      for bad in ("几乎无变化", "几乎没有变化", "影响不大", "基本无影响"):
         for i, ln in enumerate(spec.splitlines()):
             if bad not in ln:
                 continue
             ctx = "\n".join(spec.splitlines()[max(0, i - 2):i + 1])
             assert any(k in ctx for k in ("⛔ 别写成", "别写成", "方向错", "写错", "曾")), \
-                f"方向错的措辞被当作事实写回来了：{ln.strip()[:60]}"
-    # 「Rank-1 有害」这件事必须被明说。
+                f"{f.name}：方向错的措辞被当作事实写回来了：{ln.strip()[:60]}"
+      # 「Rank-1 有害」这件事必须被明说。
     # 🩸 **判据一度是三选一（全为负/反受损/有害），删掉其中一个仍绿** ——
     #    冗余表述救了它，但**那是运气不是判据**。⇒ 改为**三项都要在**：
     #    「全为负」给事实、「反受损/弱者武器」给结论、「⛔ 别对已排第一的页面用」给动作。
-    for must in ("全为负", "反受损"):
-        assert must in spec, f"必须明说高排名页会受损（缺「{must}」），⛔ 不能只列数字让人自己看出来"
-    assert "弱者武器" in spec, "要给出可执行的结论：GEO 是弱者武器，⛔ 别对已排第一的页面用"
+      for must in ("全为负", "反受损"):
+        assert must in spec, f"{f.name}：必须明说高排名页会受损（缺「{must}」）"
+      assert "弱者武器" in spec, f"{f.name}：要给出可执行结论 GEO 是弱者武器"
 
 
 def test_绝对分值不许当百分比引用():
@@ -235,3 +247,59 @@ def test_旁证要标明是旁证不是证明():
     spec = XHS_SPEC.read_text(encoding="utf-8")
     assert "旁证" in spec and "不是证明" in spec
     assert "只测了品牌词" in spec, "要写明旁证的覆盖边界"
+
+
+# ────────── 分发稿（公众号/头条/知乎）：落 distribution-spec，⛔ 不落发布线 ──────────
+
+DIST = ROOT / "nbdpsy-seo-artical-creator" / "references" / "distribution-spec.md"
+
+
+def test_公众号那条落在写稿人会读到的文件里():
+    """🩸 我一度要把公众号那条派给**服务号线**（`nbdpsy-fuwuhao-operator`）——
+    而那个 skill **不写稿、只发稿**，它的 references 是端点清单/能力阐述/配图规格，
+    **没有一份是写作规格**。公众号的文字来自 `distribution-spec.md` 的 gzh 段。
+    ⇒ 落错文件的话，**写稿的人根本不会读到，等于规范放了等于没放**
+    （服务号线 2026-08-25 查落点时发现）。
+    ⚠️ 同族：**work 不在会被读到的位置＝work 不存在**。"""
+    dist = DIST.read_text(encoding="utf-8")
+    assert "2311.09735" in dist, "GEO 原则没落进分发规格"
+    assert "首句给完整结论" in dist
+
+
+@pytest.mark.parametrize("platform", ["公众号", "头条号", "知乎"])
+def test_三平台各自裁定过(platform):
+    """⛔ 不一刀切：三平台既有要求本就不同（知乎「第一句直接给答案」一直就是对的、
+    头条「首段 100 字内点明价值」同向、公众号有「共情场景钩子」需与①合并读）。"""
+    dist = DIST.read_text(encoding="utf-8")
+    i = dist.index("三平台怎么落")
+    seg = dist[i:i + 900]
+    assert platform in seg, f"{platform} 没在裁定表里"
+    # ⛔ 光出现名字不够：每行必须给出「落不落 ①」与理由
+    row = next((l for l in seg.splitlines() if platform in l and "|" in l), None)
+    assert row and row.count("|") >= 4, f"{platform} 那行不是完整裁定行（要有 ①/②③/理由）"
+
+
+def test_公众号共情钩子与首句结论是合并不是二选一():
+    """⚠️ 公众号既有规范「开头 3 行内有共情场景钩子」与 ① 不是二选一：
+    **首句给结论，共情场景紧跟其后**，⛔ 别把场景放在结论前面当铺垫。"""
+    dist = DIST.read_text(encoding="utf-8")
+    assert "合并读" in dist and "⛔ 不是二选一" in dist
+
+
+def test_不写只被单次读取确认过的分值():
+    """🔴 **这条钉的是一次自律**：表 1/表 5 的绝对分值，**本线与服务号线两次独立抓取
+    读出的结果不一致**（一次读成百分比、一次读成分值）⇒ 小模型读那两张表不稳定。
+
+    ⇒ 规格里**只写「那是绝对分值⛔不是百分比」这句警告，不写具体分值** ——
+    警告的作用不需要分值也成立；写上就是**又引入一组只被单次读取确认过的数字**，
+    正是这条警告本身要防的事（🩸 我在同一组数上已经错过两版）。
+
+    ⚠️ 与之相对：**表 2 那组数两次独立抓取完全一致 ⇒ 可用**。
+    ⇒ **判据不是「不写数字」，是「不写只被单次确认过的数字」。**"""
+    for f in (SPEC, DIST, ROOT / "nbdpsy-xiaohongshu-creator" / "references" / "xiaohongshu-spec.md"):
+        t = f.read_text(encoding="utf-8")
+        if "2311.09735" not in t:
+            continue
+        for ghost in ("24.9", "27.8", "25.9", "29.1", "26.2", "21.9"):
+            assert ghost not in t, f"{f.name} 写了只被单次读取确认过的分值 {ghost}"
+        assert "115.1" in t, f"{f.name} 缺表 2 那组两次一致、可用的数"
