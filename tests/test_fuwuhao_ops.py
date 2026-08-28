@@ -1049,10 +1049,27 @@ class Test发布必须带批复坐标:
         assert net.calls[0]["body"] == {"media_id": "M1", "approval": "G1-b"}
         assert data["approval"] == "G1-b"
 
-    def test_闸门是即时发布与定时发布共用的一份(self):
+    def test_闸门是即时发布与定时发布共用的一份(self, net, monkeypatch, capsys):
         """两处各抄一份，迟早一边漏掉闸门变成「悄悄不留痕就发了」。
-        （与本文件已有的「受众闸门共用」是同一条纪律。）"""
-        assert A.wechat_api.require_approval is S.wechat_api.require_approval
+
+        🩸 **⛔ 不能写成 `A.wechat_api.require_approval is S.wechat_api.require_approval`**
+        ——两个脚本 import 的是**同一个模块对象**，那个 `is` **恒真、永远不会红**：
+        它查的是「模块属性还在不在」，⛔ 不是「调用点用没用它」。有人在 article_ops 里
+        另写一个本地校验并改掉调用点，那条断言照样绿。
+        （本文件已有的 `mass_filter is` 先例是同款恒绿，见 2026-08-28 回执。）
+        ⇒ 换成**行为级**：把共用闸门换成哨兵，两条发布路径都必须走到它。"""
+        seen = []
+
+        def sentinel(value, action_label, flag="--approval"):
+            seen.append(action_label)
+            return (value or "").strip()
+
+        monkeypatch.setattr(W, "require_approval", sentinel)
+        net.serve(FakeResp(200, {"success": True, "ledger_id": 1, "publish_id": "1"}))
+        run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-A"], capsys)
+        net.serve(FakeResp(200, {"success": True, "job_id": 1}))
+        run_cli(S, ["--submit-publish", "M1", "--at", _future(), "--approval", "G1-A"], capsys)
+        assert len(seen) == 2, f"两条发布路径没有都走共用闸门，只走到：{seen}"
 
     def test_守备范围_这道闸不证明那个件真的批了(self):
         """🔴 **闸门的绿是有语义的**：它只保证「有一个成形的坐标被记下来」，
