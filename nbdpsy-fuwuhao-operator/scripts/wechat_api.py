@@ -29,6 +29,7 @@ menu_ops.py / article_ops.py（后续 schedule_ops.py / stats_ops.py 同）共�
 （草稿增改、素材上传）用默认 False——重跑最多多一份草稿，报 failed 让运营直接重试更省事。
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -144,6 +145,38 @@ def mass_filter(to_all: bool, tag_id):
                    "`--tag-id <标签id>`（只推给该标签分组）。"
                    "⛔ 不设默认值是有意的——默认成全员群发，一次漏填就把不该收到的人全推了，"
                    "且**不可逆**。先问清运营这条要发给谁。")
+
+
+# 批复坐标：老板台批复件号 + option_key，形如 `<件号>-A`。
+# ⛔ 只校验「成不成形」，⛔ 不联网问服务端「这个件真批了吗」。
+_APPROVAL_RE = re.compile(r"^\S+-[A-Za-z]$")
+
+APPROVAL_FORMAT = "<台账件号>-<选项键>"
+
+
+def require_approval(value, action_label, flag="--approval"):
+    """不可逆动作的**批复坐标**闸门。调用点必须在**任何网络请求之前**。
+
+    为什么是留痕式而不是拦截式（2026-08-27 定案）：发布是**日常高频**动作，不像群发
+    一月只有 4 次。**经常被正当操作触发的拦截闸迟早会被调松，而调松是一次性、永久的**
+    ——所以这里要的是「谁批的将来能追到」，⛔ 不是「替服务端再判一次准入」。
+    值**原样**带进请求与回执，⛔ 不做大小写归一（原样才对得上台账）。
+
+    ⚠️ 守备范围：只保证「有一个成形的坐标被记下来」。它**不能**保证那个件真的存在、
+    真的批了、批的就是这一篇——那些要靠人核台账。⛔ 别把本闸的绿读成「已获批准」。
+    """
+    v = (value or "").strip()
+    if not v:
+        raise OpFailed(
+            f"{action_label}**不可逆**，必须带 `{flag} {APPROVAL_FORMAT}`（如 `<件号>-A`）："
+            "老板台批复的件号 + 选项键，会原样写进回执备查。"
+            f"⛔ 没有坐标就不发——本次**一个请求都没发出**，这不是故障，是闸门。")
+    if not _APPROVAL_RE.match(v):
+        raise OpFailed(
+            f"`{flag} {v}` 不成形：要的是 `{APPROVAL_FORMAT}`（件号 + 短横 + 单个选项键字母），"
+            f"如 `<件号>-A`。⛔ 本次一个请求都没发出。"
+            "（只查格式，⛔ 不联网核实那个件是否真的批了——那要人去看台账。）")
+    return v
 
 
 def credentials(api_base=None):

@@ -794,7 +794,7 @@ class Test中文终审分段与截断:
 class Test发布与台账:
     def test_发布成功给出异步与查终态的下一步(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "ledger_id": 7, "publish_id": "100000001"}))
-        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1"], capsys)
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-A"], capsys)
         assert code == 0 and data["ledger_id"] == 7 and data["publish_id"] == "100000001"
         assert net.calls[0]["url"].endswith("/api/external/wechat/publish")
         assert "--status --id 7" in data["hint"] and "不占群发次数" in data["hint"]
@@ -802,21 +802,21 @@ class Test发布与台账:
     def test_发布遇502落unknown且exit0(self, net, capsys):
         """T4 交接的硬契约：submit 可能已经发出去了，报 failed 会诱导二次发布。"""
         net.serve(FakeResp(502, {"success": False, "error": "微信接口不可达"}))
-        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1"], capsys)
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-A"], capsys)
         assert code == 0 and data["outcome"] == "unknown"
         assert "台账" in data["hint"]
 
     def test_发布遇502但服务端说没发出去时如实报失败(self, net, capsys):
         net.serve(FakeResp(502, {"success": False, "sent": False,
                                  "error": "微信 token 接口返回 errcode=40013"}))
-        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1"], capsys)
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-A"], capsys)
         assert code == 1 and data["outcome"] == "failed"
         assert "不用查台账" in data["error"]
 
     def test_发布被微信明确拒绝是失败要改再来(self, net, capsys):
         net.serve(FakeResp(200, {"success": False, "wechat_errcode": 53501,
                                  "wechat_errmsg": "freq control", "hint": "隔开时间再发"}))
-        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1"], capsys)
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-A"], capsys)
         assert code == 1 and data["outcome"] == "failed" and data["wechat_errcode"] == 53501
 
     def test_台账透传并补人话状态与本页统计(self, net, capsys):
@@ -1009,22 +1009,80 @@ class Test定时时间闸门:
         assert any("每分钟扫一次" in w for w in warnings)
 
 
+class Test发布必须带批复坐标:
+    """🩸 老板 2026-08-27 定案：freepublish 按不可逆办（删了换链接、数据清零、
+    已分享出去的链接变死链）⇒ 发前必须留下**老板台批复坐标**（件号 + option_key）。
+
+    做成**留痕式**而不是拦截式，理由写在 `wechat_api.require_approval` 里：
+    发布是**日常高频**动作（不像群发一月 4 次），而**经常被正当操作触发的拦截闸
+    迟早会被调松，调松是一次性、永久的**。
+    """
+
+    def test_不带approval时一个请求都不发(self, net, capsys):
+        code, data, err = run_cli(A, ["--publish", "--media-id", "M1"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert net.calls == []          # ⛔ 零调用：闸门在任何网络请求之前
+        assert "一个请求都没发出" in data["error"] and "不可逆" in data["error"]
+
+    def test_定时发布同样不带就一条队列都不入(self, net, capsys):
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future()], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert net.calls == []
+
+    @pytest.mark.parametrize("bad", ["yes", "G1", "G1-AB", "   ", "-A", "G1-", "G1-1"])
+    def test_不成形的坐标要拒且不发请求(self, net, capsys, bad):
+        """⛔ 只查成不成形。传 `yes` 这种「像是答了其实没答」的值必须拒——
+        留痕的价值在于**将来能追到那个坐标**，追不回去的留痕等于没留。
+
+        ⚠️ 用 `--approval=<值>` 而不是分开两个 argv：`-A` 这类以短横开头的值，
+        分开传会被 argparse 当成**另一个选项**、走 exit 2，测到的是 argparse 不是本闸门
+        （结果仍是零请求所以安全，但那条路证明不了闸门有效）。"""
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1", f"--approval={bad}"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert net.calls == []
+
+    def test_坐标原样进body与回执不归一化(self, net, capsys):
+        """原样才对得上台账。⛔ 别顺手 .upper()——台账里的 option_key 是什么就是什么。"""
+        net.serve(FakeResp(200, {"success": True, "ledger_id": 7, "publish_id": "1"}))
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-b"], capsys)
+        assert code == 0
+        assert net.calls[0]["body"] == {"media_id": "M1", "approval": "G1-b"}
+        assert data["approval"] == "G1-b"
+
+    def test_闸门是即时发布与定时发布共用的一份(self):
+        """两处各抄一份，迟早一边漏掉闸门变成「悄悄不留痕就发了」。
+        （与本文件已有的「受众闸门共用」是同一条纪律。）"""
+        assert A.wechat_api.require_approval is S.wechat_api.require_approval
+
+    def test_守备范围_这道闸不证明那个件真的批了(self):
+        """🔴 **闸门的绿是有语义的**：它只保证「有一个成形的坐标被记下来」，
+        ⛔ 不保证那个件存在、批了、批的是这一篇——那要人去核台账。
+        写成断言是怕下一个人把绿读成「已获批准」，从而省掉真正的核对动作。"""
+        doc = A.wechat_api.require_approval.__doc__
+        assert "⛔ 别把本闸的绿读成" in doc and "不能" in doc
+        # ⛔ 不联网：函数体里不许出现请求调用
+        import inspect
+        src = inspect.getsource(A.wechat_api.require_approval)
+        assert "request_json" not in src and "requests" not in src
+
+
 class Test定时提交:
     def test_定时发布的body形状与念给运营的时间(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "job_id": 12}))
         at = _future()
-        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", at], capsys)
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", at, "--approval", "G1-A"], capsys)
         assert code == 0 and data["outcome"] == "done" and data["job_id"] == 12
         assert net.calls[0]["url"].endswith("/api/external/wechat/schedule")
+        # 批复坐标**原样**进 payload（⛔ 不归一化大小写——原样才对得上台账）
         assert net.calls[0]["body"] == {"job_type": "publish", "run_at": at,
-                                        "payload": {"media_id": "M1"}}
+                                        "payload": {"media_id": "M1", "approval": "G1-A"}}
         assert "北京时间" in data["run_at_label"] and data["run_at_label"] in data["hint"]
         assert "不占群发次数" in data["hint"] and "--cancel 12" in data["hint"]
 
     def test_入队结果未确认时叫人查队列而不是查台账(self, net, capsys):
         """重复入队 = 到点发两次。通用那句「查台账」在这条线上是错的处置。"""
         net.serve(RuntimeError("HTTPSConnectionPool(host='svc'): Read timed out."))
-        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future()], capsys)
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future(), "--approval", "G1-A"], capsys)
         assert code == 0 and data["outcome"] == "unknown"
         assert "--list" in data["hint"] and "重复入队" in data["hint"]
 
@@ -1032,14 +1090,14 @@ class Test定时提交:
         """「离现在只有 30 秒、可能错过这一轮」正是要当面说的那句，埋在 JSON 里最容易被略过。"""
         net.serve(FakeResp(200, {"success": True, "job_id": 1}))
         soon = (datetime.now(S.CN_TZ) + timedelta(seconds=40)).replace(microsecond=0).isoformat()
-        code, data, err = run_cli(S, ["--submit-publish", "M1", "--at", soon], capsys)
+        code, data, err = run_cli(S, ["--submit-publish", "M1", "--at", soon, "--approval", "G1-A"], capsys)
         assert code == 0 and data["warnings"]                    # 回执里有
         assert any("每分钟扫一次" in w for w in data["warnings"])
         assert "每分钟扫一次" in err                              # stderr 里也得有
 
     def test_服务端没回id时不拼出跑不通的取消命令(self, net, capsys):
         net.serve(FakeResp(200, {"success": True}))
-        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future()], capsys)
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future(), "--approval", "G1-A"], capsys)
         assert code == 0 and data["job_id"] is None and "--cancel <id>" in data["hint"]
 
     def test_定时群发不带confirm一条都不入队只查配额(self, net, capsys):

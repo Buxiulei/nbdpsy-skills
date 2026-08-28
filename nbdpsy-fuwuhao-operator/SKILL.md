@@ -308,13 +308,20 @@ python3 ART --draft-add --articles {workspace}/wechat/batch.json
 文章与贴图同规则）。三条路按用途选：**进主页**=后台点发表（台账不记，以后台发表记录为准）；
 **推送粉丝对话框**=群发（第 7 步，也会进主页）；**只要链接**（挂菜单/合集/站外引流）才走本步：
 
+🔴 **发布不可逆，必带批复坐标**（老板 2026-08-27 定案）：发出去改不了，要动一个字只能删了重发
+——换新链接、阅读/在看/分享清零、已分享出去的旧链接全变死链。所以两条命令都必须带
+`--approval <件号>-<选项键>`（老板台批复件号 + `option_key`）。**缺了一律 failed exit 1，
+且一个请求都不发**——那不是故障，是闸门。脚本只查坐标成不成形、**不联网核实那个件真批没批**
+（发布是高频动作，拦截式的闸迟早被调松）⇒ **真伪要你自己对台账**，⛔ 别把命令跑通当成已获批准。
+
 ```bash
 # 立即发布（不推送粉丝、不占群发次数、不进主页，产出=永久链接）
-python3 ART --publish --media-id <media_id>
+python3 ART --publish --media-id <media_id> --approval <件号>-<选项键>
 
 # 定时发布：--at **必须带时区**（不带的话服务端按 UTC 解析，会早发 8 小时；脚本本地就拦下）
 # ⚠ 定时发布走的也是 API 发表——到点发出的内容**同样不进主页**，只产链接
-python3 SCHED --submit-publish <media_id> --at "2026-08-03T09:00:00+08:00"
+python3 SCHED --submit-publish <media_id> --at "2026-08-03T09:00:00+08:00" \
+  --approval <件号>-<选项键>
 ```
 
 - 发布是**异步**的：立即发布返回 `status=publishing`，服务端每 5 分钟轮询一次微信，几分钟内转 `published`。
@@ -406,7 +413,8 @@ python3 ART --draft-add-newspic --title "标题" \
   --text {笔记目录}/文案.txt --images {笔记目录}/images
 
 # 发布与文章同一条命令；台账/备注/删除也全部共用文章那套
-python3 ART --publish --media-id <上一步的 media_id>
+# 贴图发布同样不可逆 ⇒ 同样必带批复坐标
+python3 ART --publish --media-id <上一步的 media_id> --approval <件号>-<选项键>
 ```
 
 - **文案要原始纯文本**（小红书笔记的发布文案那段，含话题 #标签 没问题）：贴图正文原样显示，

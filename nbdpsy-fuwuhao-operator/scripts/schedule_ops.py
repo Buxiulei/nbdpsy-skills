@@ -6,7 +6,9 @@
 
 用法:
     # 定时发布（到点发布：文章上线可搜到，但**不推送粉丝、不占群发次数**）
-    python3 schedule_ops.py --submit-publish <media_id> --at "2026-08-03T09:00:00+08:00"
+    # 发布不可逆 ⇒ 必带批复坐标（件号 + option_key），缺了一条队列都不入
+    python3 schedule_ops.py --submit-publish <media_id> --at "<带时区的时刻>" \\
+        --approval <件号>-<选项键>
 
     # 定时群发（高危：不可逆 + 每自然月仅 4 次）。受众必须明说：--to-all 或 --tag-id 二选一
     python3 schedule_ops.py --submit-mass <media_id> --at "..." --to-all   # 只查配额，**零入队**
@@ -177,9 +179,11 @@ def do_submit_publish(args, api_base, key):
     if not media_id:
         raise OpFailed("--submit-publish 需要 media_id（`article_ops.py --draft-add` 回的那个）。")
     run_at, warnings = resolve_run_at(args.at)
+    # 批复坐标闸门**放在入队之前**：定时发布到点自动执行，缺坐标就是「本次没入队」。
+    approval = wechat_api.require_approval(args.approval, "定时发布（到点 freepublish）")
     data = submit_job(api_base, key,
                       {"job_type": "publish", "run_at": run_at.isoformat(),
-                       "payload": {"media_id": media_id}}, args.timeout)
+                       "payload": {"media_id": media_id, "approval": approval}}, args.timeout)
     return submitted(data, "publish", media_id, run_at, warnings,
                      "本次是**发布**（freepublish）：到点文章上线、可被搜到，"
                      "但**不推送粉丝、不占群发次数**；到点后几分钟用 "
@@ -303,6 +307,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="服务号定时任务：定时发布 / 定时群发 / 队列 / 撤销")
     ap.add_argument("--submit-publish", dest="submit_publish", metavar="media_id",
                     help="提交定时发布（不推送粉丝、不占群发次数）")
+    ap.add_argument("--approval", metavar="件号-选项",
+                    help="定时发布的批复坐标（老板台件号 + option_key，如 <件号>-A）。"
+                         "发布不可逆，缺此参数一律 failed exit 1 且一条队列都不入")
     ap.add_argument("--submit-mass", dest="submit_mass", metavar="media_id",
                     help="提交定时群发（高危：不可逆 + 每自然月仅 4 次）")
     ap.add_argument("--list", action="store_true", help="查定时队列")

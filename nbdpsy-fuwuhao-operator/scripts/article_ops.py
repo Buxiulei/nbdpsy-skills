@@ -22,6 +22,9 @@
     python3 article_ops.py --publish --media-id <media_id>
 
     # 台账
+    # 发布（不可逆：改不了、删了换链接、数据清零）。必带批复坐标，缺了一个请求都不发
+    python3 article_ops.py --publish --media-id <media_id> --approval <件号>-<选项键>
+
     python3 article_ops.py --ledger [--limit 20] [--offset 0] [--status published]
     python3 article_ops.py --status --id <台账 id>                   # 单篇终态
 
@@ -395,14 +398,17 @@ def do_draft_update(args, api_base, key):
 # ── 发布 ────────────────────────────────────────────────────────────────
 def do_publish(args, api_base, key):
     media_id = require(args.media_id, "--publish 需要 --media-id（建草稿回的那个）")
+    # 批复坐标闸门**放在任何网络请求之前**：缺了就是「本次没执行」，一个请求都不发。
+    approval = wechat_api.require_approval(args.approval, "发布（freepublish）")
     # 不可逆：服务端 5xx / 读响应超时都可能是「已经提交给微信了」，一律 unknown 不诱导重发
     data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/publish", key,
-                                   {"media_id": media_id}, args.timeout, irreversible=True)
+                                   {"media_id": media_id, "approval": approval},
+                                   args.timeout, irreversible=True)
     ledger_id = data.get("ledger_id")
     # 没拿到台账 id 时别拼出 `--status --id None` 这种跑不通的命令，退回 --ledger
     check = f"`--status --id {ledger_id}`" if ledger_id is not None else "`--ledger`（服务端没回台账 id）"
     return {"outcome": "done", "ledger_id": ledger_id, "publish_id": data.get("publish_id"),
-            "media_id": media_id,
+            "media_id": media_id, "approval": approval,
             "hint": "发布是**异步**的：服务端每 5 分钟轮询一次微信，几分钟内从 publishing 转 "
                     f"published。**现在拿不到 url 不等于失败**，过几分钟用 {check} 查终态。"
                     "本次是发布（freepublish）：文章上线、可搜到，但**不推送粉丝、不占群发次数**。"}, 0
@@ -588,6 +594,9 @@ def main(argv=None):
     ap.add_argument("--draft-update", dest="draft_update", action="store_true",
                     help="改草稿（先读回原文再覆盖指定字段）")
     ap.add_argument("--publish", action="store_true", help="发布（不推送粉丝、不占群发次数）")
+    ap.add_argument("--approval", metavar="件号-选项",
+                    help="发布的批复坐标（老板台件号 + option_key，如 <件号>-A）。"
+                         "发布不可逆，缺此参数一律 failed exit 1 且一个请求都不发")
     ap.add_argument("--ledger", action="store_true", help="发布台账分页——线上有什么的唯一权威")
     ap.add_argument("--status", nargs="?", const="", metavar="状态",
                     help="配 --ledger 时是过滤条件（publishing/published/publish_failed/deleted）；"
