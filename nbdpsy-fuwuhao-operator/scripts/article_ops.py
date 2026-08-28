@@ -18,13 +18,11 @@
     python3 article_ops.py --draft-add-newspic --title "标题" --text 文案.txt \\
         --images 图目录或P01.png,P02.png,...     # ≤20 张，首图即封面；贴图不支持 --draft-update
 
-    # 发布（不推送粉丝、不占群发次数）
-    python3 article_ops.py --publish --media-id <media_id>
-
-    # 台账
-    # 发布（不可逆：改不了、删了换链接、数据清零）。必带批复坐标，缺了一个请求都不发
+    # 发布（不推送粉丝、不占群发次数）。**不可逆**：改不了、删了换链接、数据清零
+    # ⇒ 必带批复坐标，缺了 failed exit 1 且一个请求都不发
     python3 article_ops.py --publish --media-id <media_id> --approval <件号>-<选项键>
 
+    # 台账
     python3 article_ops.py --ledger [--limit 20] [--offset 0] [--status published]
     python3 article_ops.py --status --id <台账 id>                   # 单篇终态
 
@@ -411,7 +409,9 @@ def do_publish(args, api_base, key):
             "media_id": media_id, "approval": approval,
             "hint": "发布是**异步**的：服务端每 5 分钟轮询一次微信，几分钟内从 publishing 转 "
                     f"published。**现在拿不到 url 不等于失败**，过几分钟用 {check} 查终态。"
-                    "本次是发布（freepublish）：文章上线、可搜到，但**不推送粉丝、不占群发次数**。"}, 0
+                    "本次是发布（freepublish）：文章上线、可搜到，但**不推送粉丝、不占群发次数**。"
+                    f"⚠️ 批复坐标 `{approval}` 只是**原样记下**——脚本没有、也不会去核实那个件"
+                    "真批没批，**命令跑通 ⛔ 不等于已获批准**。"}, 0
 
 
 # ── 台账 ────────────────────────────────────────────────────────────────

@@ -1071,6 +1071,22 @@ class Test发布必须带批复坐标:
         run_cli(S, ["--submit-publish", "M1", "--at", _future(), "--approval", "G1-A"], capsys)
         assert len(seen) == 2, f"两条发布路径没有都走共用闸门，只走到：{seen}"
 
+    def test_成功回执也要重申闸门不代表已获批准(self, net, capsys):
+        """🩸 零上下文干跑（2026-08-28）抓到：这句警告原本只活在**失败态的报错文案**和
+        **SKILL.md 的散文**里，而 `outcome:"done"` 的 hint 只讲异步轮询。
+        ⇒ **只看 stdout 的消费者，恰恰在成功那一刻错过这条警示**——而那正是最需要它的时刻。
+        （同族：观察者会先丢掉最该被看到的样本。）"""
+        net.serve(FakeResp(200, {"success": True, "ledger_id": 7, "publish_id": "1"}))
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-A"], capsys)
+        assert code == 0 and data["outcome"] == "done"
+        assert "不等于已获批准" in data["hint"] and "G1-A" in data["hint"]
+
+    def test_定时发布成功回执同样重申(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "job_id": 12}))
+        code, data, _ = run_cli(S, ["--submit-publish", "M1", "--at", _future(),
+                                    "--approval", "G1-A"], capsys)
+        assert code == 0 and "不等于已获批准" in data["hint"] and "G1-A" in data["hint"]
+
     def test_守备范围_这道闸不证明那个件真的批了(self):
         """🔴 **闸门的绿是有语义的**：它只保证「有一个成形的坐标被记下来」，
         ⛔ 不保证那个件存在、批了、批的是这一篇——那要人去核台账。

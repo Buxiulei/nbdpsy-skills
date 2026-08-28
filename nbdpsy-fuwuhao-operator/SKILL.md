@@ -140,6 +140,7 @@ python3 COMMON secret ensure NBDPSY_WECHAT_API_KEY   # 无输出 = 已配置；�
 1. 判子场景                → 验证：五个子场景已对号入座；涉及群发/删除的，红线①/②已当面复述并拿到确认
 2. 取内容                  → 验证：拿到本地 md 路径（优先 nbdpsy-seo-artical-creator 的长文/公众号分发稿）
 2.5 出配图（GENIMG，稿子没图才走）→ 验证：先 --cover-only 出封面过闸门、运营确认后再出插图；图片路径已写回 md 的 ![]() 引用
+2.7 中文本土化终审（ZHREV）  → 验证：`zh_review.py <稿子.md>` 过。🔴 **没有任何代码会替你跑这一步**——编译/建草稿/发布都不检查，漏了不报错，只有这张表提醒你
 3. 排版编译（MD2WX）       → 验证：产物 HTML 无 class/<style>/<script>/iframe/position；图片全是 mmbiz 域名；封面拿到 thumb media_id
 4. 建草稿（ART --draft-add）→ 验证：拿到 media_id；标题/作者/摘要已与运营核对
 5. 发布：立即 或 定时      → 验证：立即=拿到台账 id 且 status=publishing；定时=拿到 job id，run_at 已按「几月几号几点」复述给运营

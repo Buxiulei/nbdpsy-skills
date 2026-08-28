@@ -185,6 +185,8 @@ def do_submit_publish(args, api_base, key):
                       {"job_type": "publish", "run_at": run_at.isoformat(),
                        "payload": {"media_id": media_id, "approval": approval}}, args.timeout)
     return submitted(data, "publish", media_id, run_at, warnings,
+                     f"⚠️ 批复坐标 `{approval}` 只是**原样记下**——脚本不核实那个件真批没批，"
+                     "**入队成功 ⛔ 不等于已获批准**。"
                      "本次是**发布**（freepublish）：到点文章上线、可被搜到，"
                      "但**不推送粉丝、不占群发次数**；到点后几分钟用 "
                      "`article_ops.py --ledger` 查终态与链接。")
