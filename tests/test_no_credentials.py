@@ -1,52 +1,93 @@
 """**文档里不许出现凭据真值**——本仓是公开仓，写进去就等于发布。
 
-🩸 起因（2026-08-27～28，T106→T107）：`nbdpsy-seo-artical-creator/SKILL.md` 三处示例命令
-带着数据库口令明文。查下来那是**本地开发库的现行口令**（8/26 已从生产作废）。
+🩸 起因（2026-08-27～29，T106→T107）：`nbdpsy-seo-artical-creator/SKILL.md` 三处示例命令
+带着数据库口令明文。8-29 01:04 基建完成本地库口令轮换，旧值已失效。
 
-## 🔴 判据为什么用 hash 比对，⛔ 不用「口令样式正则」
+## 🔴 两个名单语义相反，⛔ 别混
 
-同一批文件里还有 4 处写的是占位符 `PGPASSWORD='<生产库密码>'`——**那是正确写法，会永远留在文档里**。
-拿「`PGPASSWORD='...'` 里有值就红」当判据，会把占位符一起扫进来 ⇒ **恒红** ⇒ 三天之内没人看
-⇒ 等于没有闸门。⇒ 只认**已知真值的 hash**：占位符 hash 不在表里，天然放行。
+| | 用途 | 存不存进本文件 |
+|---|---|---|
+| **历史泄漏值**（已轮换掉的旧口令） | 出现即红。**失效 ≠ 不用管**：它在本仓 git 历史里**永久可 clone**，且将来有人可能拿它推测口令生成规律 | ✅ 存 hash |
+| **当前有效口令**（`.env` 里那个） | 出现即红——但它是**「有没有再次泄漏」的靶子**，⛔ **绝不能进「已泄漏」名单** | ❌ 只在运行时从 `.env` 动态读 |
 
-🩸 我最初就是栽在这上面：把七处的值做成指纹表，其中 `c82a201f` 我当成「第二个来历不明的口令」
-上报，实际它是**占位符 `<生产库密码>` 这几个字符本身**的 hash。
-🔑 **哈希能答「这两个一样吗」，⛔ 答不了「这是什么」**——分类问题必须回原始行看内容性质。
+🩸 **本文件第一版就把这件事写反了**：它 assert「`.env` 的口令必须在 `KNOWN_LEAKED` 里，
+不在就红并提示**把新值加进去**」。照那个提示做，轮换后的新口令会被登记成「已泄漏」——
+名单从此答不了「有没有再次泄漏」。基建 2026-08-29 指出后重构。
+🔑 **两个东西的检查动作相同（都不许出现在仓里），语义却相反**——动作相同最容易让人把它们合并。
+
+## 🔴 这个判据守什么、明确不守什么
+
+- ✅ 守：**这些值有没有出现在仓库文件里**（三形态：明文 / `%40` URL 编码 / base64）。
+- ⛔ **不守「那个凭据还有没有效」**。基建的硬判据值得抄在这里：
+  > **「旧值必须已失效」是唯一能证明「轮换真的发生了」的判据。**
+  > 服务探针 / 能连库 / 日志无认证失败这三条，在**什么都没做**的情况下也全会绿——
+  > 它们答的是「服务还好吗」，⛔ 答不了「口令换了吗」。
+  ⇒ 要判「某个泄漏凭据是否已处置」，得**拿它去连一次、必须失败**，⛔ 不是「文档里搜不到了」。
+- ⛔ **不守 git 历史**。删文档不解决历史——那正是当初定「轮换是唯一根治」的依据（T107=A 裁「后议」）。
+
+## 🔴 为什么用 hash 比对而不是「口令样式正则」
+
+同一批文件里有 7 处占位符 `PGPASSWORD='<生产库密码>'`——**那是正确写法，会永远在文档里**。
+拿「`PGPASSWORD='...'` 里有值就红」当判据会把占位符一起扫进来 ⇒ **恒红 ⇒ 等于没有闸门**。
+🩸 我最初还栽过一次：把七处的值做成指纹表，其中一个我当成「第二个来历不明的口令」上报，
+实际它是**占位符那几个字符本身**的 hash。
+🔑 **哈希能答「这两个一样吗」，⛔ 答不了「这是什么」**——分类问题必须回原始行看内容。
 
 ## 🔴 为什么用 `pathlib.rglob` 扫，⛔ 不用 grep
 
-**本机 `grep` 是一个 shell function，底层是 ugrep，递归时会遵守 `.gitignore`。**
-实测（2026-08-28）：同一目录加一个内容为 `*` 的 `.gitignore`，`grep -rl` 命中从 1 变 **0**，
-而直指文件仍命中 1，**且 rc=1、无任何报错**——一个完全静默的盲区。
+**本机 `grep` 是 shell function，底层 ugrep，递归时遵守 `.gitignore`**（实测：同一目录加个
+内容为 `*` 的 `.gitignore`，`grep -rl` 命中 1→**0**，直指文件仍 1，**rc=1、无报错**）。
+当时正是它让「全仓已排查干净」漏掉 `.superpowers/sdd/` 下 3 处现行口令明文。
+⚠️ 被 gitignore 忽略的文件**恰恰是凭据最爱待的地方** ⇒ 这盲区专挡你最想找的东西。
+（`/usr/bin/grep` 是 GNU grep 3.11，递归正常，也可用。）
 
-⇒ 当时正是它让「全仓已排查干净」漏掉了 `.superpowers/sdd/` 下 3 处**现行口令明文**
-（那目录有个 `.gitignore` 内容就是 `*`）。而**被 gitignore 忽略的文件恰恰是凭据最爱待的地方**
-（本地笔记、临时产物、工作简报）。⇒ 凡是「查无 ⇒ 干净」这类**全称否定**的结论，
-⛔ 不能用会静默跳过文件的量具得出（[[查无是全称否定，其强度＝搜索范围完整度]]）。
+## ⚠️ 三形态：明文只是其中一种
+
+🩸 2026-08-29 基建实证：他做 `%40` URL 编码那一轮时**抓出 15 个文件，其中 5 个是他先前
+宣布「残留 0」的**。口令进了 `DATABASE_URL` 就是 percent-encoded 形态，明文搜法完全看不见。
+⚠️ 我自己也漏过：收口人 8-28 就顺带告诉过我「`DATABASE_URL` 里是 percent-encoding、hash 不同」，
+我读到了却没据此扩展扫描范围——**注意力全在他纠正我的那两处错上，漏掉了顺带给的新信息**。
 """
+import base64
 import hashlib
-import subprocess
+import re
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).parent.parent
 SELF = Path(__file__).resolve()
+ENV = Path("/home/roots/NBDpsy/.env")
 
-# 已知**曾经泄露过**的凭据真值 sha256（⛔ 只存 hash，本文件永不含明文）。
-# 新发现一个就往这里加一行，附来历——它防的是「旧值被从别处抄回来」。
+# ── 历史泄漏值：只存 hash，本文件永不含明文 ────────────────────────────
+# 值已失效（2026-08-29 01:04 轮换），但**仍要留着**：本仓 git 历史里永久可 clone。
+# 新发现一个就加一行，附来历。⛔ 绝不把「当前有效口令」加进这里（见文件头）。
 KNOWN_LEAKED = {
     "02dca5b729b5976104b50872c433089ce553d93b775cf5b89cf8ce50ab188c5a":
-        "psychology_counseling 库口令：2026-08-26 从生产作废；8/28 时仍是本地开发库现行值"
-        "（基建已排期轮换）。曾出现在 seo-artical-creator/SKILL.md 与 .superpowers/sdd/ 简报里。",
+        "psychology_counseling 库口令（明文形态）：2026-08-26 从生产作废、08-29 从本地轮换掉，"
+        "已实测失效。曾在 seo-artical-creator/SKILL.md 3 处与 .superpowers/sdd/ 简报里。",
+    "b12af61d2755281634d27fe55b0ec90b48e3332f55d0522642bbf13b0518a790":
+        "同上值的 %40 URL 编码形态（DATABASE_URL 里就是它）——⚠️ 明文搜法看不见这一种。",
+    "5724667c8a84e8783c6267f213f39faff9fbf948b947a2c62210c895f7c4cd11":
+        "同上值的 base64 形态。",
+    # 🩸 上面三条最初我只从别人口头转述里拿到前 8 位就把后 56 位**编**了出来——
+    #    编造的 hash 永远不匹配，是一颗长得很真的哑弹。⇒ 名单里每个 hash 都必须是
+    #    自己用 `sha256(值)` 算过的；写不出「我从哪算的」就不许往这里加。
 }
 
 TEXT_EXT = {".md", ".py", ".sh", ".json", ".txt", ".yml", ".yaml",
             ".toml", ".cfg", ".ini", ".diff", ".patch", ".html", ".js"}
 
+# 结构化位置的候选值——用于**拿不到明文时**（已轮换的旧值）按 hash 比对。
+# ⚠️ 它比子串搜弱：只覆盖这几种写法。所以当前口令仍走子串搜（最强），两条腿一起走。
+CANDIDATE_PATTERNS = [
+    re.compile(r"PGPASSWORD=['\"]?([^'\"\s]+)"),
+    re.compile(r"DB_PASSWORD=['\"]?([^'\"\s]+)"),
+    re.compile(r"postgres(?:ql)?://[^:/\s]+:([^@\s]+)@"),
+]
+
 
 def iter_text_files():
-    """⚠️ 用 rglob 而**不是** grep——见模块 docstring：本机 grep 递归会静默跳过 gitignore 的文件。"""
     for f in ROOT.rglob("*"):
         if not f.is_file() or f.suffix not in TEXT_EXT:
             continue
@@ -55,74 +96,97 @@ def iter_text_files():
         yield f
 
 
+def three_forms(secret):
+    """一个口令在文档里可能长的三种样子。⚠️ 明文只是其中一种。"""
+    return {
+        "明文": secret,
+        "%40 URL 编码": secret.replace("@", "%40"),
+        "base64": base64.b64encode(secret.encode()).decode(),
+    }
+
+
 def current_db_password():
-    """本地 `.env` 的现行口令。取不到就返回 None——**⛔ 不返回空串**：
-    空串 `in` 任何文本都为真，会让扫描全部命中（恒红）；而空串的 sha256 长得跟正常 hash
-    一模一样，写进上面那张表就是一颗哑弹。🩸 今天真算出过一次 `e3b0c442…`（空串 hash）。"""
-    env = Path("/home/roots/NBDpsy/.env")
-    if not env.exists():
+    """当前 `.env` 口令。取不到返回 None——**⛔ 不返回空串**：
+    空串 `in` 任何文本都为真会让扫描全部命中；而空串的 sha256 长得跟正常 hash 一样，
+    写进名单就是一颗哑弹。🩸 今天真算出过一次 `e3b0c442…`（空串 hash）。"""
+    if not ENV.exists():
         return None
-    for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in ENV.read_text(encoding="utf-8", errors="ignore").splitlines():
         if line.startswith("DB_PASSWORD="):
             v = line.split("=", 1)[1].strip().strip('"').strip("'")
             return v if len(v) > 5 else None
     return None
 
 
-def test_全仓不含已知泄露过的凭据():
-    """按 hash 比对：把每个文件里出现的候选串与 KNOWN_LEAKED 对照。
-    实现上反过来做——拿已知明文（从 .env 取当前值）直接子串搜，命中即红。"""
+# ── 一、当前有效口令：绝不许出现在仓里（三形态子串搜）────────────────
+def test_仓里不含当前有效口令():
     cur = current_db_password()
     if cur is None:
-        pytest.skip("读不到本地 .env 的 DB_PASSWORD ⇒ **本条没有跑**，⛔ 不要当成通过")
-    assert hashlib.sha256(cur.encode()).hexdigest() in KNOWN_LEAKED, (
-        "本地 .env 的口令不在已知表里——它可能刚轮换过。请把新值的 sha256 加进 KNOWN_LEAKED "
-        "（⛔ 只加 hash 不加明文），否则本判据在保护一个已经不存在的值。")
-    bad = [f"{f.relative_to(ROOT)}:{i}"
+        pytest.skip("读不到 .env 的 DB_PASSWORD ⇒ **本条没有跑**，⛔ 不要当成通过")
+    assert hashlib.sha256(cur.encode()).hexdigest() not in KNOWN_LEAKED, (
+        "🔴 当前 .env 的口令出现在 KNOWN_LEAKED 里——要么它还没轮换，"
+        "要么有人把当前口令误加进了「已泄漏」名单。后者会让这份名单再也答不了"
+        "「有没有再次泄漏」，见文件头。")
+    bad = [f"{f.relative_to(ROOT)}:{i} [{name}]"
            for f in iter_text_files()
            for i, ln in enumerate(f.read_text(encoding="utf-8", errors="ignore").splitlines(), 1)
-           if cur in ln]
-    assert not bad, (
-        "这些行含数据库口令**明文**。本仓是公开仓，写进去等于发布。\n"
-        "改成占位符 `<生产库密码>` 或从 .env 读：\n  " + "\n  ".join(bad))
+           for name, needle in three_forms(cur).items() if needle in ln]
+    assert not bad, ("🔴 **当前有效**口令出现在仓库文件里（本仓公开）：\n  " + "\n  ".join(bad))
 
 
-def test_占位符写法必须放行():
-    """🔴 反向钉：占位符会**永远**留在文档里。判据若把它判红就是恒红，
-    而恒红的闸门等于没有闸门——还占着「我们查过了」的位置。"""
-    cur = current_db_password()
-    if cur is None:
-        pytest.skip("读不到 .env")
-    assert cur not in "PGPASSWORD='<生产库密码>' psql -h localhost -U root", "占位符被误判为泄露"
+# ── 二、历史泄漏值：拿不到明文，按结构化候选的 hash 比对 ──────────────
+def test_仓里不含历史泄漏过的凭据():
+    """⚠️ 这条比上一条弱——旧值已轮换、本文件不持有明文，只能从结构化位置提候选算 hash。
+    覆盖不到「散落在自由文本里的旧值」。这是**为了不在判据里再存一份明文**付出的代价，
+    写在这里让下一个人知道边界在哪。"""
+    bad = []
+    for f in iter_text_files():
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        for i, ln in enumerate(text.splitlines(), 1):
+            for pat in CANDIDATE_PATTERNS:
+                for m in pat.finditer(ln):
+                    h = hashlib.sha256(m.group(1).encode()).hexdigest()
+                    if h in KNOWN_LEAKED:
+                        bad.append(f"{f.relative_to(ROOT)}:{i} → {KNOWN_LEAKED[h][:40]}…")
+    assert not bad, ("🔴 历史泄漏过的凭据又出现在仓里（可能是从 git 历史或旧文档抄回来的）：\n  "
+                     + "\n  ".join(bad))
 
 
-def test_量具自检_扫描确实覆盖被gitignore的文件(tmp_path):
-    """🩸 这条是本文件的核心自检：**证明我们的遍历不会漏掉 gitignore 掉的文件**。
-    造一个带 `.gitignore: *` 的目录，确认 rglob 仍能看到里面的文件——
+# ── 三、量具自检 ───────────────────────────────────────────────────────
+def test_量具自检_三形态都能被抓到(tmp_path):
+    """🩸 基建实证：`%40` 那一轮抓出 15 个文件，其中 5 个是先前宣布「残留 0」的。
+    ⇒ 只验明文那一形态，等于没验。"""
+    fake = "Secret@1234"
+    for name, needle in three_forms(fake).items():
+        assert needle, name
+    assert three_forms(fake)["%40 URL 编码"] == "Secret%401234"
+    assert three_forms(fake)["base64"] == base64.b64encode(b"Secret@1234").decode()
+    assert three_forms(fake)["明文"] != three_forms(fake)["%40 URL 编码"], "两形态不该相同"
+
+
+def test_量具自检_遍历覆盖被gitignore的文件(tmp_path):
+    """造一个带 `.gitignore: *` 的目录，确认 rglob 仍看得到——
     当初 grep 正是在这里静默漏掉 3 处现行口令明文。"""
     d = tmp_path / "hidden"
     d.mkdir()
     (d / ".gitignore").write_text("*\n", encoding="utf-8")
-    (d / "note.md").write_text("NEEDLE_FOR_SELFTEST\n", encoding="utf-8")
+    (d / "note.md").write_text("NEEDLE\n", encoding="utf-8")
     seen = [p.name for p in tmp_path.rglob("*") if p.is_file() and p.suffix in TEXT_EXT]
     assert "note.md" in seen, "遍历漏掉了被 .gitignore 忽略的文件——判据有静默盲区"
 
 
-def test_量具自检_已知表里没有空串hash():
-    """空串的 sha256 是个合法长相的 hash，写进表里会变成一颗永不响的哑弹
-    （而 `"" in text` 恒真，若走子串路径则相反——恒红）。两个方向都糟。"""
-    assert hashlib.sha256(b"").hexdigest() not in KNOWN_LEAKED
+def test_量具自检_名单里没有空串hash也没有明文():
+    assert hashlib.sha256(b"").hexdigest() not in KNOWN_LEAKED, "空串 hash 是哑弹"
     for h in KNOWN_LEAKED:
         assert len(h) == 64 and all(c in "0123456789abcdef" for c in h), f"不是合法 sha256：{h}"
-
-
-def test_本文件不含任何明文凭据():
-    """判据自己不能是泄露源。
-
-    🩸 这条第一版还加了「本文件不许出现 `PGPASSWORD=` 字面量」——**当场把自己判红了**，
-    因为那条断言的代码本身就含这个字符串。⇒ 又一次演示了文件头那个理由：
-    **样式判据会连正当出现一起打**。这里只认**真值**，⛔ 不认样式。"""
     cur = current_db_password()
-    if cur is None:
-        pytest.skip("读不到 .env")
-    assert cur not in SELF.read_text(encoding="utf-8"), "判据文件里写了口令明文"
+    if cur is not None:
+        assert cur not in SELF.read_text(encoding="utf-8"), "判据文件里写了口令明文"
+
+
+def test_守备范围_本判据不证明凭据已失效():
+    """🔴 写成断言是怕下一个人把绿读成「那个泄漏已经处置完了」。
+    文档里搜不到 ⛔ 不等于那个值失效了——要证明失效，**拿它去连一次、必须失败**。"""
+    doc = __doc__ or ""
+    assert "不守「那个凭据还有没有效」" in doc
+    assert "拿它去连一次、必须失败" in doc
