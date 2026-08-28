@@ -74,13 +74,13 @@ ready=true 才开跑。缺 Python 包会自动补装；缺发布凭据按提示�
 
 ```bash
 # 1) 先按姓名/工号找到人（display_name 是姓名字段，不是 name）
-ssh nbdpsy "PGPASSWORD='Psychology@2024' psql -h localhost -U root -d psychology_counseling -c \"SELECT id, emp_no, display_name, title, experience_years, is_accepting FROM counselors ORDER BY id;\""
+ssh nbdpsy "PGPASSWORD='<生产库密码>' psql -h localhost -U root -d psychology_counseling -c \"SELECT id, emp_no, display_name, title, experience_years, is_accepting FROM counselors ORDER BY id;\""
 
 # 2) 看这位有哪些段（顶层键：notes/methods/training/highlight/experience/philosophy/specialties/unsupported/testimonials）
-ssh nbdpsy "PGPASSWORD='Psychology@2024' psql -h localhost -U root -d psychology_counseling -t -A -c \"SELECT jsonb_object_keys(profile_sections) FROM counselors WHERE emp_no='EMP20260709001';\""
+ssh nbdpsy "PGPASSWORD='<生产库密码>' psql -h localhost -U root -d psychology_counseling -t -A -c \"SELECT jsonb_object_keys(profile_sections) FROM counselors WHERE emp_no='EMP20260709001';\""
 
 # 3) 逐段取（整份 jsonb_pretty 可能 40KB+，必须分段，别一次全拉）
-ssh nbdpsy "PGPASSWORD='Psychology@2024' psql -h localhost -U root -d psychology_counseling -t -A -c \"SELECT jsonb_pretty(profile_sections->'methods') FROM counselors WHERE emp_no='EMP20260709001';\""
+ssh nbdpsy "PGPASSWORD='<生产库密码>' psql -h localhost -U root -d psychology_counseling -t -A -c \"SELECT jsonb_pretty(profile_sections->'methods') FROM counselors WHERE emp_no='EMP20260709001';\""
 ```
 
 必看的段与它们各自决定什么：
