@@ -869,13 +869,13 @@ class Test群发红线一:
         assert "每自然月只有 4 次" in err and "全部粉丝" in err
 
     def test_带confirm但没写谁拍板的直接拒发(self, net, capsys):
-        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm"],
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm", "--approval", "T999-A"],
                                 capsys)
         assert code == 1 and "问责留痕" in data["error"] and net.calls == []
 
     def test_带confirm和note才真发(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "msg_id": "2247483647"}))
-        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm",
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm", "--approval", "T999-A",
                                     "--note", "运营张三确认，8月第2条"], capsys)
         assert code == 0 and data["outcome"] == "done" and data["msg_id"] == "2247483647"
         assert net.calls[0]["body"]["confirm"] is True
@@ -887,7 +887,7 @@ class Test群发红线一:
         """看到报错就重发正是白烧一次月配额的典型场景。"""
         net.serve(FakeResp(200, {"success": False, "wechat_errcode": 45028,
                                  "wechat_errmsg": "mass send protect"}))
-        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm",
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm", "--approval", "T999-A",
                                     "--note", "运营张三确认"], capsys)
         assert code == 0 and data["outcome"] == "unknown"
         assert data["hint"] == W.MASS_PROTECT_HINT
@@ -915,7 +915,7 @@ class Test群发受众闸门:
     def test_标签分组映射成is_to_all为假(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "msg_id": "M"}))
         code, data, _ = run_cli(A, ["--mass-send", "--media-id", "MID", "--tag-id", "102",
-                                    "--confirm", "--note", "运营张三确认"], capsys)
+                                    "--confirm", "--approval", "T999-A", "--note", "运营张三确认"], capsys)
         assert code == 0
         assert net.calls[0]["body"]["filter"] == {"is_to_all": False, "tag_id": 102}
         assert net.calls[0]["body"]["media_id"] == "MID"
@@ -938,7 +938,7 @@ class Test删除已发布红线二:
     def test_带confirm才真删并带上confirm字段(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "deleted": True}))
         code, data, _ = run_cli(A, ["--delete-published", "--article-id", "ART1",
-                                    "--index", "0", "--confirm"], capsys)
+                                    "--index", "0", "--confirm", "--approval", "T999-A"], capsys)
         assert code == 0 and data["outcome"] == "done"
         assert net.calls[0]["url"].endswith("/api/external/wechat/article-delete")
         assert net.calls[0]["body"] == {"article_id": "ART1", "confirm": True, "index": 0}
@@ -946,12 +946,12 @@ class Test删除已发布红线二:
 
     def test_删除时断连落unknown提醒先核实别重删(self, net, capsys):
         net.serve(RuntimeError("Connection aborted, RemoteDisconnected"))
-        code, data, _ = run_cli(A, ["--delete-published", "--article-id", "ART1", "--confirm"],
+        code, data, _ = run_cli(A, ["--delete-published", "--article-id", "ART1", "--confirm", "--approval", "T999-A"],
                                 capsys)
         assert code == 0 and data["outcome"] == "unknown" and "台账" in data["hint"]
 
     def test_缺article_id时不发请求(self, net, capsys):
-        code, data, _ = run_cli(A, ["--delete-published", "--confirm"], capsys)
+        code, data, _ = run_cli(A, ["--delete-published", "--confirm", "--approval", "T999-A"], capsys)
         assert code == 1 and net.calls == []
 
     def test_配额查询失败时红线警示照样得说出来(self, net, capsys):
@@ -1161,14 +1161,14 @@ class Test定时提交:
 
     def test_定时群发带confirm但没写谁拍板的直接拒发(self, net, capsys):
         code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all",
-                                    "--confirm"], capsys)
+                                    "--confirm", "--approval", "T999-A"], capsys)
         assert code == 1 and "问责留痕" in data["error"] and net.calls == []
 
     def test_定时群发带confirm和note才入队且受众跟着进队列(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "job_id": 31}))
         at = _future()
         code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", at, "--tag-id", "102",
-                                    "--confirm", "--note", "运营张三确认，8月第2条"], capsys)
+                                    "--confirm", "--approval", "T999-A", "--note", "运营张三确认，8月第2条"], capsys)
         assert code == 0 and data["outcome"] == "done" and data["job_id"] == 31
         assert net.calls[0]["body"] == {
             "job_type": "mass_send", "run_at": at,
@@ -1182,7 +1182,7 @@ class Test定时提交:
         net.serve(FakeResp(200, {"success": False, "wechat_errcode": 45028,
                                  "wechat_errmsg": "mass send protect"}))
         code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all",
-                                    "--confirm", "--note", "运营张三确认"], capsys)
+                                    "--confirm", "--approval", "T999-A", "--note", "运营张三确认"], capsys)
         assert code == 0 and data["outcome"] == "unknown"
         assert data["hint"] == W.MASS_PROTECT_HINT
 
@@ -1641,3 +1641,49 @@ class Test统计CLI:
     def test_三个动作互斥(self, net, capsys):
         with pytest.raises(SystemExit):
             ST.main([])
+
+
+class Test不可逆动作坐标制:
+    """🔴 发布 / 群发 / 删除已发布 三者一律要 `--approval`（佰亿助理 2026-08-31 裁定）。
+
+    此前群发与删除只有 `--confirm`「自己加个参数就行」，而危害并不比发布轻：
+    群发 = 不可逆 + 每自然月仅 4 次 + 直达全体粉丝对话框；
+    删除 = 链接失效 + 阅读数据清零 + 不可逆。⇒ **闸门强度与危害对齐**。
+
+    ⚠️ 本类断言的重点是 **`net.calls` 为空** —— 闸门必须在**发请求之前**拦住。
+    只断言 exit code 不够：一个「先发请求、再报错」的实现同样会给出 exit 1，
+    而那时副作用已经产生了（群发这种动作没有回头路）。
+    """
+
+    def test_群发缺坐标时零请求(self, net, capsys):
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all",
+                                    "--confirm", "--note", "运营张三确认"], capsys)
+        assert code == 1
+        assert not net.calls, "缺 --approval 时**发出了请求** ⇒ 闸门位置错了（必须在请求之前）"
+
+    def test_删除缺坐标时零请求(self, net, capsys):
+        code, data, _ = run_cli(A, ["--delete-published", "--article-id", "ART1",
+                                    "--confirm"], capsys)
+        assert code == 1
+        assert not net.calls, "缺 --approval 时**发出了请求** ⇒ 闸门位置错了（必须在请求之前）"
+
+    def test_带坐标时放行到发请求那步(self, net, capsys):
+        """防恒红：⛔ 只测「缺坐标被拦」测不出闸门是不是恒拦。"""
+        net.serve(FakeResp(200, {"success": True, "msg_id": "2247483647"}))
+        code, data, _ = run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm",
+                                    "--note", "运营张三确认", "--approval", "T999-A"], capsys)
+        assert code == 0 and data["outcome"] == "done"
+        assert data["approval"] == "T999-A", "坐标应原样记进返回（问责留痕）"
+
+    def test_坐标不被脚本核实这一点写在输出里(self, net, capsys):
+        """🔑 坐标只是**原样记下**：脚本⛔ 不核实那个件真批没批。
+
+        ⇒ 它保证的只有「有人为此留了一笔账」，**⛔ 不保证「该发这一批」**
+        （2026-08-31 T114 实例：7 篇「待发件」实为已发布过的内容，坐标有效但前提整个是错的）。
+        这条钉的是**输出里必须把这个边界说出来**，⛔ 不让人以为命令跑通就等于获批。
+        """
+        net.serve(FakeResp(200, {"success": True, "publish_id": "2247484288"}))
+        code, data, _ = run_cli(A, ["--publish", "--media-id", "MID1",
+                                    "--approval", "T999-A"], capsys)
+        assert code == 0
+        assert "不等于已获批准" in data["hint"]

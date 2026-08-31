@@ -27,14 +27,18 @@
     python3 article_ops.py --status --id <台账 id>                   # 单篇终态
 
     # 群发（高危：不可逆 + 每自然月仅 4 次）。受众必须明说：--to-all 或 --tag-id 二选一
+    # 🔴 2026-08-31 起**与发布同为坐标制**：真发还要 --approval（只查配额那条路不要）
     python3 article_ops.py --mass-send --ledger-id <台账 id> --to-all        # 只查配额，不发
     python3 article_ops.py --mass-send --ledger-id <台账 id> --to-all --confirm \\
-        --note "运营XX确认，8月第2条"
-    python3 article_ops.py --mass-send --ledger-id <台账 id> --tag-id 102 --confirm --note "..."
+        --note "运营XX确认，8月第2条" --approval <件号>-<选项键>
+    python3 article_ops.py --mass-send --ledger-id <台账 id> --tag-id 102 --confirm \\
+        --note "..." --approval <件号>-<选项键>
 
     # 删除已发布（高危：链接立刻失效、阅读数据清零、不可逆）
+    # 🔴 2026-08-31 起**与发布同为坐标制**：真删还要 --approval
     python3 article_ops.py --delete-published --article-id <article_id>            # 只打警示
-    python3 article_ops.py --delete-published --article-id <article_id> --confirm  # 真删
+    python3 article_ops.py --delete-published --article-id <article_id> --confirm \\
+        --approval <件号>-<选项键>                                                  # 真删
 
 输出（stdout 纯 JSON；人话警示走 stderr）:
     查询类（--draft-get / --ledger / --status）= 服务端视图透传 + 计算字段，exit 0。
@@ -42,13 +46,21 @@
     **unknown exit 0**——结果未确认，先查台账核实，⛔ 绝不直接重跑（详见 wechat_api.py 的两桶口径）。
     高危动作**不带 --confirm 一律 failed exit 1**：那不是故障，是「本次没执行」的闸门。
 
+🔴 **不可逆三动作（发布 / 群发 / 删除已发布）一律要 `--approval <件号>-<选项键>`**
+（群发与删除自 2026-08-31 起并入，佰亿助理裁定：**闸门强度要与危害对齐** ——
+此前它们只有 `--confirm`「自己加个参数就行」，而危害并不比发布轻）。
+⚠️ **坐标只是原样记下**：脚本⛔ 不核实那个件真批没批 ⇒ **命令跑通 ⛔ 不等于已获批准**。
+它保证的只有「有人为此留了一笔账」，**⛔ 不保证「该发这一批」**（前提可能整个是错的，
+2026-08-31 的 T114 就是实例：7 篇「待发件」实为已发布过的内容）。
+
 三条红线在本脚本里的落点:
   · **红线①** 群发不可逆、每自然月仅 4 次：`--mass-send` 不带 `--confirm` 只查配额不发；
-    真发必须带 `--note`（谁拍板的问责留痕）。**受众也必须明说**（`--to-all` / `--tag-id` 二选一，
+    真发必须带 `--note`（谁拍板的问责留痕）**与 `--approval`**。
+    **受众也必须明说**（`--to-all` / `--tag-id` 二选一，
     没有默认值——默认成全员群发，一次漏填就把不该收到的人全推了）。配额的月计数
     **只统计经本系统发的**，运营在公众平台后台手动群发过的不计入——复述配额时必须一并说出来。
   · **红线②** 已发布文章微信**不能改**：改 = 删 + 重发 = 原链接立刻失效 + 阅读/在看/分享清零。
-    `--delete-published` 不带 `--confirm` 时**一个请求都不发**，只打警示。
+    `--delete-published` 不带 `--confirm` 时**一个请求都不发**，只打警示；真删还要 `--approval`。
   · **红线③** 正文只收 md2wechat.py 编译的产物：`--draft-add/--draft-update` 会扫一遍
     白名单外构件（class/style/script/iframe），命中直接拒收——秀米/135 导出的 HTML
     灌进去必然变形或掉图，而发出去就改不了了。
@@ -536,16 +548,31 @@ def do_mass_send(args, api_base, key):
                 **target, "filter": filter_, "audience": audience,
                 "hint": f"把本月配额现状与收件人（{audience}）复述给运营"
                         "（「本月已用 X/4 次，这条发出去就是第 X+1 次」）"
-                        f"并拿到明确确认，再带 `--confirm --note \"谁在什么场景下拍的板\"` 重跑。{QUOTA_CAVEAT}"}, 1
+                        "并拿到明确确认，再带 `--confirm --note \"谁在什么场景下拍的板\"` "
+                        "**和 `--approval <件号>-<选项键>`** 重跑"
+                        "（🔴 群发自 2026-08-31 起与发布同为坐标制，见下方 require_approval 处注释）。"
+                        f"{QUOTA_CAVEAT}"}, 1
 
     note = (args.note or "").strip()
     if not note:
         raise OpFailed("--mass-send --confirm 必须带 --note：这是**问责留痕**——"
                        "写清是谁在什么场景下拍的板（如 \"运营张三确认，8月推送第2条\"）。")
+    # 🔴 群发升级为坐标制（佰亿助理 2026-08-31 裁定，出处＝当日跨会话消息）。
+    # 理由：**闸门强度要与危害对齐**。此前群发只有 --confirm（自己加个参数就行），
+    # 而发布要外部批复坐标 —— 可群发的危害并不比发布轻：
+    # 不可逆 + 每自然月仅 4 次配额 + **直接推进全体粉丝的对话框**。
+    # ⚠️ 触发点刻意放在 --confirm **之后**：不带 --confirm 那条路只查本月配额、是只读预检，
+    #    ⛔ 不该被坐标拦住（拦了会逼人为了「看一眼还剩几次」也去要批复）。
+    # ⚠️ 但上面那条 hint 里**已经把坐标要求说出来了** —— 否则运营补了 --confirm 重跑
+    #    又被这里拦一次，白跑两轮。
+    # 🔑 边界（与发布同）：坐标只是**原样记下**，脚本⛔ 不核实那个件真批没批 ——
+    #    它保证的是「有人为此留了一笔账」，⛔ 不保证「该发这一批」，也⛔ 不保证「真获批」。
+    approval = wechat_api.require_approval(args.approval, "群发（mass-send，不可逆且占月配额）")
     data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/mass-send", key,
                                    {**target, "filter": filter_, "confirm": True, "note": note},
                                    args.timeout, irreversible=True)
     return {"outcome": "done", "msg_id": data.get("msg_id"), **target, "note": note,
+            "approval": approval,
             "filter": filter_, "audience": audience,
             "server": {k: v for k, v in data.items() if k != "success"},
             "hint": f"已群发给{audience}。本月配额少了一次。{QUOTA_CAVEAT}"}, 0
@@ -565,14 +592,22 @@ def do_delete_published(args, api_base, key):
         return {"outcome": "failed", "article_id": article_id,
                 "error": "未带 --confirm：本次**没有删除**（这是安全闸门，不是故障），也没有发出任何请求。",
                 "hint": "先用 `--ledger` 看一眼这篇的现状（标题/链接/是否群发过），把上面三条代价"
-                        "原样讲给运营、拿到确认，再加 `--confirm` 重跑。"}, 1
+                        "原样讲给运营、拿到确认，再加 `--confirm` "
+                        "**和 `--approval <件号>-<选项键>`** 重跑"
+                        "（🔴 删除自 2026-08-31 起与发布同为坐标制）。"}, 1
+
+    # 🔴 删除已发布升级为坐标制（佰亿助理 2026-08-31 裁定，出处＝当日跨会话消息）。
+    # 理由同群发：**闸门强度与危害对齐**。删除的代价是链接失效 + 阅读数据清零且不可逆，
+    # 且 C35=D（已发布内容维持现状）说明**已发布内容的处置是老板关切级**。
+    # ⚠️ 放在 --confirm 之后：不带 --confirm 那条路**一个请求都不发**，本就无害。
+    approval = wechat_api.require_approval(args.approval, "删除已发布文章（不可逆，链接失效+数据清零）")
 
     body = {"article_id": article_id, "confirm": True}
     if args.index is not None:
         body["index"] = args.index
     data = wechat_api.request_json("POST", f"{api_base}/api/external/wechat/article-delete", key,
                                    body, args.timeout, irreversible=True)
-    return {"outcome": "done", "article_id": article_id,
+    return {"outcome": "done", "article_id": article_id, "approval": approval,
             "server": {k: v for k, v in data.items() if k != "success"},
             "hint": "已删除，台账标 deleted。原链接已失效、阅读数据已清零。"
                     "要重新发一篇：改好源稿 → md2wechat.py → --draft-add → --publish，"
