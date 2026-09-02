@@ -37,9 +37,20 @@
     python3 menu_ops.py --delete            # 只打警示，不删（安全闸门）
     python3 menu_ops.py --delete --confirm --approval <件号>-<选项键>  # 真删，需批复坐标
 
-🔴 **一致性闸门**（2026-09-02 裁定）：`--apply`（非恢复）与 `--delete` 执行前会把
-**线上全量**与**基线快照**逐字段比一遍，**不一致即拒**并点名是哪个字段、给出两个方向的处置。
-⇒ 它的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰最需要基线。
+🔴 **写命令的三道前置闸**（2026-09-02 裁定），顺序固定 **①→②→③，⛔ 不能反**：
+    ① **基线文件存在**否 —— 否则拒，并打印**我找的是哪个绝对路径** + 怎么修；
+    ② **基线已提交**否（`git status` 看 dirty）—— dirty 则拒，措辞**明确区别于「内容不一致」**
+       （混了会让人去翻菜单内容，而病在没提交）；
+    ③ **线上全量 vs 基线**逐字段比 —— 不一致即拒、点名字段、给两个方向的处置。
+⚠️ ②依赖「在 git 仓库内」，而那由①保证 ⇒ **①必须在②之前**，
+   ⛔ 反过来会在非仓目录里跑 `git status` 拿到一个误导性的错误。
+⇒ ③ 的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰最需要基线。
+⚠️ **只读预检（不带 `--confirm`）不受①②③管制**——拦了会逼人为了「看一眼菜单长什么样」
+   也去满足这些条件；但预检会把「真执行时会被拦」**预告**出来，免得补了 `--confirm` 白跑两轮。
+🔴 **`--apply --confirm` 成功后自动刷新基线**：把新的线上全量写回稳定路径、打印 diff 摘要，
+   并给出可直接执行的 `git add && git commit`——⛔ **不替人提交**。
+   不刷新的话，每次合法改菜单之后基线立刻陈旧，而人最省事的绕法是「重拉基线」，
+   那会把线上的误改**固化进基线**。
 🔑 **恢复走 `--restore`，⛔ 不靠「文件是不是基线」猜意图**：推断出来的意图**会被意外满足**
    （有人拿基线当新菜单 apply 一次就静默进了恢复模式、绕过闸门而没人知道）。
    ⇒ 拿基线文件直接 `--apply` 而不带 `--restore` ⇒ **拒**，提示你把意图说出来。
@@ -68,6 +79,7 @@
 """
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -159,6 +171,99 @@ def baseline_drift(线上: dict, 基线: dict) -> list[str]:
         elif a[k] != b[k]:
             行.append(f"`{k}`：基线 {a[k]!r} → 线上 {b[k]!r}")
     return 行
+
+
+def _基线未提交(p: Path):
+    """基线在 git 里是不是 dirty。返回 (True/False/None, 详情)；None = **拿不准**。
+
+    🔴 **必须在「基线存在」那道闸之后调用**：不在 git 仓库里时 git 会报错，
+       那种情况该由前一道闸先拒 —— ⛔ 别在非仓目录里跑 `git status` 拿一个误导性的错误。
+    """
+    r = subprocess.run(["git", "-C", str(p.parent), "status", "--porcelain", "--", str(p)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None, (r.stderr.strip().splitlines() or ["git 调用失败"])[-1]
+    return bool(r.stdout.strip()), (r.stdout.strip() or None)
+
+
+def 写前闸门(动作: str):
+    """写命令的前两道闸。返回 (基线内容, 拒绝回执|None)。
+
+    🔴 顺序固定 ①基线存在 → ②基线已提交，⛔ 不能反（②依赖「在 git 仓库内」，而那由①保证）。
+    🔑 ②堵的是「刷新了但没提交」——不堵它，自动刷新只会把陈旧基线从**仓里**搬到**工作区里**，
+       病还在（而且别人 clone 下来拿到的仍是旧的那份）。
+    """
+    基线 = load_baseline()                      # ① 不存在就在这里抛（消息里带绝对路径 + 怎么修）
+    p = baseline_path()
+    dirty, 详情 = _基线未提交(p)
+    if dirty is None:
+        return 基线, ({"outcome": "failed",
+                      "error": f"**核不了基线有没有提交**（{p} 多半不在 git 仓库里；git 说：{详情}），"
+                               f"本次{动作}**没有执行**。"
+                               "⛔ 「核不了」不等于「已提交」——这道闸的失效方向不能是绿。",
+                      "baseline": str(p),
+                      "hint": "基线必须放在受版本控制的位置（NBDpsy 仓 `seo-geo/content/wechat/`）。"
+                              "⚠️ 这**不是**「线上与基线内容不一致」，⛔ 别去查菜单内容。"}, 1)
+    if dirty:
+        return 基线, ({"outcome": "failed",
+                      "error": f"基线文件**尚未提交**（git 里是 dirty），本次{动作}**没有执行**。"
+                               "⚠️ 这**不是**「线上与基线内容不一致」——是那份基线自己还没进版本库。"
+                               "⛔ 别去查菜单内容，先把它提交了。",
+                      "baseline": str(p), "git_status": 详情,
+                      "hint": f"先提交基线：`git add {p} && "
+                              "git commit -m \"chore(服务号): 更新菜单基线\"`，再重跑本命令。"
+                              "（刷新了却不提交，等于把陈旧基线从仓里搬到工作区里，病还在。）"}, 1)
+    return 基线, None
+
+
+def 闸门预告() -> list[str]:
+    """只读预检专用：把写路径上会撞到的闸门**预告**出来。⛔ 只 warn 不拒。
+
+    ⚠️ 裁定：只读预检**不受**①②③管制（拦了会逼人为了「看一眼菜单」也去满足这些条件）。
+       但**不拦 ≠ 不说** —— 不预告的话，人补了 `--confirm` 重跑才被拦，白跑两轮。
+    """
+    p = baseline_path()
+    if not p.is_file():
+        return [f"🔴 基线快照不在 `{p}` —— **真要执行时会被拦**。"
+                "先确认你是不是在 NBDpsy 仓根跑（或设 $NBDPSY_WORKSPACE），"
+                f"确实没有就 `--get > {p}` 拉一份并提交。"]
+    dirty, _ = _基线未提交(p)
+    if dirty is None:
+        return [f"🔴 核不了基线有没有提交（`{p}` 多半不在 git 仓库里）—— **真要执行时会被拦**。"]
+    if dirty:
+        return [f"🔴 基线文件**尚未提交**（dirty）—— **真要执行时会被拦**。"
+                f"先 `git add {p} && git commit`。"]
+    return []
+
+
+def 刷新基线(api_base, key, timeout, 旧基线: dict) -> None:
+    """apply 成功后把**新的线上全量**写回基线稳定路径，并打印 diff 摘要与提交命令。
+
+    ⛔ **不替人 commit**：提交是人的动作（何况这份文件在别人的工作区里）。
+    🔑 不刷新的话，每次合法改菜单之后基线立刻陈旧，下一条写命令会被③拦住——
+       而人最省事的绕法是「重拉基线」，那会把线上的误改**固化进基线**。
+    """
+    p = baseline_path()
+    try:
+        buttons, cond, _ = fetch_menu(api_base, key, timeout)
+    except OpFailed as e:
+        wechat_api.warn(f"⚠ 改是改成功了，但**没能刷新基线**（{e.error}）。"
+                        f"⇒ 请手动补一次：`--get > {p}` 再提交，⛔ 别把陈旧基线留在仓里。")
+        return
+    新 = {"button": buttons}
+    if cond:
+        新["conditionalmenu"] = cond
+    变化 = baseline_drift(新, 旧基线)
+    p.write_text(json.dumps(新, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    wechat_api.warn(f"✅ 已把新的线上全量写回基线：{p}")
+    if 变化:
+        wechat_api.warn(f"   基线 diff 摘要（共 {len(变化)} 处）：")
+        for line in 变化[:10]:
+            wechat_api.warn(f"     · {line}")
+        if len(变化) > 10:
+            wechat_api.warn(f"     · …… 另有 {len(变化) - 10} 处")
+    wechat_api.warn("🔴 **它还没提交**——下一条写命令会因此被拦。现在就执行：")
+    wechat_api.warn(f"   git add {p} && git commit -m \"chore(服务号): 更新菜单基线\"")
 
 
 def 漂移拒绝(差异: list[str], 动作: str) -> dict:
@@ -394,44 +499,8 @@ def do_apply(args, api_base, key):
     buttons = load_menu_file(args.apply)
     warnings = validate(buttons)                       # 硬约束不过：一个请求都不发
 
-    # 🔴 恢复必须**显式说出来**（2026-09-02 裁定）：⛔ 不靠「要 apply 的文件 == 基线」推断意图。
-    # 推断出来的意图**会被意外满足**——有人拿基线当新菜单 apply 一次，就静默进了恢复模式、
-    # 绕过一致性闸门而**没人知道**。⇒ 意图只认 `--restore` 这个标志。
-    if not args.restore and _是基线文件(args.apply):
-        raise OpFailed(
-            f"这是**基线文件**（{baseline_path()}），而你没带 `--restore`。\n"
-            "⇒ 要**恢复**（把线上覆盖回基线）请显式加 `--restore`；"
-            "要**改菜单**请另存一份改过的文件再 apply。"
-            "⛔ 本次一个写请求都没发出。")
-
     old, cond, note = _fetch_menu_tolerant(api_base, key, args.timeout)
     diff = menu_diff(old, buttons) if old is not None else None
-
-    # 🔴 一致性闸门（2026-09-02 裁定）。放在 --confirm 判断**之前**：本闸的结论对两条路一样，
-    # 提前说破才不会让人「先看 diff、补了 --confirm 再被拒」白跑两轮。
-    if args.restore:
-        # 恢复：**不一致正是要恢复的原因** ⇒ ⛔ 不做一致性检查，但坐标照常要。
-        wechat_api.warn(f"🔴 本次是**恢复操作**：将把线上**默认菜单**覆盖为 `{Path(args.apply).name}` 的内容。")
-        基线 = load_baseline() if _是基线文件(args.apply) else None
-        n = len((基线 or {}).get("conditionalmenu") or []) if 基线 else len(cond or [])
-        if n:
-            wechat_api.warn(f"⚠ 其中 **{n} 条个性化菜单不会被重建**——本 skill 没有 "
-                            "menu/addconditional 能力，那几条只能照着快照去公众平台后台**手工重挂**。"
-                            "⛔ 别把这次 apply 当成「全都恢复了」。")
-        if diff and diff["lines"]:
-            wechat_api.warn("完整 diff（线上 → 将变成）：")
-            for line in diff["lines"]:
-                wechat_api.warn(f"  · {line}")
-    else:
-        if old is None:
-            raise OpFailed(
-                "拿不到线上现状，**无法核对它与基线是否一致**，本次不执行。"
-                "⛔ 「查不到」不等于「一致」——这道闸的失效方向不能是绿。"
-                "⇒ 网络/服务恢复后重跑；确实要在核不了的情况下强行恢复，用 `--restore`。")
-        差异 = baseline_drift({"button": old, "conditionalmenu": cond}, load_baseline())
-        if 差异:
-            wechat_api.warn("⚠ 线上菜单与基线快照**不一致**，本次不执行。差异逐条：")
-            return 漂移拒绝(差异, "装修菜单"), 1
 
     if not args.confirm:
         wechat_api.warn("⚠ 这次**没有改线上菜单**（缺 --confirm）。要改什么，念给运营听：")
@@ -447,6 +516,9 @@ def do_apply(args, api_base, key):
         wechat_api.warn("  · apply 是**整体覆盖**：文件里没写的入口会从线上消失。")
         for w in warnings:
             wechat_api.warn(f"  ⚠ {w}")
+        # 只读预检**不受**①②③管制，但把会撞到的闸门预告出来，免得补了 --confirm 再被拦
+        for line in 闸门预告():
+            wechat_api.warn(f"  {line}")
         return {"outcome": "failed",
                 "error": "未带 --confirm：本次只算了 diff，**没有改线上菜单**"
                          "（这是安全闸门，不是故障）。",
@@ -455,6 +527,45 @@ def do_apply(args, api_base, key):
                         "**和 `--approval <件号>-<选项键>`** 重跑同一条命令"
                         f"（🔴 装修菜单自 2026-09-02 起为坐标制，理由见下方 require_approval 处注释）。"
                         f"{CACHE_NOTE}"}, 1
+
+    # ══ 写路径的前置闸门，顺序固定 ①基线存在 → ②基线已提交 → ③一致性 ══
+    # ⚠️ 只读预检**不受**这三道管制（上面那条路已经 return 了），拦了会逼人为了
+    #    「看一眼菜单现在长什么样」也去满足这些条件；但那条路会把它们**预告**出来。
+    基线, 拒 = 写前闸门("装修菜单")                       # ① + ②
+    if 拒:
+        return 拒
+
+    if args.restore:
+        # ③ 跳过：**不一致正是要恢复的原因**，在这里拒等于在最需要它的时刻挡住唯一正确的操作。
+        wechat_api.warn(f"🔴 本次是**恢复操作**：将把线上**默认菜单**覆盖为 "
+                        f"`{Path(args.apply).name}` 的内容。")
+        n = len(基线.get("conditionalmenu") or [])       # N 从基线数，⛔ 写死
+        if n:
+            wechat_api.warn(f"⚠ 其中 **{n} 条个性化菜单不会被重建**——本 skill 没有 "
+                            "menu/addconditional 能力，那几条只能照着快照去公众平台后台**手工重挂**。"
+                            "⛔ 别把这次 apply 当成「全都恢复了」。")
+        if diff and diff["lines"]:
+            wechat_api.warn("完整 diff（线上 → 将变成）：")
+            for line in diff["lines"]:
+                wechat_api.warn(f"  · {line}")
+    else:
+        # ③′ 基线文件直接 apply 而没说自己在恢复 ⇒ 拒。⛔ 不替他把意图猜成「恢复」。
+        if _是基线文件(args.apply):
+            raise OpFailed(
+                f"这是**基线文件**（{baseline_path()}），而你没带 `--restore`。\n"
+                "⇒ 要**恢复**（把线上覆盖回基线）请显式加 `--restore`；"
+                "要**改菜单**请另存一份改过的文件再 apply。"
+                "⛔ 本次一个写请求都没发出。")
+        # ③ 一致性
+        if old is None:
+            raise OpFailed(
+                "拿不到线上现状，**无法核对它与基线是否一致**，本次不执行。"
+                "⛔ 「查不到」不等于「一致」——这道闸的失效方向不能是绿。"
+                "⇒ 网络/服务恢复后重跑；确实要在核不了的情况下强行恢复，用 `--restore`。")
+        差异 = baseline_drift({"button": old, "conditionalmenu": cond}, 基线)
+        if 差异:
+            wechat_api.warn("⚠ 线上菜单与基线快照**不一致**，本次不执行。差异逐条：")
+            return 漂移拒绝(差异, "装修菜单"), 1
 
     if diff is not None and not diff["changed"]:
         wechat_api.warn("⚠ 这份文件与线上现状没有差异，仍会照常提交一次（menu/create 是整体覆盖，幂等）。")
@@ -476,27 +587,18 @@ def do_apply(args, api_base, key):
         args.approval, "装修菜单（apply 整体覆盖默认菜单，条件可逆：仅当事先存了基线）")
     wechat_api.proxy_call(api_base, key, "/cgi-bin/menu/create", {"button": buttons},
                           args.timeout, irreversible=True)
+    # 改成功 ⇒ 线上已经 ≠ 基线，基线当场陈旧 ⇒ 立刻刷新并催提交（⛔ 不替人 commit）
+    刷新基线(api_base, key, args.timeout, 基线)
     return {"outcome": "done", "applied_top_level": [b.get("name") for b in buttons],
             "diff": diff, "warnings": warnings, "baseline_note": note,
-            "approval": approval,
-            "hint": CACHE_NOTE}, 0
+            "approval": approval, "baseline_refreshed": str(baseline_path()),
+            "hint": f"{CACHE_NOTE}🔴 基线已刷新但**尚未提交**——下一条写命令会因此被拦，"
+                    f"现在就 `git add {baseline_path()} && git commit`。"}, 0
 
 
 def do_delete(args, api_base, key):
     old, cond, note = _fetch_menu_tolerant(api_base, key, args.timeout)
     current = [b.get("name") for b in old] if old else []
-
-    # 🔴 一致性闸门（2026-09-02 裁定）：删之前必须确认**手上这份基线就是线上那份**。
-    # 🔑 它的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰是最需要基线的动作：
-    #    删掉的个性化菜单只能照着快照去后台手工重挂，快照陈旧＝那部分永久回不来。
-    if old is None:
-        raise OpFailed(
-            "拿不到线上现状，**无法核对它与基线是否一致**，本次不删。"
-            "⛔ 「查不到」不等于「一致」——这道闸的失效方向不能是绿。")
-    差异 = baseline_drift({"button": old, "conditionalmenu": cond}, load_baseline())
-    if 差异:
-        wechat_api.warn("⚠ 线上菜单与基线快照**不一致**，本次不删。差异逐条：")
-        return 漂移拒绝(差异, "删除菜单"), 1
 
     if not args.confirm:
         wechat_api.warn("⚠ 这次**没有删除任何东西**（缺 --confirm）。删除的代价：")
@@ -510,14 +612,33 @@ def do_delete(args, api_base, key):
                         "去公众平台后台**手工重挂**，⛔ 不是一条命令能还原的回滚。")
         if note:
             wechat_api.warn(f"  · {note}")
+        # 只读预检**不受**①②③管制，但把会撞到的闸门预告出来
+        for line in 闸门预告():
+            wechat_api.warn(f"  {line}")
         return {"outcome": "failed",
                 "error": "未带 --confirm：本次**没有删除**自定义菜单（这是安全闸门，不是故障）。",
                 "current_top_level": current, "conditionalmenu_count": len(cond),
                 "baseline_note": note,
-                "hint": "先 `--get > menu.json` 把现状存下来当回滚基线（⚠ 它**只兜得住默认菜单**："
-                        "个性化菜单虽在文件里，却只能靠人去后台照着重挂），把上面的代价讲给运营，"
-                        "确认后加 `--confirm` **和 `--approval <件号>-<选项键>`** 重跑"
+                "hint": f"先 `--get > {baseline_path()}` 把现状存成回滚基线**并提交**"
+                        "（⚠ 它**只兜得住默认菜单**：个性化菜单虽在文件里，却只能靠人去后台照着重挂），"
+                        "把上面的代价讲给运营，确认后加 `--confirm` "
+                        "**和 `--approval <件号>-<选项键>`** 重跑"
                         "（🔴 删除菜单自 2026-09-02 起为坐标制）。"}, 1
+
+    # ══ 写路径的前置闸门：①基线存在 → ②基线已提交 → ③线上与基线一致 ══
+    # 🔑 ③ 对 delete 的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰最需要基线：
+    #    删掉的个性化菜单只能照着快照去后台手工重挂，快照陈旧＝那部分永久回不来。
+    基线, 拒 = 写前闸门("删除菜单")                        # ① + ②
+    if 拒:
+        return 拒
+    if old is None:
+        raise OpFailed(
+            "拿不到线上现状，**无法核对它与基线是否一致**，本次不删。"
+            "⛔ 「查不到」不等于「一致」——这道闸的失效方向不能是绿。")
+    差异 = baseline_drift({"button": old, "conditionalmenu": cond}, 基线)      # ③
+    if 差异:
+        wechat_api.warn("⚠ 线上菜单与基线快照**不一致**，本次不删。差异逐条：")
+        return 漂移拒绝(差异, "删除菜单"), 1
 
     wechat_api.warn("⚠ menu/delete 会把**默认菜单和全部个性化菜单**一起删掉（微信 API 语义如此）——本号挂着按标签定向的内部菜单（如老板的「今日日报」钮），删完要去后台/API 重挂。三思。")
     # 🔴 删除菜单升级为坐标制（2026-09-02 裁定），与群发同类：**对个性化菜单是硬不可逆**——

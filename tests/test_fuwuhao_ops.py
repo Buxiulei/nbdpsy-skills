@@ -266,18 +266,41 @@ def _menu_file(tmp_path, buttons):
     return str(p)
 
 
+def _git(仓, *args):
+    import subprocess
+    return subprocess.run(["git", "-C", str(仓), *args], capture_output=True, text=True, check=True)
+
+
+def _改基线(p, 改法):
+    """改基线**并提交**——不提交的话第②道闸会先拦，就测不到第③道。"""
+    d = json.loads(p.read_text(encoding="utf-8"))
+    改法(d)
+    p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    _git(p.parent.parent, "add", "wechat/menu-baseline.json")
+    _git(p.parent.parent, "commit", "-q", "-m", "改基线")
+    return d
+
+
 @pytest.fixture
 def 基线(tmp_path, monkeypatch):
-    """给菜单一致性闸门一份**与 MENU_ONLINE 一致**的基线快照，并把 workspace 指过去。
+    """一份**与 MENU_ONLINE 一致、且已提交**的基线快照，workspace 指过去。
 
     ⚠️ 用 `$NBDPSY_WORKSPACE` 而不是改 `resolve_workspace()`：那个函数所有 skill 共用，
-    测试里也不该动它的逻辑——这里只是走它自己的第一优先级入口。
+       测试里也不该动它的逻辑——这里只是走它自己的第一优先级入口。
+    🔴 **必须是真 git 仓且已提交**：写路径的第②道闸查的就是「基线 dirty 没有」，
+       拿一个非 git 目录做固件的话，②会走「拿不准 ⇒ 拒」，所有写用例都red——
+       固件得让被测的那条路**真的能走通**，⛔ 不是绕开它。
     """
     ws = tmp_path / "ws"
     (ws / "wechat").mkdir(parents=True)
     p = ws / "wechat" / "menu-baseline.json"
     p.write_text(json.dumps({"button": MENU_ONLINE["menu"]["button"]}, ensure_ascii=False),
                  encoding="utf-8")
+    _git(ws, "init", "-q")
+    _git(ws, "config", "user.email", "t@t")
+    _git(ws, "config", "user.name", "t")
+    _git(ws, "add", "wechat/menu-baseline.json")
+    _git(ws, "commit", "-q", "-m", "基线")
     monkeypatch.setenv("NBDPSY_WORKSPACE", str(ws))
     return p
 
@@ -416,12 +439,14 @@ class Test菜单CLI:
     def test_apply带confirm才真的发create(self, net, tmp_path, capsys, 基线):
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
-                  FakeResp(200, {"success": True, "data": {"errcode": 0, "errmsg": "ok"}}))
+                  FakeResp(200, {"success": True, "data": {"errcode": 0, "errmsg": "ok"}}),
+                  FakeResp(200, {"success": True, "data": {"menu": {"button": new}}}))
         code, data, _ = run_cli(
             M, ["--apply", _menu_file(tmp_path, new), "--confirm", "--approval", "T999-A"], capsys)
         assert code == 0 and data["outcome"] == "done"
-        assert net.paths() == ["/cgi-bin/menu/get", "/cgi-bin/menu/create"]
-        assert net.calls[-1]["body"]["body"] == {"button": new}
+        # 末尾多一次 get：apply 成功后要把新的线上全量写回基线（否则基线当场陈旧）
+        assert net.paths() == ["/cgi-bin/menu/get", "/cgi-bin/menu/create", "/cgi-bin/menu/get"]
+        assert net.calls[-2]["body"]["body"] == {"button": new}   # [-1] 已经是刷新基线那次 get
         assert "24 小时" in data["hint"]
         # 坐标原样进回执备查（菜单走 proxy 透传，⛔ 进不了微信那侧的请求体）
         assert data["approval"] == "T999-A"
@@ -506,9 +531,9 @@ class Test菜单CLI:
         assert "安全闸门" in data["error"] and "没有删除" in data["error"]
 
     def test_变异1b_基线改一个字段则闸红并点名那个字段(self, net, tmp_path, capsys, 基线):
-        改 = json.loads(基线.read_text(encoding="utf-8"))
-        改["button"][0]["sub_button"][1]["url"] = "https://a/CHANGED"
-        基线.write_text(json.dumps(改, ensure_ascii=False), encoding="utf-8")
+        # ⚠️ 改完必须**提交**：不提交的话第②道闸（基线 dirty）会先拦，
+        #    测到的就成了 dirty 而不是③的内容不一致——两道闸得分开验。
+        _改基线(基线, lambda d: d["button"][0]["sub_button"][1].__setitem__("url", "https://a/CHANGED"))
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, err = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
         assert code == 1 and data["outcome"] == "failed"
@@ -519,17 +544,16 @@ class Test菜单CLI:
         assert "线上比基线新" in data["hint"] and "基线比线上新" in data["hint"]  # 两个方向都给话
 
     def test_变异2_基线文件直接apply不带restore要拒(self, net, capsys, 基线):
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, _ = run_cli(M, ["--apply", str(基线), "--confirm", "--approval", "T999-A"],
                                 capsys)
         assert code == 1 and data["outcome"] == "failed"
         assert "基线文件" in data["error"] and "--restore" in data["error"]
-        assert net.calls == []                          # 判文件身份在联网之前，一个请求都没发
+        assert "/cgi-bin/menu/create" not in net.paths()   # ⛔ 写调用一次都没发
 
     def test_变异3_restore放行到坐标那一步且缺坐标仍被拦(self, net, capsys, 基线):
         """放行 ⇒ 越过一致性闸；但坐标闸照旧 ⇒ 仍不发写请求。两件事分开验。"""
-        改 = json.loads(基线.read_text(encoding="utf-8"))
-        改["button"][0]["name"] = "改过的名字"           # 制造不一致：restore 就是要消除它
-        基线.write_text(json.dumps(改, ensure_ascii=False), encoding="utf-8")
+        _改基线(基线, lambda d: d["button"][0].__setitem__("name", "改过的名字"))
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, err = run_cli(M, ["--apply", str(基线), "--restore", "--confirm"], capsys)
         assert code == 1 and data["outcome"] == "failed"
@@ -537,22 +561,96 @@ class Test菜单CLI:
         assert "drift" not in data                       # ⇒ 确实越过了一致性闸
         assert "恢复操作" in err
 
+    def test_apply侧的一致性闸同样会拦(self, net, tmp_path, capsys, 基线):
+        """③ 在 apply 与 delete 两条路上都要有——只验一条会漏掉另一条。"""
+        _改基线(基线, lambda d: d["button"][1].__setitem__("url", "https://a/DRIFT"))
+        new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(
+            M, ["--apply", _menu_file(tmp_path, new), "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/create" not in net.paths()
+        assert any("button[1].url" in x for x in data["drift"]), data["drift"]
+
+    def test_只读预检不受基线三道闸管制(self, net, tmp_path, capsys, monkeypatch):
+        """🔴 裁定：只读预检**不受**①②③管制——拦了会逼人为了「看一眼菜单」也去满足这些条件。
+
+        这里刻意让①失败（根本没有基线）：预检仍须**照常算出 diff**，
+        只是把「真执行时会被拦」预告出来。⛔ 别把预检也拦掉。
+        """
+        空 = tmp_path / "空workspace"
+        (空 / "wechat").mkdir(parents=True)
+        monkeypatch.setenv("NBDPSY_WORKSPACE", str(空))
+        new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, err = run_cli(M, ["--apply", _menu_file(tmp_path, new)], capsys)
+        assert code == 1 and "只算了 diff" in data["error"]      # 是预检退出，⛔ 不是被基线闸拦
+        assert data["diff"]["lines"]                             # **照常算出了 diff**
+        assert "真要执行时会被拦" in err                          # 但预告了
+        assert str(空 / "wechat" / "menu-baseline.json") in err
+
+    def test_变异4_基线文件不存在要拒且报错里含那个绝对路径(self, net, tmp_path, capsys,
+                                                              monkeypatch):
+        空 = tmp_path / "空workspace"
+        (空 / "wechat").mkdir(parents=True)
+        monkeypatch.setenv("NBDPSY_WORKSPACE", str(空))
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/delete" not in net.paths()
+        assert str(空 / "wechat" / "menu-baseline.json") in data["error"]   # **打印绝对路径**
+        assert "NBDPSY_WORKSPACE" in data["error"] or "仓根" in data["error"]
+
+    def test_变异5_基线dirty要拒且措辞区别于内容不一致(self, net, capsys, 基线):
+        """⚠️ dirty 是**安全方向的误伤**（拒而不是放行），可接受；但提示必须能和
+        「内容不一致」区分开——混了会让人去查错方向（去翻菜单内容，而病在没提交）。"""
+        d = json.loads(基线.read_text(encoding="utf-8"))
+        d["button"][0]["name"] = "手编过还没提交"
+        基线.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")   # ⛔ 不提交
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/delete" not in net.paths()
+        assert "尚未提交" in data["error"]
+        assert "不是" in data["error"] and "内容不一致" in data["error"]   # 明说不是那一种
+        assert "drift" not in data                                        # ⛔ 别报成漂移
+        assert "git add" in data["hint"]
+
     def test_restore的回执不许承诺它恢复不了的东西(self, net, tmp_path, capsys, 基线):
         """🔴 恢复提示必须说「默认菜单」而不是「基线的内容」——个性化菜单本 skill 建不回来。
 
         ⛔ 别在刚清完一批假承诺之后又造一句新的。
         """
-        改 = json.loads(基线.read_text(encoding="utf-8"))
-        改["conditionalmenu"] = [{"matchrule": {"tag_id": "2"},
-                                  "button": [{"name": "日报", "type": "click", "key": "K"}]}]
-        基线.write_text(json.dumps(改, ensure_ascii=False), encoding="utf-8")
+        _改基线(基线, lambda d: d.__setitem__("conditionalmenu", [
+            {"matchrule": {"tag_id": "2"},
+             "button": [{"name": "日报", "type": "click", "key": "K"}]}]))
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
-                  FakeResp(200, {"success": True, "data": {"errcode": 0}}))
+                  FakeResp(200, {"success": True, "data": {"errcode": 0}}),
+                  FakeResp(200, {"success": True, "data": MENU_ONLINE}))   # 末次＝刷新基线
         code, data, err = run_cli(
             M, ["--apply", str(基线), "--restore", "--confirm", "--approval", "T999-A"], capsys)
         assert code == 0 and data["outcome"] == "done"
         assert "默认菜单" in err
         assert "1 条个性化菜单不会被重建" in err
+
+    def test_apply成功后刷新基线并催提交但不替人commit(self, net, tmp_path, capsys, 基线):
+        """🔑 不刷新 ⇒ 每次合法改菜单后基线立刻陈旧，下一条写命令被③拦；
+        而人最省事的绕法是「重拉基线」，那会把线上的误改**固化进基线**。"""
+        新线上 = {"menu": {"button": [{"name": "新入口", "type": "view", "url": "https://a/x"}]}}
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
+                  FakeResp(200, {"success": True, "data": {"errcode": 0}}),
+                  FakeResp(200, {"success": True, "data": 新线上}))        # 刷新时读到的新现状
+        f = _menu_file(tmp_path, 新线上["menu"]["button"])
+        code, data, err = run_cli(
+            M, ["--apply", f, "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 0 and data["outcome"] == "done"
+        # 基线文件真的被改写成新的线上全量
+        assert json.loads(基线.read_text(encoding="utf-8"))["button"] == 新线上["menu"]["button"]
+        assert data["baseline_refreshed"] == str(基线)
+        assert "git add" in err and "git commit" in err        # 催提交
+        # ⛔ 没有替人提交：文件此刻应是 dirty
+        st = _git(基线.parent.parent, "status", "--porcelain").stdout
+        assert "menu-baseline.json" in st
 
     def test_菜单的只读预检不受坐标管制(self, net, tmp_path, capsys, 基线):
         """⛔ 闸门强度要与危害对齐：不带 --confirm 只算 diff / 只打警示，
