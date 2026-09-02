@@ -1049,7 +1049,7 @@ class Test发布必须带批复坐标:
         assert net.calls[0]["body"] == {"media_id": "M1", "approval": "G1-b"}
         assert data["approval"] == "G1-b"
 
-    def test_闸门是即时发布与定时发布共用的一份(self, net, monkeypatch, capsys):
+    def test_五条受管制命令走的是同一把闸门(self, net, monkeypatch, capsys):
         """两处各抄一份，迟早一边漏掉闸门变成「悄悄不留痕就发了」。
 
         🩸 **⛔ 不能写成 `A.wechat_api.require_approval is S.wechat_api.require_approval`**
@@ -1069,7 +1069,19 @@ class Test发布必须带批复坐标:
         run_cli(A, ["--publish", "--media-id", "M1", "--approval", "G1-A"], capsys)
         net.serve(FakeResp(200, {"success": True, "job_id": 1}))
         run_cli(S, ["--submit-publish", "M1", "--at", _future(), "--approval", "G1-A"], capsys)
-        assert len(seen) == 2, f"两条发布路径没有都走共用闸门，只走到：{seen}"
+        net.serve(FakeResp(200, {"success": True, "msg_id": "1"}))
+        run_cli(A, ["--mass-send", "--ledger-id", "7", "--to-all", "--confirm",
+                    "--note", "运营张三确认", "--approval", "G1-A"], capsys)
+        net.serve(FakeResp(200, {"success": True, "job_id": 2}))
+        run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all", "--confirm",
+                    "--note", "运营张三确认", "--approval", "G1-A"], capsys)
+        net.serve(FakeResp(200, {"success": True}))
+        run_cli(A, ["--delete-published", "--article-id", "ART1", "--confirm",
+                    "--approval", "G1-A"], capsys)
+        assert len(seen) == 5, (
+            f"五条受管制命令没有都走共用闸门，只走到：{seen}。"
+            "少一条 ⇒ 那条路要么没闸门，要么**另写了第二份实现**"
+            "（两份都对的时候没人会去比，其中一份先烂掉）。")
 
     def test_成功回执也要重申闸门不代表已获批准(self, net, capsys):
         """🩸 零上下文干跑（2026-08-28）抓到：这句警告原本只活在**失败态的报错文案**和
@@ -1666,6 +1678,41 @@ class Test不可逆动作坐标制:
                                     "--confirm"], capsys)
         assert code == 1
         assert not net.calls, "缺 --approval 时**发出了请求** ⇒ 闸门位置错了（必须在请求之前）"
+
+    def test_定时群发缺坐标时一条队列都不入(self, net, capsys):
+        """定时群发是**已裁类别的漏网**（2026-09-02 补齐）：与即时群发同一个动作、同样的
+        危害，只是换了条路进来。⚠️ 它比即时群发更险 —— **到点自动执行、人不在场**，
+        排错了不会有人在那一刻发现。
+
+        断言的是 `net.calls` 为空，⛔ 不是退出码：一个「先入队、再报错」的实现同样给 exit 1，
+        而那时队列里已经躺着一条到点会真发的任务了。
+        """
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all",
+                                    "--confirm", "--note", "运营张三确认"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert not net.calls, "缺 --approval 时**发出了请求** ⇒ 闸门位置错了（必须在入队之前）"
+
+    def test_定时群发带坐标时放行入队且坐标记进回执(self, net, capsys):
+        """防恒红：⛔ 只测「缺坐标被拦」测不出闸门是不是恒拦。"""
+        net.serve(FakeResp(200, {"success": True, "job_id": 42}))
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all",
+                                    "--confirm", "--note", "运营张三确认",
+                                    "--approval", "T999-A"], capsys)
+        assert code == 0 and data["outcome"] == "done" and data["job_id"] == 42
+        assert data["approval"] == "T999-A", "坐标应原样记进回执（问责留痕）"
+        assert "不等于已获批准" in data["hint"], "成功回执要重申：入队成功 ⛔ 不等于已获批准"
+
+    def test_定时群发只查配额那条路不被坐标拦住(self, net, capsys):
+        """⚠️ 闸门刻意放在 `--confirm` **之后**：不带 --confirm 只查本月配额，是**只读预检**。
+        拦了它，运营为了「看一眼这个月还剩几次」也得先去要一份批复 —— 闸门强度与危害脱钩。
+        同时钉住：那条路的 hint 必须**提前**把坐标要求说出来，否则运营补了 --confirm 重跑
+        又被拦一次，白跑两轮。
+        """
+        net.serve(FakeResp(200, {"success": True, "quota_used": 2}))
+        code, data, _ = run_cli(S, ["--submit-mass", "M1", "--at", _future(), "--to-all"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert len(net.calls) == 1 and "mass-send" in net.calls[0]["url"], "预检该照常查配额"
+        assert "--approval" in data["hint"], "预检 hint 没提前说坐标要求 ⇒ 运营会白跑两轮"
 
     def test_带坐标时放行到发请求那步(self, net, capsys):
         """防恒红：⛔ 只测「缺坐标被拦」测不出闸门是不是恒拦。"""

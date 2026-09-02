@@ -13,7 +13,7 @@
     # 定时群发（高危：不可逆 + 每自然月仅 4 次）。受众必须明说：--to-all 或 --tag-id 二选一
     python3 schedule_ops.py --submit-mass <media_id> --at "..." --to-all   # 只查配额，**零入队**
     python3 schedule_ops.py --submit-mass <media_id> --at "..." --to-all --confirm \\
-        --note "运营张三确认，8月推送第2条"
+        --note "运营张三确认，8月推送第2条" --approval <件号>-<选项键>
 
     # 队列
     python3 schedule_ops.py --list [--status pending]
@@ -28,7 +28,8 @@
 
 两条红线在本脚本里的落点:
   · **红线①**（群发不可逆 + 每自然月仅 4 次）：定时群发**同样占配额**。不带 `--confirm` 时
-    **一条队列都不入**，只查本月配额现状；真入队必须带 `--note`（谁拍板的问责留痕）与
+    **一条队列都不入**，只查本月配额现状；真入队必须带 `--note`（谁拍板的问责留痕）、
+    **批复坐标** `--approval <件号>-<选项键>`（与即时群发同一把闸，2026-09-02 补齐）与
     **受众**（`--to-all` / `--tag-id` 二选一，没有默认值——到点自动执行的任务如果受众靠默认值
     兜底，漏填就是到点悄悄全员群发，人还不在场）。服务端入队时校验一次配额，到点执行前再校验一次。
   · **run_at 必须带时区**：不带时区的时间串服务端按 UTC 解析，会比运营想的**早 8 小时**发出去。
@@ -222,20 +223,37 @@ def do_submit_mass(args, api_base, key):
                 "server": {k: v for k, v in data.items() if k != "success"},
                 "hint": f"把本月配额现状、收件人（{audience}）与执行时间（{label(run_at)}）一并"
                         "复述给运营（「本月已用 X/4 次，这条到点发出去就是第 X+1 次」），"
-                        f"拿到明确确认后，再带 `--confirm --note \"谁在什么场景下拍的板\"` 重跑。{QUOTA_CAVEAT}"}, 1
+                        "拿到明确确认后，再带 `--confirm --note \"谁在什么场景下拍的板\"` "
+                        "**和 `--approval <件号>-<选项键>`** 重跑"
+                        "（🔴 定时群发自 2026-09-02 起与即时群发同为坐标制）。"
+                        f"{QUOTA_CAVEAT}"}, 1
 
     note = (args.note or "").strip()
     if not note:
         raise OpFailed("--submit-mass --confirm 必须带 --note：这是**问责留痕**——"
                        "写清是谁在什么场景下拍的板（如 \"运营张三确认，8月推送第2条\"）。")
+    # 🔴 定时群发同为坐标制（佰亿助理 2026-09-02 裁定）。这**不是新的管制类别**，而是
+    # 2026-08-31「群发是受管制动作」那条裁定的**漏网补齐**：当时只改了 article_ops.py 的即时群发，
+    # 漏了通往同一动作的这条路。危害完全相同（不可逆 + 占当月 4 次配额 + 直达全体粉丝对话框），
+    # **而且到点自动执行、人不在场**——同一个动作不该因为换条路进来就没有闸门。
+    # ⚠️ 触发位置与 article_ops.do_mass_send **逐字对齐**：在 `--confirm` 与 `--note` 之后。
+    #    不带 --confirm 那条路只查本月配额、是只读预检，⛔ 不该被坐标拦住（拦了会逼人为了
+    #    「看一眼还剩几次」也去要批复）；而上面那条 hint 已经把坐标要求说出来了，
+    #    否则运营补了 --confirm 重跑又被这里拦一次，白跑两轮。
+    # 🔑 守备范围与发布/即时群发同：坐标只是**原样记下**，脚本⛔ 不核实那个件真批没批。
+    approval = wechat_api.require_approval(
+        args.approval, "定时群发（到点推送全体粉丝，不可逆且占月配额）")
     data = submit_job(api_base, key,
                       {"job_type": "mass_send", "run_at": run_at.isoformat(),
                        "payload": {"media_id": media_id, "filter": filter_},
                        "confirm": True, "note": note},
                       args.timeout)
     payload, code = submitted(data, "mass_send", media_id, run_at, warnings,
+                              f"⚠️ 批复坐标 `{approval}` 只是**原样记下**——脚本不核实那个件真批没批，"
+                              "**入队成功 ⛔ 不等于已获批准**。"
                               f"本次是**群发**：到点直接推送给{audience}、不可逆，"
                               f"当月 4 次配额到点时扣一次（服务端执行前会再校验一次配额）。{QUOTA_CAVEAT}")
+    payload["approval"] = approval
     payload["note"] = note
     payload["filter"] = filter_
     payload["audience"] = audience
@@ -310,8 +328,8 @@ def main(argv=None):
     ap.add_argument("--submit-publish", dest="submit_publish", metavar="media_id",
                     help="提交定时发布（不推送粉丝、不占群发次数）")
     ap.add_argument("--approval", metavar="件号-选项",
-                    help="定时发布的批复坐标（老板台件号 + option_key，如 <件号>-A）。"
-                         "发布不可逆，缺此参数一律 failed exit 1 且一条队列都不入")
+                    help="定时发布**与定时群发**的批复坐标（老板台件号 + option_key，如 <件号>-A）。"
+                         "两者都不可逆，缺此参数一律 failed exit 1 且一条队列都不入")
     ap.add_argument("--submit-mass", dest="submit_mass", metavar="media_id",
                     help="提交定时群发（高危：不可逆 + 每自然月仅 4 次）")
     ap.add_argument("--list", action="store_true", help="查定时队列")
