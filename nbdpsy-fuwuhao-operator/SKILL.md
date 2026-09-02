@@ -473,10 +473,11 @@ python3 MENU --delete --confirm --approval <件号>-<选项键>        # 真删�
 ⚠️ `--restore` 跳过一致性检查（不一致正是要恢复的原因），但**坐标照常要**，且回执会说清
 **只恢复默认菜单**、个性化菜单不会被重建。
 
-⚠️ **`{workspace}` 在两个上下文下指向两个地方**：`resolve_workspace()` 先看
-`$NBDPSY_WORKSPACE`、再看 `$PWD/seo-geo/content` 是否存在，都没有才回落 `~/nbdpsy-content`。
-⇒ **在 NBDpsy 仓根运行时才落 `seo-geo/content/`，那才是基线真源**；在别处跑会解到
-`~/nbdpsy-content`，那里没有基线。查「基线在不在」必须说清**在哪个 workspace 下查的**。
+⚠️ **基线路径三级来源**（前面的给了值就只认它，⛔ 不回落）：① `--baseline <绝对路径>`
+② `$NBDPSY_MENU_BASELINE` ③ `<当前目录>/seo-geo/content/wechat/menu-baseline.json`。
+**每级都是确定路径、⛔ 不做任何搜索；选中了而文件不在就一律拒**，并把三级各自的路径都打印出来。
+⇒ 平时**在 NBDpsy 仓根跑**即命中第③级真源，不必设环境变量；在别处跑会命中一个不存在的
+文件而被拒——**这是设计如此**：找不到要拒，⛔ 不能去别处找一个凑合的来比。
 ⚠️ 快照里的 `conditionalmenu`（个性化菜单）**本 skill 恢复不了**（没有 `menu/addconditional`
 能力），只能照着快照去公众号后台**手工重挂**——⛔ 别把 apply 完当成「全都恢复了」。
 

@@ -12,11 +12,16 @@
    捕获时间写在**提交说明**里，⛔ 不往文件里加元数据键（加键会破坏 `--apply` 的输入契约）。
 ⚠️ 快照里的 `conditionalmenu`（个性化菜单）**本 skill 恢复不了**，只能照着去后台手工重挂。
 
-🔴 **「约定路径」在两个上下文下指向两个地方——`{workspace}` 不是一个固定值**：
-`nbdpsy_common.resolve_workspace()` 先看 `$NBDPSY_WORKSPACE`，再看 `$PWD/seo-geo/content`
-是否存在，都没有才回落 `~/nbdpsy-content`。
-⇒ **在 NBDpsy 仓根运行时 workspace 落 `seo-geo/content/`，那才是基线真源**；
-   在别处运行会解到 `~/nbdpsy-content`，那里**没有**基线。
+🔴 **基线路径三级来源**（2026-09-02 裁定），前面的一旦给了值就**只认它**、⛔ 不再回落：
+    ① `--baseline <绝对路径>` ② `$NBDPSY_MENU_BASELINE` ③ `<当前目录>/seo-geo/content/…`
+**每级都是一条确定的路径，⛔ 任何搜索**；**任一级选中而文件不在 ⇒ 一律拒**，
+报错里把三级各自算出的路径都打印出来。
+🔑 ⛔「从 cwd 向上找含 `seo-geo/content` 的目录」被明确排除：它的失效方向是
+**找到一个错的然后照常比对**（往绿倒），而三级的失效方向都是**找不到 ⇒ 拒**。
+⚠️ 第③级**直接由 cwd 拼**，⛔ 不走 `resolve_workspace()`——后者末尾是
+`return Path.home()/"nbdpsy-content"`，一个**无条件家目录回落**；那个目录在本机真实存在，
+一旦有人往那儿放过旧快照，就会「拿错的基线照常比对」，正是被排除的那种失效形态。
+⇒ **在 NBDpsy 仓根运行时第③级即命中真源**；在别处运行会命中一个不存在的文件 ⇒ 拒。
 🩸 2026-09-02 实证：正因为这两个上下文，「基线文件不存在」与「基线文件在那儿」**同时为真**——
    `~/nbdpsy-content/wechat/` 下确实没有，而仓内 `seo-geo/content/wechat/menu.json`
    躺着一份 **2026-08-04 的残缺快照**（只含默认菜单、无 `conditionalmenu`、不含日报入口）。
@@ -79,14 +84,12 @@
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-# 同目录 vendored 副本（凭据与基址由 wechat_api 经 nbdpsy_common 解析）。
-# ⚠️ nbdpsy_common 这里**只读用一个** `resolve_workspace()` 来算基线快照路径，
-#    ⛔ 不改它的解析逻辑——那个函数是所有 skill 共用的，改它的返回值会让别的 skill 产物落到别处。
-import nbdpsy_common
+# 同目录 vendored 副本（凭据与基址由 wechat_api 经 nbdpsy_common 解析）
 import wechat_api
 from wechat_api import OpFailed
 
@@ -103,18 +106,41 @@ CACHE_NOTE = ("菜单有约 24 小时客户端缓存：粉丝不一定马上看�
 BASELINE_RELPATH = Path("wechat") / "menu-baseline.json"
 
 
-def baseline_path() -> Path:
-    """基线快照的**绝对路径**。⛔ 这里只算路径，不判断存不存在。
+_显式基线: "Path | None" = None      # `--baseline` 传进来的那条，由 main() 设
 
-    ⚠️ 它经 `nbdpsy_common.resolve_workspace()` 得出，因此**随 cwd 变**：
-    在 NBDpsy 仓根跑 ⇒ `<仓根>/seo-geo/content/wechat/menu-baseline.json`（真源）；
-    在别处跑 ⇒ `~/nbdpsy-content/wechat/menu-baseline.json`（那里通常没有）。
-    ⇒ 拿不到时必须**报出这个绝对路径**（见 load_baseline），
-      ⛔ 别静默回落到别处找——**静默回落正是造成整件事的机制**：
-      同一个「约定路径」在两个上下文下指向两处、一处空一处躺着错的，
-      而没有任何东西跳出来说「你查的不是那个」。
+
+def _基线三级() -> "list[tuple[str, Path | None]]":
+    """基线路径的三级来源（2026-09-02 裁定）。**每级都是一条确定的路径，⛔ 任何搜索**。
+
+    🔴 为什么⛔「从 cwd 向上找含 seo-geo/content 的目录」：它的失效方向是
+    **找到一个错的然后照常比对**（往绿倒）；而这三级的失效方向都是**找不到 ⇒ 拒**。
+    这道闸的全部价值就在失效时往拒那边倒。
+
+    ⚠️ 第③级刻意**直接由 cwd 拼**，⛔ 不走 `nbdpsy_common.resolve_workspace()`：
+    那个函数末尾是 `return Path.home() / "nbdpsy-content"` —— 一个**无条件的家目录回落**。
+    走它的话，在非仓目录跑就会落到 `~/nbdpsy-content/wechat/menu-baseline.json`；
+    那个目录在本机**真实存在**，一旦有人往那儿放过一份旧快照，闸就会**拿错的基线照常比对**
+    ——正是③被排除的那种失效形态，只是换了个入口。直接拼 cwd 则「在仓根命中真源、
+    在别处命中一个不存在的文件」，失效方向确定是拒。
     """
-    return nbdpsy_common.resolve_workspace() / BASELINE_RELPATH
+    env = os.environ.get("NBDPSY_MENU_BASELINE")
+    return [
+        ("① --baseline 参数", _显式基线),
+        ("② $NBDPSY_MENU_BASELINE", Path(env).expanduser() if env else None),
+        ("③ <当前目录>/seo-geo/content（在 NBDpsy 仓根跑即真源）",
+         Path.cwd() / "seo-geo" / "content" / BASELINE_RELPATH),
+    ]
+
+
+def baseline_path() -> Path:
+    """选中的基线路径：**前面的级别一旦给了值就只认它**，⛔ 不再往后回落。
+
+    ⛔ 这里只选路径、不判断存不存在——存不存在由 load_baseline 判，且找不到一律**拒**。
+    """
+    for _名, p in _基线三级():
+        if p is not None:
+            return p
+    raise AssertionError("三级里第③级恒有值，走不到这里")   # pragma: no cover
 
 
 def load_baseline() -> dict:
@@ -125,13 +151,17 @@ def load_baseline() -> dict:
     """
     p = baseline_path()
     if not p.is_file():
+        三级 = "\n".join(
+            f"  {名}：{q if q is not None else '（未提供）'}"
+            + ("" if q is None else ("  ← 用的是这条，但文件不在" if q == p else ""))
+            for 名, q in _基线三级())
         raise OpFailed(
             f"基线快照不在：{p}\n"
-            "⚠️ 这个路径随**当前工作目录**变（`resolve_workspace()`：先看 $NBDPSY_WORKSPACE，"
-            "再看 $PWD/seo-geo/content，都没有才回落 ~/nbdpsy-content）。"
-            "⇒ 先确认两件事：① 你是不是**在 NBDpsy 仓根**跑的（那才是基线真源）；"
-            f"② 文件是不是真的没有——是的话先 `--get > {p}` 拉一份并提交。"
-            "⛔ 本次一个写请求都没发出。")
+            f"三级来源各自算出的路径：\n{三级}\n"
+            "⇒ 三条路（任选其一）：① **在 NBDpsy 仓根运行**（第③级即命中真源）；"
+            "② 设 `$NBDPSY_MENU_BASELINE=<绝对路径>`；③ 传 `--baseline <绝对路径>`。"
+            f"确实还没有这份快照，就先 `--get > {p}` 拉一份**并提交**。"
+            "⛔ 本次一个写请求都没发出（找不到基线一律拒，⛔ 不回落别处找）。")
     try:
         data = json.loads(p.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as e:
@@ -225,7 +255,7 @@ def 闸门预告() -> list[str]:
     p = baseline_path()
     if not p.is_file():
         return [f"🔴 基线快照不在 `{p}` —— **真要执行时会被拦**。"
-                "先确认你是不是在 NBDpsy 仓根跑（或设 $NBDPSY_WORKSPACE），"
+                "先确认你是不是在 NBDpsy 仓根跑（或设 `$NBDPSY_MENU_BASELINE`、传 `--baseline`），"
                 f"确实没有就 `--get > {p}` 拉一份并提交。"]
     dirty, _ = _基线未提交(p)
     if dirty is None:
@@ -666,6 +696,8 @@ def main(argv=None):
     ap.add_argument("--delete", action="store_true", help="删除整个自定义菜单（粉丝立刻看不到入口）")
     ap.add_argument("--confirm", action="store_true",
                     help="真正执行 --apply / --delete；不带它只打 diff/警示，不碰线上")
+    ap.add_argument("--baseline", metavar="path",
+                    help="显式指定基线快照路径（最高优先级）。⛔ 找不到不回落别处，直接拒")
     ap.add_argument("--restore", action="store_true",
                     help="声明本次 --apply 是**恢复**（把线上覆盖回基线）：跳过一致性检查"
                          "（不一致正是恢复的原因），坐标照常要。⛔ 恢复必须显式说出来，"
@@ -677,6 +709,9 @@ def main(argv=None):
     ap.add_argument("--api-base", dest="api_base", help="覆盖服务基址（默认走凭据/内置默认）")
     ap.add_argument("--timeout", type=float, default=wechat_api.DEFAULT_TIMEOUT, help="单次请求超时秒数")
     args = ap.parse_args(argv)
+
+    global _显式基线                      # noqa: PLW0603 —— 基线路径要给一串 helper 共用
+    _显式基线 = Path(args.baseline).expanduser() if args.baseline else None
 
     # `actions` 分发表：与 article_ops / schedule_ops 逐字同形。
     # 🔑 换成这个写法**不是为了迁就判据**，而是本仓「命令 → 处理函数」的既有唯一映射形状：

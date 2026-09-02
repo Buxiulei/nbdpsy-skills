@@ -285,8 +285,7 @@ def _改基线(p, 改法):
 def 基线(tmp_path, monkeypatch):
     """一份**与 MENU_ONLINE 一致、且已提交**的基线快照，workspace 指过去。
 
-    ⚠️ 用 `$NBDPSY_WORKSPACE` 而不是改 `resolve_workspace()`：那个函数所有 skill 共用，
-       测试里也不该动它的逻辑——这里只是走它自己的第一优先级入口。
+    ⚠️ 走第②级 `$NBDPSY_MENU_BASELINE`（一条**确定路径**），⛔ 不碰 `resolve_workspace()`。
     🔴 **必须是真 git 仓且已提交**：写路径的第②道闸查的就是「基线 dirty 没有」，
        拿一个非 git 目录做固件的话，②会走「拿不准 ⇒ 拒」，所有写用例都red——
        固件得让被测的那条路**真的能走通**，⛔ 不是绕开它。
@@ -301,7 +300,7 @@ def 基线(tmp_path, monkeypatch):
     _git(ws, "config", "user.name", "t")
     _git(ws, "add", "wechat/menu-baseline.json")
     _git(ws, "commit", "-q", "-m", "基线")
-    monkeypatch.setenv("NBDPSY_WORKSPACE", str(ws))
+    monkeypatch.setenv("NBDPSY_MENU_BASELINE", str(p))
     return p
 
 
@@ -578,28 +577,69 @@ class Test菜单CLI:
         这里刻意让①失败（根本没有基线）：预检仍须**照常算出 diff**，
         只是把「真执行时会被拦」预告出来。⛔ 别把预检也拦掉。
         """
-        空 = tmp_path / "空workspace"
-        (空 / "wechat").mkdir(parents=True)
-        monkeypatch.setenv("NBDPSY_WORKSPACE", str(空))
+        缺 = tmp_path / "空" / "menu-baseline.json"
+        缺.parent.mkdir(parents=True)
+        monkeypatch.setenv("NBDPSY_MENU_BASELINE", str(缺))
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, err = run_cli(M, ["--apply", _menu_file(tmp_path, new)], capsys)
         assert code == 1 and "只算了 diff" in data["error"]      # 是预检退出，⛔ 不是被基线闸拦
         assert data["diff"]["lines"]                             # **照常算出了 diff**
         assert "真要执行时会被拦" in err                          # 但预告了
-        assert str(空 / "wechat" / "menu-baseline.json") in err
+        assert str(缺) in err
 
     def test_变异4_基线文件不存在要拒且报错里含那个绝对路径(self, net, tmp_path, capsys,
                                                               monkeypatch):
-        空 = tmp_path / "空workspace"
-        (空 / "wechat").mkdir(parents=True)
-        monkeypatch.setenv("NBDPSY_WORKSPACE", str(空))
+        缺 = tmp_path / "空" / "menu-baseline.json"
+        缺.parent.mkdir(parents=True)
+        monkeypatch.setenv("NBDPSY_MENU_BASELINE", str(缺))
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, _ = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
         assert code == 1 and data["outcome"] == "failed"
         assert "/cgi-bin/menu/delete" not in net.paths()
-        assert str(空 / "wechat" / "menu-baseline.json") in data["error"]   # **打印绝对路径**
-        assert "NBDPSY_WORKSPACE" in data["error"] or "仓根" in data["error"]
+        assert str(缺) in data["error"]                       # **打印绝对路径**
+        assert "仓根" in data["error"] or "NBDPSY_MENU_BASELINE" in data["error"]
+
+    def test_变异6_baseline参数指向不存在的路径要拒且报错含那条(self, net, tmp_path, capsys,
+                                                                monkeypatch, 基线):
+        """①级显式传入 ⇒ **只认它**，⛔ 不因为②级（固件那条）存在就回落过去。"""
+        缺 = tmp_path / "根本没有这个文件.json"
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(
+            M, ["--delete", "--confirm", "--approval", "T999-A", "--baseline", str(缺)], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/delete" not in net.paths()
+        assert str(缺) in data["error"]
+        assert str(基线) not in data["error"].split("三级来源")[0]   # ⛔ 没有偷偷用②那条
+
+    def test_变异7_环境变量指向不存在的文件要拒且报错含那条(self, net, tmp_path, capsys,
+                                                            monkeypatch):
+        缺 = tmp_path / "环境变量指的那个.json"
+        monkeypatch.setenv("NBDPSY_MENU_BASELINE", str(缺))
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/delete" not in net.paths()
+        assert str(缺) in data["error"]
+
+    def test_变异8_三级全落空要拒且三条路径都打印出来(self, net, tmp_path, capsys, monkeypatch):
+        """在非仓目录、不设环境变量、不传参 ⇒ 三级都给不出可用文件。
+
+        🔴 第③级刻意由 cwd 直接拼，⛔ 不走 resolve_workspace()——后者末尾是无条件的
+        `~/nbdpsy-content` 回落，在非仓目录下会**指到一个真实存在的目录**，
+        一旦那里放过旧快照就会「拿错的基线照常比对」（往绿倒）。
+        """
+        monkeypatch.delenv("NBDPSY_MENU_BASELINE", raising=False)
+        monkeypatch.chdir(tmp_path)                      # 一个绝不含 seo-geo/content 的目录
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/delete" not in net.paths()
+        for 级 in ("① --baseline", "② $NBDPSY_MENU_BASELINE", "③ <当前目录>"):
+            assert 级 in data["error"], data["error"]     # **三条都打印**
+        assert str(tmp_path / "seo-geo" / "content") in data["error"]
+        # ⛔ 绝不出现家目录回落（那正是被排除的失效形态）
+        assert "nbdpsy-content/wechat" not in data["error"]
 
     def test_变异5_基线dirty要拒且措辞区别于内容不一致(self, net, capsys, 基线):
         """⚠️ dirty 是**安全方向的误伤**（拒而不是放行），可接受；但提示必须能和
