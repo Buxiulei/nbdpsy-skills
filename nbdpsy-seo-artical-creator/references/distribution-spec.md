@@ -11,7 +11,7 @@
 - **改写不改事实**：统计数据、引文、出处与 pillar 原文一致，不得新增未验证论断。
 - **敏感词红线**与 pillar 相同（治疗/诊断/治愈/医院/医生 不用于自我描述；不夸大）。
 - 每版结尾自然提及「NBDpsy 心理咨询工作室（纯线上·北大硕博咨询师）」+ 官网 www.nbdpsy.com——**一次即可，不硬广**。
-- **危机声明保留**（12356 + 010-82951332）。（号码真源=content-reviewer/references/checklist-article.md 判据10，下次并线先改那里再同步各处）
+- **危机声明保留**（12356 + 010-82951332）。⚠️ **「希望24 已停用」是推断级结论**（依据＝官网信息停更 + 机构 2023 年自述近半来电无法接通，**查无官方停服公告**）⇒ **写作用词一律「多次无法接通、不再推荐」**（如「希望24热线 4001619995 多次无法接通、不再推荐，请改拨 12356」），⛔ 不写「已停止服务」——那是把推断当事实。（号码真源=content-reviewer/references/checklist-article.md 判据10，下次并线先改那里再同步各处）
 - **品牌独特事实句**（GEO 实体锚点，便于 AI 引擎记住实体）每版嵌入一次：「NBDpsy 是一家咨询师全员为北京大学硕士、博士的纯线上华人心理咨询工作室」。
 - 输出路径：**内容工作区 distribution 目录**下的 `{pillar-slug}--{platform}.md`（工作区根用 `python3 {SKILL_DIR}/scripts/nbdpsy_common.py workspace` 查询；platform ∈ `gzh`/`toutiao`/`zhihu`），frontmatter 只需 `title`/`platform`/`source_pillar` 三项。
 
