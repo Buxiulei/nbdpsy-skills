@@ -440,15 +440,28 @@ python3 ART --publish --media-id <上一步的 media_id> --approval <件号>-<�
 
 ## 菜单装修（独立线）
 
-**本地 JSON 文件是编辑真源**，改文件 → apply，别在公众平台后台和这里两头改。
+🔴 **归属（2026-09-02 裁定，⛔ 别按旧说法「本地 JSON 是编辑真源」办事）**：
+**线上菜单本体归服务号线，在公众号后台手改**；本 skill 只持一份**只读快照**当恢复基线。
+⇒ `--apply` / `--delete` **只在老板或服务号线明令时才用**，⛔ 越界改线上菜单。
+🔴 **两条都要批复坐标**（2026-09-02 起）：`--delete` 对个性化菜单**硬不可逆**，
+`--apply` 是**条件可逆**（仅当事先存了基线）。只读预检与 `--get` ⛔ 不需要坐标。
+
+基线快照（受版本控制，私有仓 `Buxiulei/NBDpsy`）：`seo-geo/content/wechat/menu-baseline.json`
+——**稳定文件名**，更新即覆盖，捕获时间看 git 历史（⛔ 别往文件里加元数据键）。
 
 ```bash
-python3 MENU --get > {workspace}/wechat/menu.json    # 先拉线上现状当基线（stdout 就是可直接编辑的菜单）
-# 编辑 menu.json
-python3 MENU --apply {workspace}/wechat/menu.json              # 只打 diff，不改线上
-python3 MENU --apply {workspace}/wechat/menu.json --confirm    # diff 念给运营确认后才真改
-python3 MENU --delete --confirm   # 删除整个自定义菜单（慎用，粉丝立刻看不到入口；不带 --confirm 只打警示）
+python3 MENU --get > seo-geo/content/wechat/menu-baseline.json   # 拉线上全量存快照（只读）
+python3 MENU --apply seo-geo/content/wechat/menu-baseline.json   # 只打 diff，不改线上
+python3 MENU --apply <文件> --confirm --approval <件号>-<选项键>   # 真改，需批复坐标
+python3 MENU --delete --confirm --approval <件号>-<选项键>        # 真删，需批复坐标（不带 --confirm 只打警示）
 ```
+
+⚠️ **`{workspace}` 在两个上下文下指向两个地方**：`resolve_workspace()` 先看
+`$NBDPSY_WORKSPACE`、再看 `$PWD/seo-geo/content` 是否存在，都没有才回落 `~/nbdpsy-content`。
+⇒ **在 NBDpsy 仓根运行时才落 `seo-geo/content/`，那才是基线真源**；在别处跑会解到
+`~/nbdpsy-content`，那里没有基线。查「基线在不在」必须说清**在哪个 workspace 下查的**。
+⚠️ 快照里的 `conditionalmenu`（个性化菜单）**本 skill 恢复不了**（没有 `menu/addconditional`
+能力），只能照着快照去公众号后台**手工重挂**——⛔ 别把 apply 完当成「全都恢复了」。
 
 - **apply 是整体覆盖**：线上菜单被这份文件完全替换，文件里没写的入口就没了。所以基线一定要从
   `--get` 拉，别手搓一份只写新增项的文件。

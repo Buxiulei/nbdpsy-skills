@@ -1,15 +1,40 @@
 #!/usr/bin/env python3
 """服务号自定义菜单：查线上现状 / 应用本地 JSON / 删除整个菜单。
 
-**本地 JSON 文件是编辑真源**：先 `--get` 把线上现状拉成基线文件，改文件，再 `--apply`。
-别在公众平台后台和这里两头改——apply 是**整体覆盖**，后台那边加的入口会被这份文件顶掉。
+🔴 **归属（2026-09-02 裁定，⛔ 别按旧说法「本地 JSON 是编辑真源」办事）**：
+**线上菜单本体归服务号线，在公众号后台手改**；本 skill 只持一份**只读快照**当恢复基线。
+⇒ `--apply` / `--delete` **只在老板或服务号线明令时才用**，⛔ 越界改线上菜单。
+日常「菜单该长什么样」不在这里决定——这里只负责「删坏了能照着快照恢复」。
+
+基线快照（受版本控制，私有仓 Buxiulei/NBDpsy）:
+    seo-geo/content/wechat/menu-baseline.json      ← **稳定文件名**，更新即覆盖
+⚠️ **稳定名⛔不带日期**：带日期的名字会让闸门每次先猜「最新的是哪个日期」；
+   捕获时间写在**提交说明**里，⛔ 不往文件里加元数据键（加键会破坏 `--apply` 的输入契约）。
+⚠️ 快照里的 `conditionalmenu`（个性化菜单）**本 skill 恢复不了**，只能照着去后台手工重挂。
+
+🔴 **「约定路径」在两个上下文下指向两个地方——`{workspace}` 不是一个固定值**：
+`nbdpsy_common.resolve_workspace()` 先看 `$NBDPSY_WORKSPACE`，再看 `$PWD/seo-geo/content`
+是否存在，都没有才回落 `~/nbdpsy-content`。
+⇒ **在 NBDpsy 仓根运行时 workspace 落 `seo-geo/content/`，那才是基线真源**；
+   在别处运行会解到 `~/nbdpsy-content`，那里**没有**基线。
+🩸 2026-09-02 实证：正因为这两个上下文，「基线文件不存在」与「基线文件在那儿」**同时为真**——
+   `~/nbdpsy-content/wechat/` 下确实没有，而仓内 `seo-geo/content/wechat/menu.json`
+   躺着一份 **2026-08-04 的残缺快照**（只含默认菜单、无 `conditionalmenu`、不含日报入口）。
+   那份**比没有更危险**（照它恢复只回来一半，人却以为已按基线恢复过），已于 2026-09-02 删除。
+   ⇒ 查「基线在不在」必须**说清在哪个 workspace 下查的**，⛔ 只报「没找到」。
+
+📌 **快照入库前要扫的字段名**（这是本快照的敏感串清单，⛔ 不是凭据泄漏判据）:
+    access_token / appsecret / secret / password / bearer / private_key —— 出现即⛔不入库；
+    **appid** —— **不是密钥**（它要配上 AppSecret 才可用，本仓另有 9 个文件含它），
+    列在这里是为了让清单**完整**，⛔ 别据此写成「appid 是密钥」去做判断。
+⚠️ 扫完要跑一次**正对照**（拿必然含敏感串的样本打同一条正则），否则「零命中」可能只是正则瞎了。
 
 用法:
-    python3 menu_ops.py --get > {workspace}/wechat/menu.json     # 拉线上现状当基线
-    python3 menu_ops.py --apply {workspace}/wechat/menu.json     # 只打 diff，不改线上（安全闸门）
-    python3 menu_ops.py --apply {workspace}/wechat/menu.json --confirm   # 念完 diff、运营确认后才真改
+    python3 menu_ops.py --get > <基线路径>            # 拉线上全量现状存快照（只读，随时可跑）
+    python3 menu_ops.py --apply <基线路径>            # 只打 diff，不改线上（安全闸门）
+    python3 menu_ops.py --apply <基线路径> --confirm --approval <件号>-<选项键>   # 真改，需批复坐标
     python3 menu_ops.py --delete            # 只打警示，不删（安全闸门）
-    python3 menu_ops.py --delete --confirm  # 真删整个自定义菜单
+    python3 menu_ops.py --delete --confirm --approval <件号>-<选项键>  # 真删，需批复坐标
 
 输出（stdout 纯 JSON；人话提示与 diff 走 stderr，不污染管道）:
     --get           线上菜单结构本身 `{"button": [...]}`——**可以直接改完拿去 --apply**。
@@ -287,7 +312,10 @@ def do_apply(args, api_base, key):
 
     # 🔴 装修菜单升级为坐标制（2026-09-02 裁定）。理由是**原来的「不纳入」依赖一个空的前提**：
     # 当时判它「可逆」——菜单改错重新 apply 一份 menu.json 就行。实查那份基线文件
-    # 当时**根本不存在**、不受版本控制、且全靠人记得先 `--get`，所谓可逆在现实中是空的。
+    # 当时在 `~/nbdpsy-content` 那个 workspace 下**不存在**，而仓内约定路径上躺着的是一份
+    # **2026-08-04 的残缺快照**（只含默认菜单、无 conditionalmenu）——照它恢复只回来一半，
+    # 比没有更糟；两者都不受版本控制、且全靠人记得先 `--get`，所谓可逆在现实中是空的。
+    # （该残缺快照已于 2026-09-02 删除，基线改为受版本控制的 menu-baseline.json。）
     # ⚠️ 口径是**条件可逆**⛔不是不可逆：apply 覆盖掉的默认菜单，**只要事先存了基线**就建得回来
     #    （与 --delete 对个性化菜单的硬不可逆不是一回事）——但那个条件恰恰是当时没人满足的那个，
     #    所以按「条件成立才可逆」管，⛔ 不按「可逆」免管。
