@@ -170,9 +170,15 @@ def fetch_menu(api_base, key, timeout):
     data = wechat_api.proxy_call(api_base, key, "/cgi-bin/menu/get", {}, timeout)
     menu = data.get("menu") if isinstance(data.get("menu"), dict) else {}
     note = None
-    if data.get("conditionalmenu"):
-        note = ("这个服务号还配了**个性化菜单**（conditionalmenu）：本 skill 第一版不管它，"
-                "apply 只覆盖默认菜单，个性化菜单原样留着。")
+    cond = data.get("conditionalmenu")
+    if cond:
+        # 🔑 量具的盲区正好落在恢复不了的那部分上：`--get` 出来的文件看着像「完整基线」，
+        #    实际只有默认菜单。这里把条数说出来，让人在拿它当回滚基线之前就知道少了什么。
+        n = len(cond) if isinstance(cond, list) else "?"
+        note = (f"这个服务号还配了 **{n} 条个性化菜单**（conditionalmenu）：本 skill 第一版不管它，"
+                f"apply 只覆盖默认菜单，个性化菜单原样留着。⚠ 但 `--get` 存下来的 menu.json "
+                f"**不含**这 {n} 条——它**不是完整基线**，而 `--delete` 会把它们一起删掉，"
+                "删掉后本 skill 重建不了（没有 menu/addconditional 调用）。")
     return menu.get("button") or [], note
 
 
@@ -272,13 +278,18 @@ def do_delete(args, api_base, key):
         wechat_api.warn("⚠ 这次**没有删除任何东西**（缺 --confirm）。删除的代价：")
         wechat_api.warn(f"  · 粉丝**立刻**看不到底部入口（现有一级菜单："
                         f"{' | '.join(current) or '拉不到/无'}）。")
-        wechat_api.warn("  · 想恢复只能重新 apply 一份 menu.json——**先把现状 `--get` 存下来再删**。")
+        wechat_api.warn("  · menu/delete 会把**默认菜单和全部个性化菜单**一起删掉（微信 API 语义如此）。")
+        wechat_api.warn("  · 🔴 **恢复得了的只有默认菜单那一半**：`--get` 存的 menu.json 只含默认菜单，"
+                        "重新 --apply 也只建得回它；**个性化菜单不在那份文件里，本 skill 也建不回来**"
+                        "（没有 menu/addconditional 调用），删掉后只能去公众平台后台、"
+                        "或另行调 `/cgi-bin/menu/addconditional` 重挂。")
         if note:
             wechat_api.warn(f"  · {note}")
         return {"outcome": "failed",
                 "error": "未带 --confirm：本次**没有删除**自定义菜单（这是安全闸门，不是故障）。",
                 "current_top_level": current, "baseline_note": note,
-                "hint": "先 `--get > menu.json` 把现状存下来当回滚基线，把上面的代价讲给运营，"
+                "hint": "先 `--get > menu.json` 把现状存下来当回滚基线（⚠ 它**只兜得住默认菜单**，"
+                        "个性化菜单不在里面、本 skill 也重建不了），把上面的代价讲给运营，"
                         "确认后加 --confirm 重跑。"}, 1
 
     wechat_api.warn("⚠ menu/delete 会把**默认菜单和全部个性化菜单**一起删掉（微信 API 语义如此）——本号挂着按标签定向的内部菜单（如老板的「今日日报」钮），删完要去后台/API 重挂。三思。")
@@ -286,7 +297,9 @@ def do_delete(args, api_base, key):
                           args.timeout, irreversible=True)
     return {"outcome": "done", "deleted_top_level": current,
             "hint": f"自定义菜单已删除，粉丝端受 24 小时缓存影响可能还看得到残影。{CACHE_NOTE}"
-                    "要恢复请把之前 `--get` 存的 menu.json 重新 --apply。"}, 0
+                    "恢复：把之前 `--get` 存的 menu.json 重新 --apply，**只恢复得了默认菜单**；"
+                    "个性化菜单不在那份文件里、本 skill 也没有重建能力，"
+                    "要去公众平台后台或另行调 `/cgi-bin/menu/addconditional` 重挂。"}, 0
 
 
 def main(argv=None):
