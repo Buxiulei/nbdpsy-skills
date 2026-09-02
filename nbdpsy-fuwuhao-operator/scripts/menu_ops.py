@@ -162,53 +162,63 @@ def menu_diff(old, new):
 
 
 def fetch_menu(api_base, key, timeout):
-    """取线上菜单，返回 (buttons | None, note)。
+    """取线上菜单，返回 (buttons | None, conditional, note)。
 
     46003（没建过自定义菜单）**不是故障**——第一次装修菜单本来就没有基线，返回 None。
     其余错误照常抛（拿不到基线时 apply 仍可继续，但 diff 会缺席，见 do_apply）。
+
+    🔴 **conditionalmenu 必须一并返回**（2026-09-02 裁定）。原先这里只取 `menu.button`、
+    把个性化菜单打一句提示就丢掉——**量具结构性地看不到它要量的那个东西**：
+    `--delete` 恰恰会把个性化菜单一起删掉，而本 skill 没有重建能力，
+    于是「唯一的基线」偏偏漏掉「唯一恢复不了的部分」。⛔ 别再把它丢了。
     """
     data = wechat_api.proxy_call(api_base, key, "/cgi-bin/menu/get", {}, timeout)
     menu = data.get("menu") if isinstance(data.get("menu"), dict) else {}
-    note = None
     cond = data.get("conditionalmenu")
+    cond = cond if isinstance(cond, list) else []
+    note = None
     if cond:
-        # 🔑 量具的盲区正好落在恢复不了的那部分上：`--get` 出来的文件看着像「完整基线」，
-        #    实际只有默认菜单。这里把条数说出来，让人在拿它当回滚基线之前就知道少了什么。
-        n = len(cond) if isinstance(cond, list) else "?"
-        note = (f"这个服务号还配了 **{n} 条个性化菜单**（conditionalmenu）：本 skill 第一版不管它，"
-                f"apply 只覆盖默认菜单，个性化菜单原样留着。⚠ 但 `--get` 存下来的 menu.json "
-                f"**不含**这 {n} 条——它**不是完整基线**，而 `--delete` 会把它们一起删掉，"
-                "删掉后本 skill 重建不了（没有 menu/addconditional 调用）。")
-    return menu.get("button") or [], note
+        note = (f"这个服务号还配了 **{len(cond)} 条个性化菜单**（conditionalmenu）：它们已经一并存进"
+                "本次 `--get` 的输出里（`conditionalmenu` 字段），⛔ 但 `--apply` **不会**把它们建回去"
+                "（本 skill 没有 menu/addconditional 能力）——那份文件对它们只是**存档**，不是回滚手段。"
+                "⚠ `--delete` 会把它们连同默认菜单一起删掉，删掉后只能去公众平台后台重挂。")
+    return menu.get("button") or [], cond, note
 
 
 def _fetch_menu_tolerant(api_base, key, timeout):
     """apply/delete 前拿基线：拿不到也不该挡住动作，降级成「没有 diff」并说清原因。"""
     try:
-        buttons, note = fetch_menu(api_base, key, timeout)
-        return buttons, note
+        buttons, cond, note = fetch_menu(api_base, key, timeout)
+        return buttons, cond, note
     except OpFailed as e:
         if e.extra.get("wechat_errcode") == NO_MENU_ERRCODE:
-            return None, "线上目前没有通过 API 建的自定义菜单（46003），本次是从零建一份。"
-        return None, f"没能拉到线上现状（{e.error}），**本次给不出 diff**——请人工核对文件内容再决定。"
+            return None, [], "线上目前没有通过 API 建的自定义菜单（46003），本次是从零建一份。"
+        return None, [], f"没能拉到线上现状（{e.error}），**本次给不出 diff**——请人工核对文件内容再决定。"
 
 
 def do_get(args, api_base, key):
     try:
-        buttons, note = fetch_menu(api_base, key, args.timeout)
+        buttons, cond, note = fetch_menu(api_base, key, args.timeout)
     except OpFailed as e:
         if e.extra.get("wechat_errcode") != NO_MENU_ERRCODE:
             raise
-        buttons, note = [], None
+        buttons, cond, note = [], [], None
         wechat_api.warn("⚠ 线上还没有通过 API 建的自定义菜单（46003）。已给你一份空骨架，"
                         "填好 button 再 --apply 即可建立。")
         wechat_api.warn("⚠ 若运营在公众平台后台手动配过菜单：那套和 API 这套口径不同，"
                         "menu/get 查不到它，而 apply 会**整体覆盖**掉它——动手前先跟运营确认。")
     if note:
         wechat_api.warn(f"⚠ {note}")
-    wechat_api.warn(f"提示：这份 JSON 改完可以直接 `--apply` 回去。{CACHE_NOTE}")
-    # stdout 只放菜单结构本身：`--get > menu.json` 出来的文件要能直接编辑再 apply
-    return {"button": buttons}, 0
+    wechat_api.warn(f"提示：这份 JSON 改完可以直接 `--apply` 回去（`--apply` 只读 `button`，"
+                    f"`conditionalmenu` 是存档字段、会被原样忽略）。{CACHE_NOTE}")
+    # stdout 只放菜单结构本身：`--get > menu.json` 出来的文件要能直接编辑再 apply。
+    # 🔴 `conditionalmenu` 是**新增的兄弟字段**（2026-09-02），⛔ 不是改形状：
+    #    `load_menu_file` 取的一直是 `button`，所以旧文件喂新代码、新文件喂旧消费者都照常。
+    #    没有个性化菜单时不写这个键，免得给人「这里本来该有东西」的错觉。
+    out = {"button": buttons}
+    if cond:
+        out["conditionalmenu"] = cond
+    return out, 0
 
 
 def load_menu_file(path):
@@ -232,13 +242,21 @@ def load_menu_file(path):
     if buttons is None:
         raise OpFailed(f"{p} 里没有 `button` 字段——菜单文件的形状是 "
                        '`{"button": [ {...}, {...} ]}`。')
+    # 🔴 文件里带着 conditionalmenu 存档时必须说破：apply 只建默认菜单，
+    #    ⛔ 别让人以为「把基线 apply 回去 = 全都恢复了」——个性化菜单本 skill 建不回来。
+    cond = data.get("conditionalmenu") if isinstance(data, dict) else None
+    if cond:
+        n = len(cond) if isinstance(cond, list) else "?"
+        wechat_api.warn(f"⚠ {p.name} 里存了 **{n} 条个性化菜单**（conditionalmenu），"
+                        "本次 `--apply` **不会**建它们——本 skill 没有 menu/addconditional 能力。"
+                        "那几条要靠人去公众平台后台重挂，⛔ 别把 apply 完当成「全都恢复了」。")
     return buttons
 
 
 def do_apply(args, api_base, key):
     buttons = load_menu_file(args.apply)
     warnings = validate(buttons)                       # 硬约束不过：一个请求都不发
-    old, note = _fetch_menu_tolerant(api_base, key, args.timeout)
+    old, _cond, note = _fetch_menu_tolerant(api_base, key, args.timeout)
     diff = menu_diff(old, buttons) if old is not None else None
 
     if not args.confirm:
@@ -259,47 +277,76 @@ def do_apply(args, api_base, key):
                 "error": "未带 --confirm：本次只算了 diff，**没有改线上菜单**"
                          "（这是安全闸门，不是故障）。",
                 "diff": diff, "warnings": warnings, "baseline_note": note,
-                "hint": f"把上面的 diff 逐条念给运营，确认后加 --confirm 重跑同一条命令。{CACHE_NOTE}"}, 1
+                "hint": "把上面的 diff 逐条念给运营，确认后加 `--confirm` "
+                        "**和 `--approval <件号>-<选项键>`** 重跑同一条命令"
+                        f"（🔴 装修菜单自 2026-09-02 起为坐标制，理由见下方 require_approval 处注释）。"
+                        f"{CACHE_NOTE}"}, 1
 
     if diff is not None and not diff["changed"]:
         wechat_api.warn("⚠ 这份文件与线上现状没有差异，仍会照常提交一次（menu/create 是整体覆盖，幂等）。")
+
+    # 🔴 装修菜单升级为坐标制（2026-09-02 裁定）。理由是**原来的「不纳入」依赖一个空的前提**：
+    # 当时判它「可逆」——菜单改错重新 apply 一份 menu.json 就行。实查那份基线文件
+    # 当时**根本不存在**、不受版本控制、且全靠人记得先 `--get`，所谓可逆在现实中是空的。
+    # ⚠️ 口径是**条件可逆**⛔不是不可逆：apply 覆盖掉的默认菜单，**只要事先存了基线**就建得回来
+    #    （与 --delete 对个性化菜单的硬不可逆不是一回事）——但那个条件恰恰是当时没人满足的那个，
+    #    所以按「条件成立才可逆」管，⛔ 不按「可逆」免管。
+    # ⚠️ 触发点刻意放在 --confirm **之后**（与 article_ops.do_mass_send 逐字对齐）：
+    #    不带 --confirm 那条路只算 diff、是只读预检，⛔ 不该被坐标拦住
+    #    ——拦了会逼人为了「看一眼菜单现在长什么样」也去要批复，闸门强度与危害脱钩。
+    # 🔑 守备范围与发布/群发同：坐标只是**原样记下**，脚本⛔ 不核实那个件真批没批。
+    approval = wechat_api.require_approval(
+        args.approval, "装修菜单（apply 整体覆盖默认菜单，条件可逆：仅当事先存了基线）")
     wechat_api.proxy_call(api_base, key, "/cgi-bin/menu/create", {"button": buttons},
                           args.timeout, irreversible=True)
     return {"outcome": "done", "applied_top_level": [b.get("name") for b in buttons],
             "diff": diff, "warnings": warnings, "baseline_note": note,
+            "approval": approval,
             "hint": CACHE_NOTE}, 0
 
 
 def do_delete(args, api_base, key):
-    old, note = _fetch_menu_tolerant(api_base, key, args.timeout)
+    old, cond, note = _fetch_menu_tolerant(api_base, key, args.timeout)
     current = [b.get("name") for b in old] if old else []
 
     if not args.confirm:
         wechat_api.warn("⚠ 这次**没有删除任何东西**（缺 --confirm）。删除的代价：")
         wechat_api.warn(f"  · 粉丝**立刻**看不到底部入口（现有一级菜单："
                         f"{' | '.join(current) or '拉不到/无'}）。")
-        wechat_api.warn("  · menu/delete 会把**默认菜单和全部个性化菜单**一起删掉（微信 API 语义如此）。")
-        wechat_api.warn("  · 🔴 **恢复得了的只有默认菜单那一半**：`--get` 存的 menu.json 只含默认菜单，"
-                        "重新 --apply 也只建得回它；**个性化菜单不在那份文件里，本 skill 也建不回来**"
-                        "（没有 menu/addconditional 调用），删掉后只能去公众平台后台、"
-                        "或另行调 `/cgi-bin/menu/addconditional` 重挂。")
+        wechat_api.warn("  · menu/delete 会把**默认菜单和全部个性化菜单**一起删掉（微信 API 语义如此）"
+                        f"——本号现有 **{len(cond)} 条个性化菜单**会一起没。")
+        wechat_api.warn("  · 🔴 **恢复得了的只有默认菜单那一半**：`--get` 存的基线虽然**存下了**"
+                        "个性化菜单（conditionalmenu 字段），但 `--apply` **建不回它们**"
+                        "（本 skill 没有 menu/addconditional 能力）——那份存档只够人照着"
+                        "去公众平台后台**手工重挂**，⛔ 不是一条命令能还原的回滚。")
         if note:
             wechat_api.warn(f"  · {note}")
         return {"outcome": "failed",
                 "error": "未带 --confirm：本次**没有删除**自定义菜单（这是安全闸门，不是故障）。",
-                "current_top_level": current, "baseline_note": note,
-                "hint": "先 `--get > menu.json` 把现状存下来当回滚基线（⚠ 它**只兜得住默认菜单**，"
-                        "个性化菜单不在里面、本 skill 也重建不了），把上面的代价讲给运营，"
-                        "确认后加 --confirm 重跑。"}, 1
+                "current_top_level": current, "conditionalmenu_count": len(cond),
+                "baseline_note": note,
+                "hint": "先 `--get > menu.json` 把现状存下来当回滚基线（⚠ 它**只兜得住默认菜单**："
+                        "个性化菜单虽在文件里，却只能靠人去后台照着重挂），把上面的代价讲给运营，"
+                        "确认后加 `--confirm` **和 `--approval <件号>-<选项键>`** 重跑"
+                        "（🔴 删除菜单自 2026-09-02 起为坐标制）。"}, 1
 
     wechat_api.warn("⚠ menu/delete 会把**默认菜单和全部个性化菜单**一起删掉（微信 API 语义如此）——本号挂着按标签定向的内部菜单（如老板的「今日日报」钮），删完要去后台/API 重挂。三思。")
+    # 🔴 删除菜单升级为坐标制（2026-09-02 裁定），与群发同类：**对个性化菜单是硬不可逆**——
+    # 微信语义是默认菜单与全部个性化菜单一起删，而本 skill 没有 menu/addconditional 能力，
+    # 删掉的个性化菜单**没有任何一条命令能还原**（其中就有老板续通知窗口的入口）。
+    # ⚠️ 与 --apply 的「条件可逆」分档：那边只要事先存了基线就建得回默认菜单；这边不行。
+    # ⚠️ 触发点同样放在 --confirm **之后**：不带 --confirm 那条路只读现状打警示，⛔ 不该被坐标拦。
+    # 🔑 守备范围与发布/群发同：坐标只是**原样记下**，脚本⛔ 不核实那个件真批没批。
+    approval = wechat_api.require_approval(
+        args.approval, "删除菜单（连带删除全部个性化菜单，对它们硬不可逆）")
     wechat_api.proxy_call(api_base, key, "/cgi-bin/menu/delete", {},
                           args.timeout, irreversible=True)
     return {"outcome": "done", "deleted_top_level": current,
+            "deleted_conditionalmenu_count": len(cond), "approval": approval,
             "hint": f"自定义菜单已删除，粉丝端受 24 小时缓存影响可能还看得到残影。{CACHE_NOTE}"
-                    "恢复：把之前 `--get` 存的 menu.json 重新 --apply，**只恢复得了默认菜单**；"
-                    "个性化菜单不在那份文件里、本 skill 也没有重建能力，"
-                    "要去公众平台后台或另行调 `/cgi-bin/menu/addconditional` 重挂。"}, 0
+                    "恢复：把之前 `--get` 存的基线重新 --apply，**只恢复得了默认菜单**；"
+                    "个性化菜单即使存在那份文件里，本 skill 也没有重建能力，"
+                    "只能照着存档去公众平台后台手工重挂（或另行调 `/cgi-bin/menu/addconditional`）。"}, 0
 
 
 def main(argv=None):
@@ -309,21 +356,29 @@ def main(argv=None):
     ap.add_argument("--delete", action="store_true", help="删除整个自定义菜单（粉丝立刻看不到入口）")
     ap.add_argument("--confirm", action="store_true",
                     help="真正执行 --apply / --delete；不带它只打 diff/警示，不碰线上")
+    ap.add_argument("--approval", metavar="件号-选项",
+                    help="装修/删除菜单的批复坐标（老板台件号 + option_key，如 <件号>-A）。"
+                         "--delete 对个性化菜单硬不可逆、--apply 仅在事先存了基线时可逆，"
+                         "缺此参数一律 failed exit 1 且一个写请求都不发")
     ap.add_argument("--api-base", dest="api_base", help="覆盖服务基址（默认走凭据/内置默认）")
     ap.add_argument("--timeout", type=float, default=wechat_api.DEFAULT_TIMEOUT, help="单次请求超时秒数")
     args = ap.parse_args(argv)
 
-    chosen = [f for f in (args.get, bool(args.apply), args.delete) if f]
+    # `actions` 分发表：与 article_ops / schedule_ops 逐字同形。
+    # 🔑 换成这个写法**不是为了迁就判据**，而是本仓「命令 → 处理函数」的既有唯一映射形状：
+    #    `tests/test_guide_approval_sync.py` 靠它把带坐标闸门的处理函数翻回运营敲的命令。
+    #    原先这里是 if/return 链，判据看不见 ⇒ menu_ops 只能挂在豁免名单里；
+    #    现在它有闸门了，必须能被判据看见（行为与原来的三选一完全一致）。
+    actions = [
+        (args.get, do_get), (args.apply, do_apply), (args.delete, do_delete),
+    ]
+    chosen = [fn for flag, fn in actions if flag]
     if len(chosen) != 1:
         ap.error("三选一：--get / --apply <menu.json> / --delete")
 
     def action():
         api_base, key = wechat_api.credentials(args.api_base)
-        if args.get:
-            return do_get(args, api_base, key)
-        if args.apply:
-            return do_apply(args, api_base, key)
-        return do_delete(args, api_base, key)
+        return chosen[0](args, api_base, key)
 
     return wechat_api.run(action)
 

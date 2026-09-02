@@ -401,11 +401,14 @@ class Test菜单CLI:
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
                   FakeResp(200, {"success": True, "data": {"errcode": 0, "errmsg": "ok"}}))
-        code, data, _ = run_cli(M, ["--apply", _menu_file(tmp_path, new), "--confirm"], capsys)
+        code, data, _ = run_cli(
+            M, ["--apply", _menu_file(tmp_path, new), "--confirm", "--approval", "T999-A"], capsys)
         assert code == 0 and data["outcome"] == "done"
         assert net.paths() == ["/cgi-bin/menu/get", "/cgi-bin/menu/create"]
         assert net.calls[-1]["body"]["body"] == {"button": new}
         assert "24 小时" in data["hint"]
+        # 坐标原样进回执备查（菜单走 proxy 透传，⛔ 进不了微信那侧的请求体）
+        assert data["approval"] == "T999-A"
 
     def test_apply硬约束不过时连现状都不去读(self, net, tmp_path, capsys):
         bad = [{"name": f"菜单{i}", "type": "click", "key": "k"} for i in range(4)]
@@ -416,7 +419,8 @@ class Test菜单CLI:
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(502, {"success": False, "error": "微信不可达"}),
                   FakeResp(200, {"success": True, "data": {"errcode": 0}}))
-        code, data, _ = run_cli(M, ["--apply", _menu_file(tmp_path, new), "--confirm"], capsys)
+        code, data, _ = run_cli(
+            M, ["--apply", _menu_file(tmp_path, new), "--confirm", "--approval", "T999-A"], capsys)
         assert code == 0 and data["diff"] is None and "没能拉到线上现状" in data["baseline_note"]
 
     def test_apply的文件是上次的失败回执时说人话(self, net, tmp_path, capsys):
@@ -436,9 +440,38 @@ class Test菜单CLI:
     def test_delete带confirm才真删(self, net, capsys):
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
                   FakeResp(200, {"success": True, "data": {"errcode": 0}}))
-        code, data, _ = run_cli(M, ["--delete", "--confirm"], capsys)
+        code, data, _ = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
         assert code == 0 and data["outcome"] == "done"
         assert net.paths() == ["/cgi-bin/menu/get", "/cgi-bin/menu/delete"]
+        assert data["approval"] == "T999-A"
+
+    # ── 菜单两条的坐标闸门（2026-09-02 纳入管制）─────────────────────────
+    # 🔑 与发布/群发不同：菜单的闸门**刻意放在只读预检之后**，所以这里的判据是
+    #    「**写**调用一次都没发」，⛔ 不是 `net.calls == []`——menu/get 本来就该照发。
+    def test_apply带confirm但缺坐标时不发create(self, net, tmp_path, capsys):
+        new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--apply", _menu_file(tmp_path, new), "--confirm"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/create" not in net.paths()
+        assert "一个请求都没发出" in data["error"]
+
+    def test_delete带confirm但缺坐标时不发delete(self, net, capsys):
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--delete", "--confirm"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/delete" not in net.paths()
+        assert "一个请求都没发出" in data["error"]
+
+    def test_菜单的只读预检不受坐标管制(self, net, tmp_path, capsys):
+        """⛔ 闸门强度要与危害对齐：不带 --confirm 只算 diff / 只打警示，
+        拦了会逼人为了「看一眼菜单现在长什么样」也去要批复。"""
+        new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--apply", _menu_file(tmp_path, new)], capsys)
+        assert code == 1 and "只算了 diff" in data["error"]     # 是预检退出，⛔ 不是被坐标拦
+        assert "一个请求都没发出" not in data["error"]
+        assert data["diff"]["lines"]                            # 真的算出了 diff
 
 
 # ══════════════ ③ 文章 ══════════════
