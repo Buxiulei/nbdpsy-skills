@@ -25,13 +25,52 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GUIDE = ROOT / "nbdpsy-guide" / "SKILL.md"
-SCRIPTS = {name: ROOT / "nbdpsy-fuwuhao-operator" / "scripts" / name
-           for name in ("article_ops.py", "schedule_ops.py")}
+SCRIPT_DIR = ROOT / "nbdpsy-fuwuhao-operator" / "scripts"
+
+# 🔴 **扫描范围是发现式的，⛔ 不是硬编码的文件名单**（2026-09-02 改）。
+# 原先这里写死 `("article_ops.py", "schedule_ops.py")`，那是个**结构性盲区**：
+# 将来任何新脚本都自动免检，而且**失效方向是绿**——新脚本里加了坐标闸，本判据看不见，
+# 于是 guide 不写也不会红。改成扫 `*_ops.py`，「哪些脚本在范围内」由目录说了算。
+#
+# 🔑 豁免必须**显式写下来 + 一行理由**，⛔ 不靠「名单里没有」默默略过：
+# 「新脚本没进名单」现在会红（见 `test_扫描范围是发现式的`），⛔ 不是静默绿。
+EXEMPT_SCRIPTS = {
+    "menu_ops.py":
+        "① 它没有 `actions` 分发表（`main()` 里是另一种写法），本判据「命令 → 处理函数」的"
+        "映射方式对它不适用；② 它那两个 `irreversible=True` 动作（`--apply` / `--delete`）"
+        "要不要纳入坐标制是**裁定问题⛔不是工程问题**——菜单改错可以重新 apply 一份 menu.json "
+        "恢复，与群发的不可逆不是一回事。2026-09-02 已上报，未裁前⛔不自行扩范围。"
+        "⚠️ 豁免的含义是「本判据不校验它」，⛔ 不是「它没有危险动作」。",
+}
 
 MARK_START = "受管制命令清单:start"
 MARK_END = "受管制命令清单:end"
-# guide 清单块里的命令写法：`article_ops.py --publish`（脚本名 + 空格 + 长选项，整体一个反引号块）
-CMD_RE = re.compile(r"`(article_ops\.py|schedule_ops\.py) (--[a-z][a-z0-9-]*)`")
+
+
+def _all_scripts() -> dict[str, Path]:
+    """目录里所有 `*_ops.py`（含豁免的）。豁免名单失效也在这里报。"""
+    found = {p.name: p for p in sorted(SCRIPT_DIR.glob("*_ops.py"))}
+    assert found, (
+        f"`{SCRIPT_DIR}` 下一个 `*_ops.py` 都没扫到 —— 判据失去代码侧真源，"
+        "⛔ 别把「扫不到」当成「没有受管制命令」（那是恒绿）。目录搬家了就改 `SCRIPT_DIR`。")
+    过期 = sorted(set(EXEMPT_SCRIPTS) - set(found))
+    assert not 过期, (
+        f"豁免名单里这些脚本已经不存在了：{过期}。"
+        "⛔ 别留着——过期的豁免会在同名文件将来出现时**静默生效**。")
+    return found
+
+
+def _scanned_scripts() -> dict[str, Path]:
+    """真正参与校验的脚本 = 发现到的 - 显式豁免的。"""
+    return {n: p for n, p in _all_scripts().items() if n not in EXEMPT_SCRIPTS}
+
+
+# guide 清单块里的命令写法：`article_ops.py --publish`（脚本名 + 空格 + 长选项，整体一个反引号块）。
+# 🔑 脚本名也是发现式的（**含豁免脚本**）：guide 若给一个豁免脚本列了命令，
+#    代码侧没有对应闸门 ⇒ 报「guide 写了、代码没管制」而红 —— 那正是「承诺一道不存在的闸门」。
+def _cmd_re() -> re.Pattern:
+    名 = "|".join(re.escape(n) for n in sorted(_all_scripts()))
+    return re.compile(rf"`({名}) (--[a-z][a-z0-9-]*)`")
 
 FIX_HINT = ("两侧都要动：代码侧是 `require_approval` 的调用点，guide 侧是 "
             f"`nbdpsy-guide/SKILL.md` 里 `{MARK_START}` / `{MARK_END}` 之间那个块。"
@@ -79,7 +118,7 @@ def _dispatch_table(tree) -> dict[str, str]:
 def gated_commands() -> set[str]:
     """代码侧真源：调用了 `require_approval` 的处理函数，翻回运营敲的命令。"""
     found: set[str] = set()
-    for name, path in SCRIPTS.items():
+    for name, path in _scanned_scripts().items():
         tree = ast.parse(path.read_text(encoding="utf-8"))
         top_funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
 
@@ -115,7 +154,7 @@ def guide_commands() -> set[str]:
             "清单块被删掉或被复制了 ⇒ 判据失去 guide 侧锚点，"
             "⛔ 这不是可以放过去的绿。" + FIX_HINT)
     block = text[text.index(MARK_START):text.index(MARK_END)]
-    return {f"{script} {flag}" for script, flag in CMD_RE.findall(block)}
+    return {f"{script} {flag}" for script, flag in _cmd_re().findall(block)}
 
 
 def test_guide受管制命令清单与代码的坐标闸门一致():
@@ -135,6 +174,33 @@ def test_guide受管制命令清单与代码的坐标闸门一致():
         detail.append(f"**guide 写了、代码没管制**：{extra}"
                       "（guide 在承诺一道并不存在的闸门——比没写更糟）")
     assert not detail, "；".join(detail) + "。" + FIX_HINT
+
+
+def test_扫描范围是发现式的且豁免必须仍然成立():
+    """🔴 守的是**扫描范围本身**，⛔ 不是范围内的内容。
+
+    原先 `SCRIPTS` 硬编码两个文件名 ⇒ 新脚本自动免检，**且失效方向是绿**
+    （新脚本里加了坐标闸，判据看不见，guide 不写也不会红）。改成发现式之后，
+    这条判据补上另一半：**豁免不许烂在那里**。
+
+    两个失效方向都要红：
+    ① 豁免的脚本**长出了坐标闸** ⇒ 它已经进入管制范围，豁免过期，必须退出豁免并写进 guide；
+    ② 豁免**没写理由** ⇒ 名单会退化成「随手加一行就免检」。
+    """
+    全部 = _all_scripts()
+    assert set(_scanned_scripts()) , "全部脚本都被豁免了 —— 判据恒绿，先看豁免名单是不是加过头了。"
+
+    for name, reason in EXEMPT_SCRIPTS.items():
+        assert reason and reason.strip(), (
+            f"豁免 `{name}` 没写理由。⛔ 不写理由的豁免等于「随手加一行就免检」，"
+            "下一个人无从判断它还成不成立。")
+        n = _count_calls(ast.parse(全部[name].read_text(encoding="utf-8")))
+        assert n == 0, (
+            f"`{name}` 在豁免名单里，却有 {n} 处 `require_approval` 调用 ⇒ **豁免已经过期**。"
+            "它已经进入坐标制范围，必须：① 从 `EXEMPT_SCRIPTS` 移除；"
+            "② 确认它的 `main()` 有 `actions` 分发表（本判据靠它把处理函数翻回命令）；"
+            "③ 把它的受管制命令写进 guide 清单块。"
+            "⛔ 别反过来把闸门去掉来让这条变绿。")
 
 
 def test_guide写明坐标不核实那个件真批没批():
