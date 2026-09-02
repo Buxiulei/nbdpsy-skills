@@ -453,8 +453,19 @@ python3 ART --publish --media-id <上一步的 media_id> --approval <件号>-<�
 python3 MENU --get > seo-geo/content/wechat/menu-baseline.json   # 拉线上全量存快照（只读）
 python3 MENU --apply seo-geo/content/wechat/menu-baseline.json   # 只打 diff，不改线上
 python3 MENU --apply <文件> --confirm --approval <件号>-<选项键>   # 真改，需批复坐标
+python3 MENU --apply <基线> --restore --confirm --approval <件号>-<选项键>   # 恢复（把线上覆盖回基线）
 python3 MENU --delete --confirm --approval <件号>-<选项键>        # 真删，需批复坐标（不带 --confirm 只打警示）
 ```
+
+🔴 **一致性闸门**：`--apply`（非恢复）与 `--delete` 执行前会把**线上全量**与**基线快照**
+逐字段比一遍，**不一致即拒**、点名是哪个字段，并给出两个方向的处置：
+**线上比基线新**（有人后台改过）⇒ 先 `--get` 更新基线并提交再来；
+**基线比线上新**（基线里有没上线的改动）⇒ 确认是要 apply 它（加 `--restore`）还是丢弃。
+⛔ 别不看方向就重拉基线——那会把线上的误改**固化进基线**。
+🔑 **恢复必须显式加 `--restore`**：拿基线文件直接 `--apply` 会被拒。脚本⛔ 不靠「文件是不是
+基线」猜意图——推断出来的意图会被**意外满足**（拿基线当新菜单 apply 一次就静默绕过闸门）。
+⚠️ `--restore` 跳过一致性检查（不一致正是要恢复的原因），但**坐标照常要**，且回执会说清
+**只恢复默认菜单**、个性化菜单不会被重建。
 
 ⚠️ **`{workspace}` 在两个上下文下指向两个地方**：`resolve_workspace()` 先看
 `$NBDPSY_WORKSPACE`、再看 `$PWD/seo-geo/content` 是否存在，都没有才回落 `~/nbdpsy-content`。

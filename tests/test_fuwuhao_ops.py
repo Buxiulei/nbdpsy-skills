@@ -266,6 +266,22 @@ def _menu_file(tmp_path, buttons):
     return str(p)
 
 
+@pytest.fixture
+def 基线(tmp_path, monkeypatch):
+    """给菜单一致性闸门一份**与 MENU_ONLINE 一致**的基线快照，并把 workspace 指过去。
+
+    ⚠️ 用 `$NBDPSY_WORKSPACE` 而不是改 `resolve_workspace()`：那个函数所有 skill 共用，
+    测试里也不该动它的逻辑——这里只是走它自己的第一优先级入口。
+    """
+    ws = tmp_path / "ws"
+    (ws / "wechat").mkdir(parents=True)
+    p = ws / "wechat" / "menu-baseline.json"
+    p.write_text(json.dumps({"button": MENU_ONLINE["menu"]["button"]}, ensure_ascii=False),
+                 encoding="utf-8")
+    monkeypatch.setenv("NBDPSY_WORKSPACE", str(ws))
+    return p
+
+
 class Test菜单校验:
     def test_超过三个一级菜单直接拒发不浪费一次调用(self):
         with pytest.raises(M.OpFailed) as e:
@@ -386,7 +402,7 @@ class Test菜单CLI:
         assert code == 0 and data == {"button": []}
         assert "46003" in err and "后台手动配过菜单" in err
 
-    def test_apply不带confirm只读现状不发create(self, net, tmp_path, capsys):
+    def test_apply不带confirm只读现状不发create(self, net, tmp_path, capsys, 基线):
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, err = run_cli(M, ["--apply", _menu_file(tmp_path, new)], capsys)
@@ -397,7 +413,7 @@ class Test菜单CLI:
         assert any("新增一级菜单「新入口」" in x for x in data["diff"]["lines"])
         assert "念给运营" in err and "整体覆盖" in err
 
-    def test_apply带confirm才真的发create(self, net, tmp_path, capsys):
+    def test_apply带confirm才真的发create(self, net, tmp_path, capsys, 基线):
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
                   FakeResp(200, {"success": True, "data": {"errcode": 0, "errmsg": "ok"}}))
@@ -415,13 +431,30 @@ class Test菜单CLI:
         code, data, _ = run_cli(M, ["--apply", _menu_file(tmp_path, bad)], capsys)
         assert code == 1 and data["outcome"] == "failed" and net.calls == []
 
-    def test_拿线上现状失败也不挡住apply但要说清没有diff(self, net, tmp_path, capsys):
+    def test_拿不到线上现状时不再放行apply而是拒(self, net, tmp_path, capsys, 基线):
+        """🔴 语义在 2026-09-02 反过来了：此前「拿不到现状也不挡住 apply，降级成没有 diff」。
+
+        加了一致性闸门之后那样不行——**核不了一致性就放行，等于「查不到」被当成「一致」**，
+        闸门的失效方向就成了绿。⇒ 现在一律拒，⛔ 一个写请求都不发。
+        """
+        new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
+        net.serve(FakeResp(502, {"success": False, "error": "微信不可达"}))
+        code, data, _ = run_cli(
+            M, ["--apply", _menu_file(tmp_path, new), "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "查不到" in data["error"] and "不等于" in data["error"]
+        assert "/cgi-bin/menu/create" not in net.paths()
+
+    def test_核不了一致性时restore仍是那条出路(self, net, tmp_path, capsys, 基线):
+        """恢复的场景常常正是「线上坏了/读不到」，⛔ 不能被一致性闸门堵死。"""
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(502, {"success": False, "error": "微信不可达"}),
                   FakeResp(200, {"success": True, "data": {"errcode": 0}}))
-        code, data, _ = run_cli(
-            M, ["--apply", _menu_file(tmp_path, new), "--confirm", "--approval", "T999-A"], capsys)
-        assert code == 0 and data["diff"] is None and "没能拉到线上现状" in data["baseline_note"]
+        code, data, err = run_cli(
+            M, ["--apply", _menu_file(tmp_path, new), "--restore",
+                "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 0 and data["outcome"] == "done"
+        assert "恢复操作" in err
 
     def test_apply的文件是上次的失败回执时说人话(self, net, tmp_path, capsys):
         p = tmp_path / "menu.json"
@@ -429,7 +462,7 @@ class Test菜单CLI:
         code, data, _ = run_cli(M, ["--apply", str(p)], capsys)
         assert code == 1 and "脚本回执" in data["error"] and net.calls == []
 
-    def test_delete不带confirm不删只警示(self, net, capsys):
+    def test_delete不带confirm不删只警示(self, net, capsys, 基线):
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, err = run_cli(M, ["--delete"], capsys)
         assert code == 1 and data["outcome"] == "failed"
@@ -437,7 +470,7 @@ class Test菜单CLI:
         assert data["current_top_level"] == ["找咨询师", "了解我们"]
         assert "回滚基线" in data["hint"] and "立刻" in err
 
-    def test_delete带confirm才真删(self, net, capsys):
+    def test_delete带confirm才真删(self, net, capsys, 基线):
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
                   FakeResp(200, {"success": True, "data": {"errcode": 0}}))
         code, data, _ = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
@@ -448,7 +481,7 @@ class Test菜单CLI:
     # ── 菜单两条的坐标闸门（2026-09-02 纳入管制）─────────────────────────
     # 🔑 与发布/群发不同：菜单的闸门**刻意放在只读预检之后**，所以这里的判据是
     #    「**写**调用一次都没发」，⛔ 不是 `net.calls == []`——menu/get 本来就该照发。
-    def test_apply带confirm但缺坐标时不发create(self, net, tmp_path, capsys):
+    def test_apply带confirm但缺坐标时不发create(self, net, tmp_path, capsys, 基线):
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, _ = run_cli(M, ["--apply", _menu_file(tmp_path, new), "--confirm"], capsys)
@@ -456,14 +489,72 @@ class Test菜单CLI:
         assert "/cgi-bin/menu/create" not in net.paths()
         assert "一个请求都没发出" in data["error"]
 
-    def test_delete带confirm但缺坐标时不发delete(self, net, capsys):
+    def test_delete带confirm但缺坐标时不发delete(self, net, capsys, 基线):
         net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
         code, data, _ = run_cli(M, ["--delete", "--confirm"], capsys)
         assert code == 1 and data["outcome"] == "failed"
         assert "/cgi-bin/menu/delete" not in net.paths()
         assert "一个请求都没发出" in data["error"]
 
-    def test_菜单的只读预检不受坐标管制(self, net, tmp_path, capsys):
+    # ── 一致性闸门的三条变异（裁定点名，两侧都跑）────────────────────────
+    # 🔑 每条都跑「不动 ⇒ 放行」与「动了 ⇒ 红」两侧：只跑「改了红」证明不了它不是**恒红**。
+    def test_变异1a_基线不改则放行(self, net, tmp_path, capsys, 基线):
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(M, ["--delete"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "drift" not in data                      # 没有被一致性闸拦，是被 --confirm 闸拦的
+        assert "安全闸门" in data["error"] and "没有删除" in data["error"]
+
+    def test_变异1b_基线改一个字段则闸红并点名那个字段(self, net, tmp_path, capsys, 基线):
+        改 = json.loads(基线.read_text(encoding="utf-8"))
+        改["button"][0]["sub_button"][1]["url"] = "https://a/CHANGED"
+        基线.write_text(json.dumps(改, ensure_ascii=False), encoding="utf-8")
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, err = run_cli(M, ["--delete", "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "/cgi-bin/menu/delete" not in net.paths()          # ⛔ 写调用一次都没发
+        名 = "button[0].sub_button[1].url"
+        assert any(名 in x for x in data["drift"]), data["drift"]  # **点名到字段**
+        assert "CHANGED" in "".join(data["drift"])
+        assert "线上比基线新" in data["hint"] and "基线比线上新" in data["hint"]  # 两个方向都给话
+
+    def test_变异2_基线文件直接apply不带restore要拒(self, net, capsys, 基线):
+        code, data, _ = run_cli(M, ["--apply", str(基线), "--confirm", "--approval", "T999-A"],
+                                capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "基线文件" in data["error"] and "--restore" in data["error"]
+        assert net.calls == []                          # 判文件身份在联网之前，一个请求都没发
+
+    def test_变异3_restore放行到坐标那一步且缺坐标仍被拦(self, net, capsys, 基线):
+        """放行 ⇒ 越过一致性闸；但坐标闸照旧 ⇒ 仍不发写请求。两件事分开验。"""
+        改 = json.loads(基线.read_text(encoding="utf-8"))
+        改["button"][0]["name"] = "改过的名字"           # 制造不一致：restore 就是要消除它
+        基线.write_text(json.dumps(改, ensure_ascii=False), encoding="utf-8")
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, err = run_cli(M, ["--apply", str(基线), "--restore", "--confirm"], capsys)
+        assert code == 1 and data["outcome"] == "failed"
+        assert "一个请求都没发出" in data["error"]        # 被**坐标**闸拦，⛔ 不是被一致性闸拦
+        assert "drift" not in data                       # ⇒ 确实越过了一致性闸
+        assert "恢复操作" in err
+
+    def test_restore的回执不许承诺它恢复不了的东西(self, net, tmp_path, capsys, 基线):
+        """🔴 恢复提示必须说「默认菜单」而不是「基线的内容」——个性化菜单本 skill 建不回来。
+
+        ⛔ 别在刚清完一批假承诺之后又造一句新的。
+        """
+        改 = json.loads(基线.read_text(encoding="utf-8"))
+        改["conditionalmenu"] = [{"matchrule": {"tag_id": "2"},
+                                  "button": [{"name": "日报", "type": "click", "key": "K"}]}]
+        基线.write_text(json.dumps(改, ensure_ascii=False), encoding="utf-8")
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}),
+                  FakeResp(200, {"success": True, "data": {"errcode": 0}}))
+        code, data, err = run_cli(
+            M, ["--apply", str(基线), "--restore", "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 0 and data["outcome"] == "done"
+        assert "默认菜单" in err
+        assert "1 条个性化菜单不会被重建" in err
+
+    def test_菜单的只读预检不受坐标管制(self, net, tmp_path, capsys, 基线):
         """⛔ 闸门强度要与危害对齐：不带 --confirm 只算 diff / 只打警示，
         拦了会逼人为了「看一眼菜单现在长什么样」也去要批复。"""
         new = [{"name": "新入口", "type": "view", "url": "https://a/x"}]

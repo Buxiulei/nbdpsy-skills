@@ -32,9 +32,19 @@
 用法:
     python3 menu_ops.py --get > <基线路径>            # 拉线上全量现状存快照（只读，随时可跑）
     python3 menu_ops.py --apply <基线路径>            # 只打 diff，不改线上（安全闸门）
-    python3 menu_ops.py --apply <基线路径> --confirm --approval <件号>-<选项键>   # 真改，需批复坐标
+    python3 menu_ops.py --apply <改过的文件> --confirm --approval <件号>-<选项键>   # 真改，需批复坐标
+    python3 menu_ops.py --apply <基线路径> --restore --confirm --approval <件号>-<选项键>  # 恢复
     python3 menu_ops.py --delete            # 只打警示，不删（安全闸门）
     python3 menu_ops.py --delete --confirm --approval <件号>-<选项键>  # 真删，需批复坐标
+
+🔴 **一致性闸门**（2026-09-02 裁定）：`--apply`（非恢复）与 `--delete` 执行前会把
+**线上全量**与**基线快照**逐字段比一遍，**不一致即拒**并点名是哪个字段、给出两个方向的处置。
+⇒ 它的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰最需要基线。
+🔑 **恢复走 `--restore`，⛔ 不靠「文件是不是基线」猜意图**：推断出来的意图**会被意外满足**
+   （有人拿基线当新菜单 apply 一次就静默进了恢复模式、绕过闸门而没人知道）。
+   ⇒ 拿基线文件直接 `--apply` 而不带 `--restore` ⇒ **拒**，提示你把意图说出来。
+⚠️ **核不了一致性时一律拒**（拿不到线上现状）——「查不到」不等于「一致」，
+   这道闸的失效方向不能是绿；确实要在核不了时强行恢复，那正是 `--restore` 的用途。
 
 输出（stdout 纯 JSON；人话提示与 diff 走 stderr，不污染管道）:
     --get           线上菜单结构本身 `{"button": [...]}`——**可以直接改完拿去 --apply**。
@@ -61,7 +71,10 @@ import json
 import sys
 from pathlib import Path
 
-# 同目录 vendored 副本（凭据与基址由 wechat_api 经 nbdpsy_common 解析，这里不直接用它）
+# 同目录 vendored 副本（凭据与基址由 wechat_api 经 nbdpsy_common 解析）。
+# ⚠️ nbdpsy_common 这里**只读用一个** `resolve_workspace()` 来算基线快照路径，
+#    ⛔ 不改它的解析逻辑——那个函数是所有 skill 共用的，改它的返回值会让别的 skill 产物落到别处。
+import nbdpsy_common
 import wechat_api
 from wechat_api import OpFailed
 
@@ -73,6 +86,94 @@ NO_MENU_ERRCODE = 46003   # 「不存在的菜单数据」——没建过菜单�
 
 CACHE_NOTE = ("菜单有约 24 小时客户端缓存：粉丝不一定马上看到新菜单。"
               "让运营**取消关注再重新关注**即可立即验证，别反复 apply。")
+
+# 基线快照在 workspace 下的相对位置。⚠️ 只有这一处写死它，改落点只改这里。
+BASELINE_RELPATH = Path("wechat") / "menu-baseline.json"
+
+
+def baseline_path() -> Path:
+    """基线快照的**绝对路径**。⛔ 这里只算路径，不判断存不存在。
+
+    ⚠️ 它经 `nbdpsy_common.resolve_workspace()` 得出，因此**随 cwd 变**：
+    在 NBDpsy 仓根跑 ⇒ `<仓根>/seo-geo/content/wechat/menu-baseline.json`（真源）；
+    在别处跑 ⇒ `~/nbdpsy-content/wechat/menu-baseline.json`（那里通常没有）。
+    ⇒ 拿不到时必须**报出这个绝对路径**（见 load_baseline），
+      ⛔ 别静默回落到别处找——**静默回落正是造成整件事的机制**：
+      同一个「约定路径」在两个上下文下指向两处、一处空一处躺着错的，
+      而没有任何东西跳出来说「你查的不是那个」。
+    """
+    return nbdpsy_common.resolve_workspace() / BASELINE_RELPATH
+
+
+def load_baseline() -> dict:
+    """读基线快照。找不到 ⇒ **报错退出并说清找的是哪个绝对路径**。
+
+    🔴 ⛔ 返回空 dict、⛔ 回落 cwd、⛔ 回落别的 workspace ——
+    那些都会让闸门在错的上下文下变成**静默 no-op**（失效方向是绿）。
+    """
+    p = baseline_path()
+    if not p.is_file():
+        raise OpFailed(
+            f"基线快照不在：{p}\n"
+            "⚠️ 这个路径随**当前工作目录**变（`resolve_workspace()`：先看 $NBDPSY_WORKSPACE，"
+            "再看 $PWD/seo-geo/content，都没有才回落 ~/nbdpsy-content）。"
+            "⇒ 先确认两件事：① 你是不是**在 NBDpsy 仓根**跑的（那才是基线真源）；"
+            f"② 文件是不是真的没有——是的话先 `--get > {p}` 拉一份并提交。"
+            "⛔ 本次一个写请求都没发出。")
+    try:
+        data = json.loads(p.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as e:
+        raise OpFailed(f"基线快照不是合法 JSON（{p}，第 {e.lineno} 行第 {e.colno} 列：{e.msg}）。")
+    if not isinstance(data, dict) or "button" not in data:
+        raise OpFailed(f"基线快照里没有 `button` 字段（{p}）——它不是一份菜单快照。")
+    return data
+
+
+def _walk_fields(node, 前缀=""):
+    """把嵌套菜单摊平成 {JSON 路径: 值}，用来**点名到底哪个字段变了**。"""
+    出: dict[str, object] = {}
+    if isinstance(node, dict):
+        for k, v in node.items():
+            出.update(_walk_fields(v, f"{前缀}.{k}" if 前缀 else k))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            出.update(_walk_fields(v, f"{前缀}[{i}]"))
+    else:
+        出[前缀] = node
+    return 出
+
+
+def baseline_drift(线上: dict, 基线: dict) -> list[str]:
+    """线上全量 vs 基线快照的**字段级**差异。空列表 = 一致。
+
+    ⚠️ 逐字段比而不是只比一级菜单名：闸门要能说出**是哪个字段**变了，
+    否则「不一致」这三个字帮不了正在排查的人。
+    """
+    a, b = _walk_fields(基线), _walk_fields(线上)
+    行 = []
+    for k in sorted(set(a) | set(b)):
+        if k not in b:
+            行.append(f"基线有、线上没有：`{k}` = {a[k]!r}")
+        elif k not in a:
+            行.append(f"线上有、基线没有：`{k}` = {b[k]!r}")
+        elif a[k] != b[k]:
+            行.append(f"`{k}`：基线 {a[k]!r} → 线上 {b[k]!r}")
+    return 行
+
+
+def 漂移拒绝(差异: list[str], 动作: str) -> dict:
+    """一致性闸门的拒绝回执。**两个方向都要给话**，⛔ 只说一个。"""
+    for line in 差异:
+        wechat_api.warn(f"  · {line}")
+    return {"outcome": "failed",
+            "error": f"线上菜单与基线快照**不一致**，本次{动作}**没有执行**（这是安全闸门，不是故障）。",
+            "drift": 差异, "baseline": str(baseline_path()),
+            "hint": "两个方向，先判断是哪一种：\n"
+                    "① **线上比基线新**（有人在公众号后台改过菜单）⇒ 先 "
+                    f"`--get > {baseline_path()}` 更新基线**并提交**，再来；\n"
+                    "② **基线比线上新**（基线里有还没上线的改动）⇒ 确认你是要把它 apply 上去"
+                    "（那就加 `--restore`），还是先把基线里那些改动丢弃。\n"
+                    "⛔ 别不看方向就重拉基线——那会把线上的误改**固化进基线**。"}
 
 
 def _width(name: str) -> float:
@@ -278,11 +379,59 @@ def load_menu_file(path):
     return buttons
 
 
+def _是基线文件(路径) -> bool:
+    """要 apply 的文件是不是基线本身。用 `samefile` 而非字符串比——软链/相对路径也认得出。"""
+    p, b = Path(路径), baseline_path()
+    if not (p.is_file() and b.is_file()):
+        return False
+    try:
+        return p.samefile(b)
+    except OSError:
+        return False
+
+
 def do_apply(args, api_base, key):
     buttons = load_menu_file(args.apply)
     warnings = validate(buttons)                       # 硬约束不过：一个请求都不发
-    old, _cond, note = _fetch_menu_tolerant(api_base, key, args.timeout)
+
+    # 🔴 恢复必须**显式说出来**（2026-09-02 裁定）：⛔ 不靠「要 apply 的文件 == 基线」推断意图。
+    # 推断出来的意图**会被意外满足**——有人拿基线当新菜单 apply 一次，就静默进了恢复模式、
+    # 绕过一致性闸门而**没人知道**。⇒ 意图只认 `--restore` 这个标志。
+    if not args.restore and _是基线文件(args.apply):
+        raise OpFailed(
+            f"这是**基线文件**（{baseline_path()}），而你没带 `--restore`。\n"
+            "⇒ 要**恢复**（把线上覆盖回基线）请显式加 `--restore`；"
+            "要**改菜单**请另存一份改过的文件再 apply。"
+            "⛔ 本次一个写请求都没发出。")
+
+    old, cond, note = _fetch_menu_tolerant(api_base, key, args.timeout)
     diff = menu_diff(old, buttons) if old is not None else None
+
+    # 🔴 一致性闸门（2026-09-02 裁定）。放在 --confirm 判断**之前**：本闸的结论对两条路一样，
+    # 提前说破才不会让人「先看 diff、补了 --confirm 再被拒」白跑两轮。
+    if args.restore:
+        # 恢复：**不一致正是要恢复的原因** ⇒ ⛔ 不做一致性检查，但坐标照常要。
+        wechat_api.warn(f"🔴 本次是**恢复操作**：将把线上**默认菜单**覆盖为 `{Path(args.apply).name}` 的内容。")
+        基线 = load_baseline() if _是基线文件(args.apply) else None
+        n = len((基线 or {}).get("conditionalmenu") or []) if 基线 else len(cond or [])
+        if n:
+            wechat_api.warn(f"⚠ 其中 **{n} 条个性化菜单不会被重建**——本 skill 没有 "
+                            "menu/addconditional 能力，那几条只能照着快照去公众平台后台**手工重挂**。"
+                            "⛔ 别把这次 apply 当成「全都恢复了」。")
+        if diff and diff["lines"]:
+            wechat_api.warn("完整 diff（线上 → 将变成）：")
+            for line in diff["lines"]:
+                wechat_api.warn(f"  · {line}")
+    else:
+        if old is None:
+            raise OpFailed(
+                "拿不到线上现状，**无法核对它与基线是否一致**，本次不执行。"
+                "⛔ 「查不到」不等于「一致」——这道闸的失效方向不能是绿。"
+                "⇒ 网络/服务恢复后重跑；确实要在核不了的情况下强行恢复，用 `--restore`。")
+        差异 = baseline_drift({"button": old, "conditionalmenu": cond}, load_baseline())
+        if 差异:
+            wechat_api.warn("⚠ 线上菜单与基线快照**不一致**，本次不执行。差异逐条：")
+            return 漂移拒绝(差异, "装修菜单"), 1
 
     if not args.confirm:
         wechat_api.warn("⚠ 这次**没有改线上菜单**（缺 --confirm）。要改什么，念给运营听：")
@@ -337,6 +486,18 @@ def do_delete(args, api_base, key):
     old, cond, note = _fetch_menu_tolerant(api_base, key, args.timeout)
     current = [b.get("name") for b in old] if old else []
 
+    # 🔴 一致性闸门（2026-09-02 裁定）：删之前必须确认**手上这份基线就是线上那份**。
+    # 🔑 它的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰是最需要基线的动作：
+    #    删掉的个性化菜单只能照着快照去后台手工重挂，快照陈旧＝那部分永久回不来。
+    if old is None:
+        raise OpFailed(
+            "拿不到线上现状，**无法核对它与基线是否一致**，本次不删。"
+            "⛔ 「查不到」不等于「一致」——这道闸的失效方向不能是绿。")
+    差异 = baseline_drift({"button": old, "conditionalmenu": cond}, load_baseline())
+    if 差异:
+        wechat_api.warn("⚠ 线上菜单与基线快照**不一致**，本次不删。差异逐条：")
+        return 漂移拒绝(差异, "删除菜单"), 1
+
     if not args.confirm:
         wechat_api.warn("⚠ 这次**没有删除任何东西**（缺 --confirm）。删除的代价：")
         wechat_api.warn(f"  · 粉丝**立刻**看不到底部入口（现有一级菜单："
@@ -384,6 +545,10 @@ def main(argv=None):
     ap.add_argument("--delete", action="store_true", help="删除整个自定义菜单（粉丝立刻看不到入口）")
     ap.add_argument("--confirm", action="store_true",
                     help="真正执行 --apply / --delete；不带它只打 diff/警示，不碰线上")
+    ap.add_argument("--restore", action="store_true",
+                    help="声明本次 --apply 是**恢复**（把线上覆盖回基线）：跳过一致性检查"
+                         "（不一致正是恢复的原因），坐标照常要。⛔ 恢复必须显式说出来，"
+                         "脚本不靠「文件是不是基线」猜意图")
     ap.add_argument("--approval", metavar="件号-选项",
                     help="装修/删除菜单的批复坐标（老板台件号 + option_key，如 <件号>-A）。"
                          "--delete 对个性化菜单硬不可逆、--apply 仅在事先存了基线时可逆，"
@@ -403,6 +568,8 @@ def main(argv=None):
     chosen = [fn for flag, fn in actions if flag]
     if len(chosen) != 1:
         ap.error("三选一：--get / --apply <menu.json> / --delete")
+    if args.restore and not args.apply:
+        ap.error("--restore 只跟 --apply 一起用（它声明的是「这次 apply 是恢复」）")
 
     def action():
         api_base, key = wechat_api.credentials(args.api_base)
