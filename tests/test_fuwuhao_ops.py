@@ -588,6 +588,46 @@ class Test菜单CLI:
         assert "真要执行时会被拦" in err                          # 但预告了
         assert str(缺) in err
 
+    def test_变异10a_restore免过dirty闸且强制展示基线的gitdiff(self, net, capsys, 基线):
+        """🔴 裁定：`--restore` 不被②拦——**救援的正确性不取决于基线是否已提交**。
+
+        灾难场景（菜单已被误删、急需恢复）下基线恰好 dirty 时，用②拦住等于在最慌的
+        时刻挡住唯一正确的操作。反向风险（基线被手编坏了）改用「强制展示 git diff +
+        dirty 警告 + 坐标照常要」来兜，⛔ 用「拦住不让救」来兜。
+        """
+        d = json.loads(基线.read_text(encoding="utf-8"))
+        d["button"][0]["name"] = "手编进去的名字"
+        基线.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")   # ⛔ 不提交
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, err = run_cli(M, ["--apply", str(基线), "--restore", "--confirm"], capsys)
+        # 越过了②：走到坐标那一步才被拦（⛔ 不是被 dirty 拦）
+        assert code == 1 and "一个请求都没发出" in data["error"]
+        assert "尚未提交" not in data["error"]
+        assert "/cgi-bin/menu/create" not in net.paths()
+        # 但三样兜底都在
+        assert "未提交的改动" in err                       # dirty 警告
+        assert "手编进去的名字" in err                     # **强制展示的 git diff 里能看见改了什么**
+        assert "恢复操作" in err
+
+    def test_变异10b_基线干净时restore不打dirty警告(self, net, capsys, 基线):
+        """另一侧：基线干净就不该打这个警告——否则它变成恒响的噪音，等于没有警告。"""
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, err = run_cli(M, ["--apply", str(基线), "--restore", "--confirm"], capsys)
+        assert code == 1 and "一个请求都没发出" in data["error"]   # 仍被坐标闸拦
+        assert "未提交的改动" not in err
+        assert "恢复操作" in err
+
+    def test_restore仍然受基线存在这道闸管(self, net, tmp_path, capsys, monkeypatch):
+        """①⛔ 随②一起免掉：没有基线就没有「恢复」这回事。"""
+        缺 = tmp_path / "没有的基线.json"
+        monkeypatch.setenv("NBDPSY_MENU_BASELINE", str(缺))
+        f = _menu_file(tmp_path, [{"name": "x", "type": "view", "url": "https://a/x"}])
+        net.serve(FakeResp(200, {"success": True, "data": MENU_ONLINE}))
+        code, data, _ = run_cli(
+            M, ["--apply", f, "--restore", "--confirm", "--approval", "T999-A"], capsys)
+        assert code == 1 and str(缺) in data["error"]
+        assert "/cgi-bin/menu/create" not in net.paths()
+
     def test_变异4_基线文件不存在要拒且报错里含那个绝对路径(self, net, tmp_path, capsys,
                                                               monkeypatch):
         缺 = tmp_path / "空" / "menu-baseline.json"

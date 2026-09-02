@@ -52,6 +52,11 @@
 ⇒ ③ 的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰最需要基线。
 ⚠️ **只读预检（不带 `--confirm`）不受①②③管制**——拦了会逼人为了「看一眼菜单长什么样」
    也去满足这些条件；但预检会把「真执行时会被拦」**预告**出来，免得补了 `--confirm` 白跑两轮。
+🔴 **`--restore` 免过②**（2026-09-02 裁定）：**救援的正确性不取决于基线是否已提交**。
+   灾难场景（菜单已被误删、急需恢复）下基线恰好 dirty 时，用②拦住等于在最慌的时刻
+   挡住唯一正确的操作。反向风险（基线被手编坏了、restore 把坏内容推上线）改用三样兜：
+   **强制展示基线的 `git diff` + dirty 警告 + 坐标照常要**，⛔ 用「拦住不让救」来兜。
+   ⚠️ ①（基线存在）与 ③′（基线文件不带 `--restore` 即拒）**不免**——没有基线就没有「恢复」这回事。
 🔴 **`--apply --confirm` 成功后自动刷新基线**：把新的线上全量写回稳定路径、打印 diff 摘要，
    并给出可直接执行的 `git add && git commit`——⛔ **不替人提交**。
    不刷新的话，每次合法改菜单之后基线立刻陈旧，而人最省事的绕法是「重拉基线」，
@@ -216,16 +221,34 @@ def _基线未提交(p: Path):
     return bool(r.stdout.strip()), (r.stdout.strip() or None)
 
 
-def 写前闸门(动作: str):
-    """写命令的前两道闸。返回 (基线内容, 拒绝回执|None)。
+def _基线git_diff(p: Path) -> str:
+    """基线文件相对 HEAD 的 git diff，给 `--restore` 强制展示用。"""
+    r = subprocess.run(["git", "-C", str(p.parent), "diff", "--", str(p)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return f"（拿不到 git diff：{r.stderr.strip()}）"
+    return r.stdout.strip() or "（git diff 为空——多半是一个**未跟踪的新文件**，整份都是新的）"
+
+
+def 写前闸门(动作: str, 免过dirty: bool = False):
+    """写命令的前两道闸。返回 (基线内容, 拒绝回执|None, dirty状态 True/False/None)。
 
     🔴 顺序固定 ①基线存在 → ②基线已提交，⛔ 不能反（②依赖「在 git 仓库内」，而那由①保证）。
     🔑 ②堵的是「刷新了但没提交」——不堵它，自动刷新只会把陈旧基线从**仓里**搬到**工作区里**，
        病还在（而且别人 clone 下来拿到的仍是旧的那份）。
+
+    ⚠️ `免过dirty=True` 只给 `--restore`（2026-09-02 裁定）：
+       **救援的正确性不取决于基线是否已提交**。灾难场景下菜单已被误删、急需恢复，
+       而基线恰好 dirty（有人刚手编过）——用②拦住，等于在最慌的时刻挡住唯一正确的操作。
+       反方向的风险（基线被手编坏了、restore 把坏内容推上线）改用**强制展示 git diff
+       + dirty 警告 + 坐标照常要**来兜，⛔ 用「拦住不让救」来兜。
+       ⚠️ ①（基线存在）与 ③′（基线文件不带 --restore 即拒）**不免**。
     """
     基线 = load_baseline()                      # ① 不存在就在这里抛（消息里带绝对路径 + 怎么修）
     p = baseline_path()
     dirty, 详情 = _基线未提交(p)
+    if 免过dirty:
+        return 基线, None, dirty
     if dirty is None:
         return 基线, ({"outcome": "failed",
                       "error": f"**核不了基线有没有提交**（{p} 多半不在 git 仓库里；git 说：{详情}），"
@@ -233,7 +256,7 @@ def 写前闸门(动作: str):
                                "⛔ 「核不了」不等于「已提交」——这道闸的失效方向不能是绿。",
                       "baseline": str(p),
                       "hint": "基线必须放在受版本控制的位置（NBDpsy 仓 `seo-geo/content/wechat/`）。"
-                              "⚠️ 这**不是**「线上与基线内容不一致」，⛔ 别去查菜单内容。"}, 1)
+                              "⚠️ 这**不是**「线上与基线内容不一致」，⛔ 别去查菜单内容。"}, 1), dirty
     if dirty:
         return 基线, ({"outcome": "failed",
                       "error": f"基线文件**尚未提交**（git 里是 dirty），本次{动作}**没有执行**。"
@@ -242,8 +265,11 @@ def 写前闸门(动作: str):
                       "baseline": str(p), "git_status": 详情,
                       "hint": f"先提交基线：`git add {p} && "
                               "git commit -m \"chore(服务号): 更新菜单基线\"`，再重跑本命令。"
-                              "（刷新了却不提交，等于把陈旧基线从仓里搬到工作区里，病还在。）"}, 1)
-    return 基线, None
+                              "（刷新了却不提交，等于把陈旧基线从仓里搬到工作区里，病还在。）\n"
+                              "⚠️ **如果你刚改过基线、并且确实是要把它 apply 上线**："
+                              "先提交，然后走 `--apply <基线> --restore`——"
+                              "否则提交完重跑还会被「线上与基线不一致」再拦一次（基线确实比线上新）。"}, 1), dirty
+    return 基线, None, dirty
 
 
 def 闸门预告() -> list[str]:
@@ -561,7 +587,8 @@ def do_apply(args, api_base, key):
     # ══ 写路径的前置闸门，顺序固定 ①基线存在 → ②基线已提交 → ③一致性 ══
     # ⚠️ 只读预检**不受**这三道管制（上面那条路已经 return 了），拦了会逼人为了
     #    「看一眼菜单现在长什么样」也去满足这些条件；但那条路会把它们**预告**出来。
-    基线, 拒 = 写前闸门("装修菜单")                       # ① + ②
+    # ⚠️ --restore 免过②（救援的正确性不取决于基线是否已提交），但①与③′照旧管着它。
+    基线, 拒, dirty = 写前闸门("装修菜单", 免过dirty=args.restore)
     if 拒:
         return 拒
 
@@ -569,6 +596,15 @@ def do_apply(args, api_base, key):
         # ③ 跳过：**不一致正是要恢复的原因**，在这里拒等于在最需要它的时刻挡住唯一正确的操作。
         wechat_api.warn(f"🔴 本次是**恢复操作**：将把线上**默认菜单**覆盖为 "
                         f"`{Path(args.apply).name}` 的内容。")
+        # ② 免过了，风险改用「让人当场看见基线被改成了什么」来兜，⛔ 用拦住不让救来兜。
+        if dirty is not False:
+            wechat_api.warn(
+                "⚠️ **这份基线有未提交的改动**"
+                + ("（甚至核不了它的 git 状态）" if dirty is None else "")
+                + " —— 恢复不因此被拦（救援的正确性不取决于基线提没提交），"
+                "但**先看清楚它被改成了什么**再决定，⛔ 把手编坏的内容推上线：")
+            for line in _基线git_diff(baseline_path()).splitlines():
+                wechat_api.warn(f"    {line}")
         n = len(基线.get("conditionalmenu") or [])       # N 从基线数，⛔ 写死
         if n:
             wechat_api.warn(f"⚠ 其中 **{n} 条个性化菜单不会被重建**——本 skill 没有 "
@@ -658,7 +694,7 @@ def do_delete(args, api_base, key):
     # ══ 写路径的前置闸门：①基线存在 → ②基线已提交 → ③线上与基线一致 ══
     # 🔑 ③ 对 delete 的实际效果是「**没有当前基线就删不了**」——而 delete 恰恰最需要基线：
     #    删掉的个性化菜单只能照着快照去后台手工重挂，快照陈旧＝那部分永久回不来。
-    基线, 拒 = 写前闸门("删除菜单")                        # ① + ②
+    基线, 拒, _dirty = 写前闸门("删除菜单")                 # ① + ②（delete ⛔ 免过②）
     if 拒:
         return 拒
     if old is None:
