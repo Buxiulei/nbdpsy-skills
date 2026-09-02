@@ -405,3 +405,22 @@ python3 -c "import json;[json.load(open(f)) for f in ['.claude-plugin/plugin.jso
 ```
 
 然后在 [CHANGELOG.md](CHANGELOG.md) **顶部追加一节**（写清「改了什么 + 为什么」，运营也要看得懂），最后 `git push`。
+
+### 🔴 push 前必跑：发版记账闸
+
+```bash
+python3 tools/check_changelog_coverage.py    # 非零退出即拦住发版
+```
+
+自上一版以来主干上的**每个提交**，短 sha 都得出现在 CHANGELOG.md 里
+（写在哪一行不限，跟着对应那条改动写最省事）。确实不必记账的提交，
+把 `[no-changelog]` 写进**那个提交自己的提交信息**里 —— ⛔ 豁免不看提交类型，
+`docs` / `chore` 一样要记。
+
+🩸 立闸起因：v2.42.0 之后 7 个提交 CHANGELOG 一个都没记，其中 `1998975` 是 feat
+（服务号群发/删除坐标制），**静默积压五天**，直到发 v2.43.0 才被发现。
+`test_version_consistency` 守的是版本号别倒退，管不了「提交有没有被记账」。
+
+⚠️ 这道闸挂在 pytest 里（`tests/test_changelog_coverage.py`），但**只在 HEAD 已是发版提交时才生效**，
+日常开发时会 skip（那些提交本来就还没到记账时点）。⇒ **commit 完 release 之后、push 之前
+再跑一次上面这条命令**，⛔ 别只靠 `pytest` 那一遍 —— 先跑测试再 commit 的话，它一次都不会真的跑。
