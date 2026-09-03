@@ -230,6 +230,29 @@
   }
   .ident .role .seg { white-space: nowrap; }   /* 折行只许发生在分隔号处 */
 
+  /* ── ④′ 封面资质行（T201/T209=A）：stage 下的**独立整幅宽行** ─────────
+     由 `theme.role_slot: "full"` 打开；不给 = 'ident' ＝ 上面那条头像旁的身份行，
+     **现存封面逐字不变**。两者共用 `identity.line` 但不是一件事
+     （illustration-spec §2-c 末行：科普笔记署名 vs 推介笔记资质行，⛔ 谁也不顶替谁）。
+
+     🔴 **为什么不能挂在头像旁**（2026-09-03 十一位全渲实测，⛔ 不是估算）：
+     头像 36% 之后 `.ident` 右侧可用宽只剩 **239.2px ≈ 4 个全角字**，
+     三种断行变体（项间断 / 项内断 / 编号单独成行）在该落点分别只有 0 / 1 / 0 位可读；
+     同一批文本搬到整幅宽（756px）＋ 项内断行是 **11/11**。
+     ⇒ 差别不在断行策略，在**可用宽**——落点不改，换几种断法都是白搭。 */
+  .role.qualline {
+    flex: 0 0 auto;
+    margin-top: calc(var(--role-fs) * .55);
+    font-size: var(--role-fs); font-weight: 400; color: var(--muted);
+    line-height: 1.35;
+    white-space: normal;                        /* 整幅宽行允许折行 */
+  }
+  .role.qualline .seg { white-space: nowrap; }  /* 默认仍只在分隔号「·」处断 */
+  /* ④b **单项内断行**：⛔ 只在折行分支由 JS 挂上（`.seg-wrap`），⛔ 不是常开。
+     ⚠️ `white-space: normal` **一条不够**：20 位注册号是一整个拉丁/数字"词"，
+     中文可以字字断开、数字串没有任何断点——不加 `overflow-wrap` 它照样横向溢出。*/
+  .role.qualline.seg-wrap .seg { white-space: normal; overflow-wrap: anywhere; }
+
   /* ── ⑤ 右下陪衬 ───────────────────────────────────────────── */
   .orn {
     position: absolute; z-index: 2;
@@ -353,6 +376,11 @@ if (ERR) {
   const subtitle  = String(D.subtitle ?? '').trim();
   const steps     = (D.steps || []).filter(s => String(s).trim() !== '');
   const idn       = D.identity || {};
+  /* 资质行落点开关（T209=A）：'full' = stage 下的独立整幅宽行（咨询师推介封面的
+     封面资质行）；不给 = 'ident' = 头像旁的身份行（科普笔记署名），⛔ 现存封面不动。
+     ⚠️ 共用 `identity.line` 是 illustration-spec §2-c 定的（⛔ 不许自造契约键），
+     两个落点靠这个键区分，⛔ 别按文本内容猜。*/
+  const QUAL_SLOT = String((D.theme || {}).role_slot || 'ident') === 'full';
   const ornName   = D.ornament || 'none';
   const ornSvg    = D.ornament_svg_inline || ORN[ornName] || '';
   /* 名字打错（`plant_support` 写成下划线之类）以前是**静默无图**——一张封面右下角
@@ -396,12 +424,13 @@ if (ERR) {
       ${subtitle ? `<div class="subtitle" id="sub">${subHTML(subtitle)}</div>` : ''}
       <div class="sp sp-hero"></div>
       <div class="steps" id="stepsBox">${steps.length > 1 ? '<div class="rail-line"></div>' : ''}${stepsHTML}</div>
+      ${(idn.line && QUAL_SLOT) ? `<div class="role qualline" id="rl">${roleHTML(idn.line)}</div>` : ''}
       <div class="sp sp-steps"></div>
       <div class="bottom" id="bottom">
         ${D.avatar ? `<img class="avatar" id="avatar" src="${D.avatar}" alt="">` : ''}
         <div class="ident">
           ${idn.name ? `<div class="name" id="nm">${esc(idn.name)}</div>` : ''}
-          ${idn.line ? `<div class="role" id="rl">${roleHTML(idn.line)}</div>` : ''}
+          ${(idn.line && !QUAL_SLOT) ? `<div class="role" id="rl">${roleHTML(idn.line)}</div>` : ''}
         </div>
       </div>
       <div class="sp sp-foot"></div>
@@ -481,7 +510,17 @@ window.__fit = function () {
   const HERO_MIN   = +(T.hero_min   ?? 56);   // 缩略图 220px 下 ≈14px，可读下限
   const STEP_MAX   = +(T.step_max   ?? 42);
   const STEP_FLOOR = +(T.step_floor ?? 22);
-  const ROLE_MIN   = +(T.role_min   ?? 18);
+  /* 资质行落点：**从 DOM 认**（渲出来的是哪个落点，求解器就按哪个解）。
+     ⛔ 不在这里重读一遍 `D.theme.role_slot`——同一个配置两处各读一次迟早分叉。*/
+  const QUAL = !!document.querySelector('#rl.qualline');
+  /* 🔴 资质行的可读下限与 hero 同源：封面 56px ＝ 220px 缩略图上 ≈14px。
+     ⛔ 别沿用头像旁身份行的 18px：18px 换算到缩略图只有 4.5px——那条闸门在
+     整幅宽落点上等于没有。2026-09-03 基线实证：11 位 role_fs 落在 12.4–23.8px，
+     `role_below_min` 只报出 2 位，另外 9 位在 **5.7 缩略 px** 上照样报绿。*/
+  const ROLE_MIN   = +(T.role_min   ?? (QUAL ? 56 : 18));
+  /* 资质行允许折到 **3 行**（T209=A：资质行缩略图可见；≤3 行是版面上限）。
+     ⛔ 头像旁的身份行仍是 2 行——两个落点一起放开就改了现存封面的版面。*/
+  const ROLE_MAX_LINES = QUAL ? 3 : 2;
   const NAME_MIN   = +(T.name_min   ?? 26);
   /* 递进行 = hero × 0.58 ≈ 老板已验收那张封面的实测比例（hero 70 / 递进行 40）。 */
   const heroCoef   = +(T.step_coef  ?? 0.58);
@@ -562,6 +601,92 @@ window.__fit = function () {
   rs.setProperty('--name-fs', Math.round(Math.max(30, Math.min(58, heroFs * 0.62))) + 'px');
   rs.setProperty('--foot-fs', Math.round(Math.max(18, Math.min(28, heroFs * 0.31))) + 'px');
 
+  /* —— 身份两行：单行不折，线性缩到**各自那一行**的可用宽 ——
+     ⚠️ 姓名以前完全没测量（只按 heroFs×0.62 夹在 [30,58]，与可用宽无关），
+     一遇长姓名就直接压到右下陪衬上（2026-08-17 E3 实测，必然非偶发）。
+     两行走同一套写法，且可用宽由陪衬的**实测位置**决定，不是拍脑袋减一个常数。*/
+  const nm = document.getElementById('nm');
+  const rl = document.getElementById('rl');
+  let nameFs = parseFloat(cs.getPropertyValue('--name-fs')) || 44;
+  let roleFs = parseFloat(cs.getPropertyValue('--role-fs')) || 24;
+  /* ⚠️ 必须是**函数**：这块前移之后 heroFs 还会在「压 hero」那步继续变小，
+     写成 const 就会拿着旧 heroFs 解姓名（一个只在 QUAL 路径才踩得到的陈旧值）。*/
+  const nameIdeal = () => Math.max(30, Math.min(58, heroFs * 0.62));
+  const fitIdent = () => {
+    if (nm) {
+      const r = inkRect(nm);
+      nameFs = linearFit(nm, nameIdeal(), rightLimit(r) - r.left);
+      rs.setProperty('--name-fs', nameFs.toFixed(1) + 'px');
+    }
+    if (rl) {
+      const r = inkRect(rl);
+      /* 🔴 整幅宽的资质行**不做陪衬避让**，按版心宽解。
+         结构上它落在 `.bottom`（头像行）之上，陪衬锚在页脚上方那条带里——两者不同带。
+         ⚠️ 而"每轮重新避让"在这个落点上是**有害**的：`avail` 是拿 rl 的**中间态**位置量的，
+         求解途中它某一轮恰好探进陪衬那条带 ⇒ avail 从 756 被夹到 592、字号从 60.9 解到 51.7；
+         等资质行长高、位置上移、早就不碰陪衬了，**没有任何东西会把 avail 抬回去**
+         （2026-09-03 李宇实测：最终态资质行底 838 / 陪衬顶 865 明明不重叠，
+         `maxWidth` 却留在 592px —— 一个被中间态锁死、事后无人复核的错值）。
+         ⇒ 真压上陪衬了由下面的 `ident_orn_overlap` **当场量出来报红**，
+         ⛔ 不靠"我避让过了"这句话（那条自检 2026-08-17 就是为这个立的）。*/
+      const avail = QUAL ? (W - padX - r.left) : (rightLimit(r) - r.left);
+      /* 身份行是 detail 档（§2-b：hero × 0.20–0.22），并且不许追平**实际渲出来的**姓名。
+         ⚠️ 两处坑都踩过：① 旧写法 heroFs × 0.34 —— hero 从 70 涨到 150 后这行解到 51px，
+         比递进行还大；② 一度把目标挂在被挤小的 nameFs 上 —— 姓名一被压窄，
+         身份行的目标跟着塌到下限以下，两行折行那条路直接变成空转（E3/E5 实测）。*/
+      /* 🔴 **档位分岔**：整幅宽的资质行走 **sub 档**（§2-b：support/副题 ＝ hero × 0.34），
+         头像旁的身份行仍走 detail 档。⛔ 别让资质行继续吃 `nameFs * 0.60` 那道夹制——
+         2026-09-03 实测那道夹制把天花板压到 **34.8px**（缩略图 8.7px），
+         而 T209=A 的原文就是「资质行缩略图可见」，detail 档物理上做不到。
+         ⚠️ 资质行不在姓名旁边了，「不许追平姓名」这条约束也随落点一起失效。*/
+      const ideal = QUAL ? Math.max(ROLE_MIN, heroFs * subCoef)
+                         : Math.max(ROLE_MIN, Math.min(heroFs * 0.22, nameFs * 0.60));
+      rl.style.whiteSpace = 'nowrap'; rl.style.maxWidth = '';
+      rl.classList.remove('seg-wrap');
+      roleFs = linearFit(rl, ideal, avail);
+      /* 头像放大到 36% 后身份行的可用宽被挤窄，单行解常常掉到可读下限附近。
+         宁可**折成两行**也不把这行缩小超过 15%（纵向空间由头像撑着，白留着也是留着），
+         ⛔ 别为了「保持单行」把字缩成一条灰线。两行仍够不着下限才报红。*/
+      if (roleFs < Math.max(ROLE_MIN, ideal * 0.85)) {
+        rl.style.whiteSpace = 'normal';
+        rl.style.maxWidth = avail.toFixed(1) + 'px';
+        /* ④b **单项内断行**：⛔ 只在这条折行分支上挂，⛔ 不常开。
+           2026-09-03 十一位实测：整幅宽 + 项内断 = 11/11 可读；
+           只在「·」处断（项间断）或让编号单独成行，同样整幅宽也只有 6/11。*/
+        if (QUAL) rl.classList.add('seg-wrap');
+        /* 高度**和**宽度都要判：.seg 是 nowrap，单段撑爆 max-width 时行数不变、
+           只会横向溢出到陪衬上——只判高度就是又一个恒绿闸门。*/
+        const okAt = fs => {
+          rs.setProperty('--role-fs', fs.toFixed(2) + 'px');
+          return rl.getBoundingClientRect().height <= fs * 1.35 * ROLE_MAX_LINES + 1
+              && rl.scrollWidth <= avail + 0.5;
+        };
+        /* ⚠️ 先直接试 ideal 本身，⛔ 别一上来就二分：单行解与 ideal 只差零点几 px 时，
+           二分的 hi-lo 门限直接把循环跳过，折行这条路整个空转（E3/E5 实测卡在 17.8px）。*/
+        if (okAt(ideal)) roleFs = ideal;
+        else {
+          let lo = roleFs, hi = ideal, best = roleFs;
+          for (let i = 0; i < 20 && hi - lo > 0.2; i++) {
+            const mid = (lo + hi) / 2;
+            if (okAt(mid)) { best = mid; lo = mid; } else hi = mid;
+          }
+          roleFs = best;
+        }
+      }
+      rs.setProperty('--role-fs', roleFs.toFixed(1) + 'px');
+    }
+  };
+  /* 🔴 **求解次序**（2026-09-03 T209 实施时修的真 bug，⛔ 不是靠调常数绕过去的）：
+     `fitIdent` 原本排在 `solveStep` **之后且不回头重解**。身份行挂在 `.ident` 里、
+     由 315px 的头像撑着高度，那样没事；**资质行是 stage 的 flex 子元素、自己占纵向预算**
+     ⇒ 它长高**不会**让递进行或 hero 让位，只会把落款顶出下边距，而 `fits()` 早就判完了。
+     ⇒ 把它并进求解回路：每次 hero 字号变动后立刻重解一次资质行，
+        让它的**真实高度**进 `contentBottom()`，再由既有的「递进行二分 → 压 hero」次序兜。
+     ⚠️ ⛔ 不在递进行二分的**每一步**重解：资质行的解只跟 heroFs 有关
+        （ideal = heroFs × 0.34，可用宽恒 = 版心宽），递进行字号动它不动——
+        每步重解是 22×60 次无谓布局，且结果一模一样。*/
+  const syncIdent = () => { if (QUAL) { fitIdent(); fitIdent(); } };
+
   /* —— 步骤 2：递进行二分求"整幅不溢出的最大字号" ——
      判定函数直接问 stage 溢没溢，把折行、行距、间隔全算进去，
      ⛔ 不自己另算一套高度预算（算两遍必然对不上）。 */
@@ -589,6 +714,7 @@ window.__fit = function () {
     if (subFs) c = Math.min(c, subFs * 0.9);
     return Math.max(STEP_FLOOR, c);
   };
+  syncIdent();          /* hero 定了 ⇒ 资质行先解一次，它的高度要进 fits() 的预算 */
   let cap = stepCap();
   const solveStep = () => {
     applyStep(cap);
@@ -611,64 +737,15 @@ window.__fit = function () {
     heroFs = Math.max(HERO_MIN, heroFs - 2);
     applyHero(heroFs);
     if (sub) { subFs = heroFs * subCoef; rs.setProperty('--sub-fs', subFs.toFixed(2) + 'px'); }
+    syncIdent();        /* hero 变了 ⇒ 资质行的 ideal（hero × 0.34）跟着变，必须重解 */
     cap = stepCap();
     stepFs = solveStep();
     heroSqueezed = true;
   }
 
-  /* —— 身份两行：单行不折，线性缩到**各自那一行**的可用宽 ——
-     ⚠️ 姓名以前完全没测量（只按 heroFs×0.62 夹在 [30,58]，与可用宽无关），
-     一遇长姓名就直接压到右下陪衬上（2026-08-17 E3 实测，必然非偶发）。
-     两行走同一套写法，且可用宽由陪衬的**实测位置**决定，不是拍脑袋减一个常数。*/
-  const nm = document.getElementById('nm');
-  const rl = document.getElementById('rl');
-  let nameFs = parseFloat(cs.getPropertyValue('--name-fs')) || 44;
-  let roleFs = parseFloat(cs.getPropertyValue('--role-fs')) || 24;
-  const nameIdeal = Math.max(30, Math.min(58, heroFs * 0.62));
-  const fitIdent = () => {
-    if (nm) {
-      const r = inkRect(nm);
-      nameFs = linearFit(nm, nameIdeal, rightLimit(r) - r.left);
-      rs.setProperty('--name-fs', nameFs.toFixed(1) + 'px');
-    }
-    if (rl) {
-      const r = inkRect(rl);
-      const avail = rightLimit(r) - r.left;
-      /* 身份行是 detail 档（§2-b：hero × 0.20–0.22），并且不许追平**实际渲出来的**姓名。
-         ⚠️ 两处坑都踩过：① 旧写法 heroFs × 0.34 —— hero 从 70 涨到 150 后这行解到 51px，
-         比递进行还大；② 一度把目标挂在被挤小的 nameFs 上 —— 姓名一被压窄，
-         身份行的目标跟着塌到下限以下，两行折行那条路直接变成空转（E3/E5 实测）。*/
-      const ideal = Math.max(ROLE_MIN, Math.min(heroFs * 0.22, nameFs * 0.60));
-      rl.style.whiteSpace = 'nowrap'; rl.style.maxWidth = '';
-      roleFs = linearFit(rl, ideal, avail);
-      /* 头像放大到 36% 后身份行的可用宽被挤窄，单行解常常掉到可读下限附近。
-         宁可**折成两行**也不把这行缩小超过 15%（纵向空间由头像撑着，白留着也是留着），
-         ⛔ 别为了「保持单行」把字缩成一条灰线。两行仍够不着下限才报红。*/
-      if (roleFs < Math.max(ROLE_MIN, ideal * 0.85)) {
-        rl.style.whiteSpace = 'normal';
-        rl.style.maxWidth = avail.toFixed(1) + 'px';
-        /* 高度**和**宽度都要判：.seg 是 nowrap，单段撑爆 max-width 时行数不变、
-           只会横向溢出到陪衬上——只判高度就是又一个恒绿闸门。*/
-        const okAt = fs => {
-          rs.setProperty('--role-fs', fs.toFixed(2) + 'px');
-          return rl.getBoundingClientRect().height <= fs * 1.35 * 2 + 1
-              && rl.scrollWidth <= avail + 0.5;
-        };
-        /* ⚠️ 先直接试 ideal 本身，⛔ 别一上来就二分：单行解与 ideal 只差零点几 px 时，
-           二分的 hi-lo 门限直接把循环跳过，折行这条路整个空转（E3/E5 实测卡在 17.8px）。*/
-        if (okAt(ideal)) roleFs = ideal;
-        else {
-          let lo = roleFs, hi = ideal, best = roleFs;
-          for (let i = 0; i < 20 && hi - lo > 0.2; i++) {
-            const mid = (lo + hi) / 2;
-            if (okAt(mid)) { best = mid; lo = mid; } else hi = mid;
-          }
-          roleFs = best;
-        }
-      }
-      rs.setProperty('--role-fs', roleFs.toFixed(1) + 'px');
-    }
-  };
+
+  /* 头像旁的身份行：版面解完再补这一刀，**与改动前逐字同义**（QUAL 路径已在回路里解过，
+     这里再跑一遍是幂等的：ideal 与可用宽都没变，二分会回到同一个值）。*/
   fitIdent();
   fitIdent();   /* 缩完字号行高变了、纵向位置也变了 —— 再按新位置量一次陪衬避让 */
 
@@ -891,6 +968,40 @@ window.__fit = function () {
     steps_count: stepsBox ? stepsBox.querySelectorAll('.step').length : 0,
     name_fs: +nameFs.toFixed(1),
     role_fs: +roleFs.toFixed(1),
+    /* 资质行/身份行落在哪个槽位。⛔ 交出去，别让读的人从别处推——两个落点的
+       可读性判据完全不同（整幅宽 756px vs 头像旁 239px）。*/
+    role_slot: QUAL ? 'full' : 'ident',
+    role_min: ROLE_MIN,
+    /* 资质行**实际**拿到的可用宽。⛔ 必须交：字号是 min(档位上限, 可用宽/行宽) 解出来的，
+       只报字号的话，「解小了」到底是文本太长还是可用宽被夹小，读的人分不出来。*/
+    role_avail: rl ? +(function(){ const r = document.createRange(); r.selectNodeContents(rl);
+      const b = r.getBoundingClientRect(); return (QUAL ? (W - padX) : rightLimit(b)) - b.left; })().toFixed(1) : null,
+    /* 缩略图上的实际字号：判「缩略图可见」用的就是它，⛔ 别让读的人自己乘
+       （与 hero_thumb_px 共用同一个 thumbW，⛔ 不在 python 侧另算一遍）。*/
+    role_thumb_px: +(roleFs * thumbW / W).toFixed(1),
+    role_max_lines: ROLE_MAX_LINES,
+    /* 🔴 **实际折了几行**。两个坑都踩过，⛔ 别退回任何一种：
+       ① `el.getClientRects()` —— `.role` 是 block，它自己只有一个边框盒，
+          行数在它**内容**里，会恒报 1（与 step_lines 同一个坑）；
+       ② `Range.selectNodeContents(...).getClientRects().length` —— 对**含子元素**的
+          容器，每个 `<span class="seg">` 与它内部的文本节点**各产生一个矩形**，
+          于是一条实际只折 2 行的资质行报成 **7**（2026-09-03 首跑实测，⛔ 不是估算）。
+          `.tx` 里是纯文本所以 step_lines 用它没事，资质行里有 seg ⇒ 不能照抄。
+       ⇒ 数的是**有几个不同的行顶**：同一行上的 span 与其文本 top 相同、会被去重，
+          不同行 top 不同、照数。*/
+    role_lines: rl ? (() => {
+      const r = document.createRange(); r.selectNodeContents(rl);
+      return new Set([...r.getClientRects()].map(x => Math.round(x.top * 2) / 2)).size;
+    })() : 0,
+    /* ④b 的项内断行**实际有没有被启用**：只报「≤3 行」的话，
+       分不出「本来就一行」与「靠拆开注册号才压到三行」。*/
+    role_seg_wrap: !!(rl && rl.classList.contains('seg-wrap')),
+    /* 🔴 **存在型判据**（⛔ 别只留禁止型：全是"不许超"的判据在元素被删光时恒绿）：
+       头像直径与它占画面宽的实际比例——防止有人为了塞下资质行把 2026-08-14
+       老板明令的「头像放大成主要元素」（36%）悄悄改小。*/
+    avatar_d: avatarD,
+    avatar_ratio: +(avatarD / W).toFixed(4),
+    avatar_present: !!document.getElementById('avatar'),
     hero_squeezed: heroSqueezed,
     hero_below_min: heroBelowMin,
     hero_min: HERO_MIN,

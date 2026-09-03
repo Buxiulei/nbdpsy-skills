@@ -120,7 +120,13 @@ FIT_KEYS = {
                'overflow_px', 'safe_3x4_ok', 'crop_3x4',
                'hero_glyph_pct_band', 'hero_ink_ratio', 'hero_max',
                'hero_fill_pct', 'hero_fill_min', 'hero_fill_low', 'hero_at_max',
-               'steps_count'),
+               'steps_count',
+               # 🩸 资质行（T201/T209）这一族**必须列进来**：下面的红灯文案硬取
+               # role_slot / role_lines / role_max_lines / role_min，漏一个就会
+               # 静默印出「资质行折了 None 行」——正是本表要防的那种伪装。
+               'role_slot', 'role_min', 'role_max_lines', 'role_lines', 'role_seg_wrap',
+               'role_thumb_px', 'role_avail',
+               'avatar_d', 'avatar_ratio', 'avatar_present'),
     'still-life': ('icons', 'gaps', 'group_ink_w', 'margin_left', 'margin_right', 'margin_top',
                    'baseline_y', 'baseline_drawn', 'baseline_align_dev_px', 'desk_w',
                    'desk_overhang_px', 'accent', 'accent_form', 'accent_spots', 'accent_options',
@@ -1199,6 +1205,14 @@ def main():
     if fit.get('sub_seg_overflow'):
         warnings.append("副题里有**一整段没有标点**且比版心还宽，已退回自由折行——"
                         "断行会落在词中间。想让它断得好看，在金句里加个逗号")
+    # 🔴 **存在型判据**（⛔ 不是"不许超"那类禁止型：禁止型在元素被删光时恒绿）。
+    # 2026-08-14 老板明令「头像放大成主要元素」＝ 画面宽 36%。资质行要地方，
+    # 最省事的做法就是把头像缩小——这条就是拦那一手的。
+    # ⚠️ 只在**这份数据本来就带头像**时判：没传 avatar 的封面不适用，⛔ 不是"判过了没问题"。
+    if fit.get('avatar_present') and abs(fit.get('avatar_ratio', 0) - 0.36) > 0.005:
+        warnings.append(
+            f"🔴 头像只占画面宽 {fit.get('avatar_ratio')}（{fit.get('avatar_d')}px），"
+            f"偏离 2026-08-14 老板定稿的 36%——⛔ 不许为了塞下别的元素把头像缩小")
     if fit.get('ident_orn_overlap'):
         warnings.append("🔴 姓名/身份行仍与右下陪衬重叠——避让算完还是压上了，"
                         "换更窄的陪衬（orn_ratio 调小）或把姓名写短")
@@ -1217,7 +1231,21 @@ def main():
                         f"（220px 卡片上只剩 {fit['hero_thumb_px']}px，会糊成色块）——"
                         f"版式救不了，只能把 hero 缩短")
     if fit.get('role_below_min'):
-        warnings.append(f"身份行被压到 {fit['role_fs']}px 才放得下——把身份行写短一点，或换个更窄的陪衬")
+        # ⛔ 两个落点的处置**不一样**，别共用一句：头像旁那条能靠"写短/换窄陪衬"救回来，
+        # 整幅宽的资质行已经吃满版心了，救法只剩"删项"或"把注册号换成短形态"。
+        if fit.get('role_slot') == 'full':
+            warnings.append(
+                f"🔴 封面资质行被压到 {fit['role_fs']}px 才放得下（可读下限 {fit['role_min']}px"
+                f"＝220px 缩略图上 14px；当前只有 {fit['role_thumb_px']}px，会糊成一条灰线）——"
+                f"整幅宽已经吃满版心，版式救不了，只能删掉一项或换短形态的注册号")
+        else:
+            warnings.append(f"身份行被压到 {fit['role_fs']}px 才放得下——把身份行写短一点，或换个更窄的陪衬")
+    # 🔴 行数是**独立一条**：字号够大但折了 5 行，同样是版面事故，而 role_fs 看着完全正常
+    #    （与 step_lines 那条同形状：字号量具报不出折行失控）。
+    if fit.get('role_lines', 0) > fit.get('role_max_lines', 99):
+        warnings.append(
+            f"🔴 封面资质行折了 {fit['role_lines']} 行，超出上限 {fit['role_max_lines']} 行——"
+            f"资质项太多或注册号太长，删一项或换短形态")
     if fit['hero_squeezed']:
         # ⛔ 处置得跟着「有没有 steps」走：没有递进行时叫人「删递进行的字」是句做不到的话
         cut = ("优先删递进行的字，别削 hero" if has_steps
@@ -1284,8 +1312,22 @@ def main():
         'hero_max_line': fit.get('hero_max_line'),
         'name_fs': fit['name_fs'],
         'role_fs': fit['role_fs'],
+        # 资质行（T201/T209）这一族：落点决定判据，⛔ 别只交字号让读的人自己猜落点
+        'role_slot': fit['role_slot'],
+        'role_min': fit['role_min'],
+        'role_avail': fit['role_avail'],
+        'role_lines': fit['role_lines'],
+        'role_max_lines': fit['role_max_lines'],
+        'role_seg_wrap': fit['role_seg_wrap'],
+        'role_thumb_px': fit['role_thumb_px'],
+        # 存在型判据的实测量（⛔ 不是由调用方假定的）
+        'avatar_d': fit['avatar_d'],
+        'avatar_ratio': fit['avatar_ratio'],
+        'avatar_present': fit['avatar_present'],
         'ident_orn_overlap': fit['ident_orn_overlap'],
         'safe_3x4_ok': fit['safe_3x4_ok'],
+        # 溢出量此前只进凭证不进 stdout ⇒ 批量核验时看不见，只能一份份翻凭证
+        'overflow_px': fit['overflow_px'],
         'warnings': warnings,
     }, ensure_ascii=False))
     return 0
