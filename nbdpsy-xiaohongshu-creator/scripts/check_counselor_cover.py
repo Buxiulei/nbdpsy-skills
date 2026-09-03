@@ -48,11 +48,37 @@ def norm(s) -> str:
     return re.sub(r'\s*·\s*', '·', re.sub(r'\s+', ' ', str(s or '')).strip())
 
 
-def check(fit: dict, want_line) -> list:
+# 编号 token：连续 ≥4 个字母/数字/连字符（`X-26-242` / `30220220732039900002`）。
+# 与模板 `NUM_TOKEN` 同形，⛔ 两边各写一套会漂。
+NUM_TOKEN = re.compile(r'[A-Za-z0-9][A-Za-z0-9-]{3,}')
+
+
+def parse_expect(v):
+    """事实包期望值 → `(期望整行, 无编号自述项列表)`。
+
+    两种写法：
+      "CPS 注册号 X-26-242"                          ← 全部是**有编号**的资质项
+      {"items": [...], "no_number": ["中国澳门心理治疗师"]}  ← 含**无编号自述项**
+
+    🔴 **无编号自述项必须显式标记**（老板 T209=A「凡有资质都放含澳门」+ T204
+    「宣传层可写我方自证真实的内容」；助理 2026-09-03 裁定）。
+    ⚠️ 显式标记是给「同一行里一半可核验、一半不可核验，读者分不出证据强度」这个
+    顾虑的处置 ⇒ ⛔ 省；⛔ 让它与有编号项同形态混在一起。
+    """
+    if isinstance(v, dict):
+        items = [x for x in (v.get('items') or []) if x]
+        return ' · '.join(items), [x for x in (v.get('no_number') or []) if x]
+    return (v or ''), []
+
+
+def check(fit: dict, want_line, no_number=()) -> list:
     """逐条判。返回不合规原因列表（空＝通过）。
 
-    `want_line`：该咨询师**事实包里**的注册号串；`''` ＝ 事实包确认无注册号；
+    `want_line`：该咨询师**事实包里**的资质串；`''` ＝ 确认没有；
     **`None` ＝ 没提供期望值** ⇒ 编号逐字这条**标未验**，⛔ 静默当通过。
+    `no_number`：其中**无编号自述项**的逐字列表（老板背书、无号可比）——
+    它们走**另一条判据**：⛔ 拿去做编号比对（那没有比较对象），
+    改判「**它不得含编号形态的串**」——有人给它配了个号，就是把两类混了。
 
     ⚠️ **存在型与禁止型都要有**：全是「不许超」的判据，在元素被整个删空时会恒绿。
     """
@@ -85,6 +111,16 @@ def check(fit: dict, want_line) -> list:
         #    （删末位/换假号）当场抓到的。⇒ 动这一段之后必须重跑那两条破坏用例。
         if got != norm(want_line):
             bad.append(f'编号与事实包不符：应「{want_line}」，画出「{fit.get("role_text")}」')
+        # 🔴 **无编号自述项走另一条路**：它没有号可比，判的是「⛔ 混进编号形态的串」。
+        # ⚠️ 这条是新分类的"响"点——若哪天有人给澳门项配了个假编号，
+        #    按编号比对那条只会说「与事实包不符」（对，但指错了病）；这条才点得出
+        #    「它本来就该是无编号项」。
+        for it in no_number:
+            if NUM_TOKEN.search(it):
+                bad.append(f'「{it}」在 expect 里标着**无编号自述项**，本身却含编号形态的串'
+                           f'——两类混了：要么去掉那个号，要么把它挪出 no_number')
+            elif it not in (fit.get('role_text') or ''):
+                bad.append(f'expect 标了无编号自述项「{it}」，画面上却没有它')
         if fit.get('role_num_broken'):
             bad.append('编号被从中间折断——注册号是整体，劈成两行读者没法逐位比对')
         if (fit.get('role_lines') or 0) > ROLE_MAX_LINES:
@@ -154,8 +190,11 @@ def main() -> int:
             fit, data = o, json.loads(p.read_text(encoding='utf-8'))
         # 🔴 期望值只从 --expect 取；没给就是 None ⇒ 那条标未验，⛔ 拿被检数据自己顶上
         who = (data.get('identity') or {}).get('name') or p.stem
-        want = expect.get(who, '') if expect is not None else None
-        bad = check(fit, want)
+        if expect is None:
+            want, nonum = None, ()
+        else:
+            want, nonum = parse_expect(expect.get(who, ''))
+        bad = check(fit, want, nonum)
         uv = [b for b in bad if b.startswith('__UNVERIFIED__')]
         bad = [b for b in bad if not b.startswith('__UNVERIFIED__')]
         if uv:

@@ -1421,3 +1421,40 @@ def test_封面闸门_量具缺失是判不成而非不合规():
     f = _cover_fit(); del f["role_num_broken"]
     bad = ccc.check(f, _COVER_WANT)
     assert bad and bad[0].startswith("__UNUSABLE__")
+
+
+# ── 无编号自述项（老板 T209=A 背书）：与「有编号项」必须是两类 ──────────
+# 🔴 助理 2026-09-03 裁定：资质行允许**老板背书的无编号项**（黄安麟「中国澳门心理治疗师」），
+#    但**标记必须显式** —— 它是给「同一行里一半可核验、一半不可核验，读者分不出证据强度」
+#    这个顾虑的处置。⇒ ⛔ 与有编号项同形态混在一起。
+
+def test_expect_解析两种写法():
+    assert ccc.parse_expect("CPS 注册号 X-26-242") == ("CPS 注册号 X-26-242", [])
+    line, nonum = ccc.parse_expect(
+        {"items": ["CPS 注册号 X-25-046", "中国澳门心理治疗师"],
+         "no_number": ["中国澳门心理治疗师"]})
+    assert line == "CPS 注册号 X-25-046 · 中国澳门心理治疗师"
+    assert nonum == ["中国澳门心理治疗师"]
+
+
+def test_无编号自述项_正常通过():
+    f = _cover_fit(role_text="CPS 注册号 X-25-046 · 中国澳门心理治疗师", role_lines=3)
+    assert ccc.check(f, "CPS 注册号 X-25-046 · 中国澳门心理治疗师", ["中国澳门心理治疗师"]) == []
+
+
+def test_无编号自述项_含编号形态就报两类混了():
+    """🔴 新分类的"响"点：有人给澳门项配了个号、还标成无编号自述项。
+
+    ⚠️ 逐字比对那条只会说「与事实包不符」——**对，但指错了病**；
+       这条才点得出「它本来就该是无编号项」。
+    """
+    it = "中国澳门心理治疗师 MO-2024-0088"
+    bad = ccc.check(_cover_fit(role_text=f"CPS 注册号 X-25-046 · {it}", role_lines=3),
+                    f"CPS 注册号 X-25-046 · {it}", [it])
+    assert any("两类混了" in b for b in bad), bad
+
+
+def test_无编号自述项_标了却没画出来也要报():
+    bad = ccc.check(_cover_fit(role_text="CPS 注册号 X-25-046"),
+                    "CPS 注册号 X-25-046 · 中国澳门心理治疗师", ["中国澳门心理治疗师"])
+    assert any("画面上却没有" in b for b in bad), bad
