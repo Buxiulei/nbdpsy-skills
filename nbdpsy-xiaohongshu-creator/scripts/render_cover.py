@@ -121,11 +121,12 @@ FIT_KEYS = {
                'hero_glyph_pct_band', 'hero_ink_ratio', 'hero_max',
                'hero_fill_pct', 'hero_fill_min', 'hero_fill_low', 'hero_at_max',
                'steps_count',
-               # 🩸 资质行（T201/T209）这一族**必须列进来**：下面的红灯文案硬取
-               # role_slot / role_lines / role_max_lines / role_min，漏一个就会
-               # 静默印出「资质行折了 None 行」——正是本表要防的那种伪装。
-               'role_slot', 'role_min', 'role_max_lines', 'role_lines', 'role_seg_wrap',
+               # 🩸 身份行（T201/T211=C）这一族**必须列进来**：下面的红灯文案硬取
+               # role_lines / role_max_lines / role_min / role_text，漏一个就会
+               # 静默印出「身份行折了 None 行」——正是本表要防的那种伪装。
+               'role_min', 'role_max_lines', 'role_lines', 'role_seg_wrap',
                'role_thumb_px', 'role_avail', 'role_text',
+               'role_num_broken', 'role_num_count', 'role_fs_margin',
                'avatar_d', 'avatar_ratio', 'avatar_present'),
     'still-life': ('icons', 'gaps', 'group_ink_w', 'margin_left', 'margin_right', 'margin_top',
                    'baseline_y', 'baseline_drawn', 'baseline_align_dev_px', 'desk_w',
@@ -405,9 +406,21 @@ def check_fields(data: dict, landscape: bool = False):
         if not str(data.get('avatar') or '').strip():
             red.append('🔴 缺 avatar：头像是这个版式的第 ④ 层，缺了右下角空一大片（首版实测 19.3% 版面）')
         idn = data.get('identity') or {}
-        for k, what in (('name', '姓名'), ('line', '身份行')):
-            if not str(idn.get(k) or '').strip():
-                red.append(f'🔴 缺 identity.{k}（{what}）：头像旁会只剩半边，封面认不出作者是谁')
+        if not str(idn.get('name') or '').strip():
+            red.append('🔴 缺 identity.name（姓名）：头像旁会只剩半边，封面认不出作者是谁')
+        # 🔴 **判据跟着结构改，⛔ 不是简单放开**（老板 T211=C 2026-09-03）：
+        # 资质**编号**与**学历**拆开之后，`identity.line` 只放编号，而
+        # 「有 CPS／中级治疗师注册号」本来就不是人人都有（存量 11 位里 3 位两样都没有）。
+        # 这条闸原本要保的是「封面认不出作者是谁」——那个职责现在由**副题**承担。
+        # ⇒ 无 `identity.line` 时改判**副题非空**；两样都空才是真的认不出作者。
+        # ⚠️ 只判「副题非空」这一层，**⛔ 不判它是否等于事实包的学历值**：
+        #    渲染器手上没有事实包，硬做那道闸只会恒绿（一条永远不会响的闸门
+        #    比没有闸门更糟——它让人以为已经查过了）。逐字核对留在
+        #    `counselor-note-spec` §5 第 7 步图审那道人工闸。
+        if not str(idn.get('line') or '').strip() and not str(data.get('subtitle') or '').strip():
+            red.append('🔴 identity.line（资质编号）与 subtitle（学历/职称）双空：'
+                       '两者至少要有一个——封面上认不出作者是谁。'
+                       '⚠️ 没有注册号是正常的（不是人人都有），但那时学历必须在副题里')
     if not str(data.get('footer') or '').strip():
         red.append('🔴 缺 footer：底部落款是品牌位，缺了这版式就不成立')
     return red, exempted
@@ -1222,15 +1235,16 @@ def main():
         warnings.append(
             f"🔴 头像只占画面宽 {fit.get('avatar_ratio')}（{fit.get('avatar_d')}px），"
             f"偏离 2026-08-14 老板定稿的 36%——⛔ 不许为了塞下别的元素把头像缩小")
-    # 🔴 **逐字闸门**：画面上画出来的资质行必须与 `identity.line` 逐字相同。
+    # 🔴 **逐字闸门**：画面上画出来的身份行必须与 `identity.line` 逐字相同。
     # ⛔ 别以为"传进去了就一定画出来"——横版会整层收起、落点开关会挑落点、
     # 断行/省略都可能吃字符，而字号与行数那两条量具**对少了一位数字毫无反应**。
     # 空白按折叠后比：`roleHTML` 会把分隔号统一渲成「 · 」，那是版式不是内容。
     _want = re.sub(r'\s+', ' ', str((data.get('identity') or {}).get('line') or '')).strip()
     _got = re.sub(r'\s+', ' ', str(fit.get('role_text') or '')).strip()
     if _want and _norm_sep(_want) != _norm_sep(_got):
-        warnings.append(f"🔴 画面上的资质行与传入的 identity.line 不一致——"
-                        f"传入「{_want}」，画出「{_got}」。⛔ 注册号少一位在字号/行数量具上毫无反应")
+        warnings.append(f"🔴 画面上的身份行与传入的 identity.line 不一致——"
+                        f"传入「{_want}」，画出「{_got}」。"
+                        f"⛔ 编号少一位在字号/行数量具上毫无反应（T211=C 硬判据：编号完整不截断）")
     if fit.get('ident_orn_overlap'):
         warnings.append("🔴 姓名/身份行仍与右下陪衬重叠——避让算完还是压上了，"
                         "换更窄的陪衬（orn_ratio 调小）或把姓名写短")
@@ -1249,21 +1263,21 @@ def main():
                         f"（220px 卡片上只剩 {fit['hero_thumb_px']}px，会糊成色块）——"
                         f"版式救不了，只能把 hero 缩短")
     if fit.get('role_below_min'):
-        # ⛔ 两个落点的处置**不一样**，别共用一句：头像旁那条能靠"写短/换窄陪衬"救回来，
-        # 整幅宽的资质行已经吃满版心了，救法只剩"删项"或"把注册号换成短形态"。
-        if fit.get('role_slot') == 'full':
-            warnings.append(
-                f"🔴 封面资质行被压到 {fit['role_fs']}px 才放得下（可读下限 {fit['role_min']}px"
-                f"＝220px 缩略图上 14px；当前只有 {fit['role_thumb_px']}px，会糊成一条灰线）——"
-                f"整幅宽已经吃满版心，版式救不了，只能删掉一项或换短形态的注册号")
-        else:
-            warnings.append(f"身份行被压到 {fit['role_fs']}px 才放得下——把身份行写短一点，或换个更窄的陪衬")
+        warnings.append(f"🔴 身份行被压到 {fit['role_fs']}px，低于下限 {fit['role_min']}px"
+                        f"（余量 {fit['role_fs_margin']}px）——把编号写短，或换个更窄的陪衬。"
+                        f"⛔ 别靠调低 role_min 放行")
     # 🔴 行数是**独立一条**：字号够大但折了 5 行，同样是版面事故，而 role_fs 看着完全正常
     #    （与 step_lines 那条同形状：字号量具报不出折行失控）。
+    if fit.get('role_num_broken'):
+        warnings.append(
+            f"🔴 编号被从中间折断了（画面上是「{fit.get('role_text')}」，共 {fit.get('role_num_count')} 个编号 token）——"
+            f"注册号是整体，劈成两行读者没法逐位比对，观感也差（T211=C）。"
+            f"处置＝把身份行写短（去掉另一项）或换更窄的陪衬；"
+            f"⛔ 字号已经降到下限 {fit.get('role_min')}px 仍放不下才会走到这一步")
     if fit.get('role_lines', 0) > fit.get('role_max_lines', 99):
         warnings.append(
-            f"🔴 封面资质行折了 {fit['role_lines']} 行，超出上限 {fit['role_max_lines']} 行——"
-            f"资质项太多或注册号太长，删一项或换短形态")
+            f"🔴 身份行折了 {fit['role_lines']} 行，超出上限 {fit['role_max_lines']} 行——"
+            f"内容太长：删一项或换短形态的编号（⛔ 别缩字号硬塞，T201）")
     if fit['hero_squeezed']:
         # ⛔ 处置得跟着「有没有 steps」走：没有递进行时叫人「删递进行的字」是句做不到的话
         cut = ("优先删递进行的字，别削 hero" if has_steps
@@ -1330,14 +1344,18 @@ def main():
         'hero_max_line': fit.get('hero_max_line'),
         'name_fs': fit['name_fs'],
         'role_fs': fit['role_fs'],
-        # 资质行（T201/T209）这一族：落点决定判据，⛔ 别只交字号让读的人自己猜落点
-        'role_slot': fit['role_slot'],
+        # 身份行（T201/T211=C）这一族
         'role_min': fit['role_min'],
         'role_avail': fit['role_avail'],
         'role_text': fit['role_text'],
         'role_lines': fit['role_lines'],
         'role_max_lines': fit['role_max_lines'],
         'role_seg_wrap': fit['role_seg_wrap'],
+        # 🔴 编号完整性（T211=C 硬判据）与距下限的余量——⛔ 只报红/绿的话，
+        # 下一个改动的人看不见自己把余量吃掉了多少
+        'role_num_broken': fit['role_num_broken'],
+        'role_num_count': fit['role_num_count'],
+        'role_fs_margin': fit['role_fs_margin'],
         'role_thumb_px': fit['role_thumb_px'],
         # 存在型判据的实测量（⛔ 不是由调用方假定的）
         'avatar_d': fit['avatar_d'],

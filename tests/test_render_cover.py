@@ -533,13 +533,42 @@ def test_竖版缺avatar仍然报红():
     assert exempted == [], "竖版一条都不该被豁免"
 
 
-@pytest.mark.parametrize("k", ["name", "line"])
-def test_竖版缺identity仍然报红(k):
-    idn = {"name": "刘琼", "line": "本文作者"}
-    idn[k] = ""
-    red, exempted = rc.check_fields(_fields(identity=idn), landscape=False)
-    assert any(f"identity.{k}" in w for w in red)
+def test_竖版缺姓名仍然报红():
+    red, exempted = rc.check_fields(
+        _fields(identity={"name": "", "line": "本文作者"}), landscape=False)
+    assert any("identity.name" in w for w in red)
     assert exempted == []
+
+
+# 🔴 `identity.line` 那条闸的判据 2026-09-03 随 T211=C 改过（⛔ 不是放开）：
+# 资质**编号**与**学历**拆开后，`identity.line` 只放编号，而两种注册号本来就不是人人都有
+# （存量 11 位里 3 位两样都没有）。这条闸要保的是「封面认不出作者是谁」——
+# 那个职责现在由**副题**承担。⇒ 判据从「line 非空」改成「line 与 subtitle 不能双空」。
+# ⚠️ 下面三个用例是**成对的**：只留「双空报红」会漏掉「单空放行」这半边，
+#    而正是那半边定义了改动的**边界**（改宽到什么程度为止）。
+
+def test_竖版无编号但副题有学历时放行():
+    """拆开后的正常形态：没有注册号（如李牧阳/李冠阳/徐瑞恒），学历在副题里。"""
+    red, _ = rc.check_fields(
+        _fields(identity={"name": "刘琼"}, subtitle="北京大学临床心理硕士"), landscape=False)
+    assert not any("identity.line" in w for w in red), \
+        "没有注册号是正常的（不是人人都有），学历在副题里就不该报红"
+
+
+def test_竖版编号与副题双空才报红():
+    red, exempted = rc.check_fields(
+        _fields(identity={"name": "刘琼"}, subtitle=""), landscape=False)
+    assert any("identity.line" in w and "subtitle" in w for w in red), \
+        "两者都空才是真的认不出作者是谁"
+    assert exempted == []
+
+
+def test_竖版有编号时副题空不因这条报红():
+    """反过来也成立：编号在位时，这条闸不该因为副题空而借机报红（它管的不是副题）。"""
+    red, _ = rc.check_fields(
+        _fields(identity={"name": "刘琼", "line": "CPS 注册号 X-26-242"}, subtitle=""),
+        landscape=False)
+    assert not any("identity.line" in w for w in red)
 
 
 def test_不传landscape就按竖版判():

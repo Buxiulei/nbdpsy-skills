@@ -5124,6 +5124,9 @@ skill 侧零改动；顺序必须是**先加信号量再放开页内并行**，�
 - `nbdpsy-xiaohongshu-creator/references/counselor-note-spec.md` §6.2：前置判据从**两条减为
   一条**（只剩 `is_accepting=true`），删掉「本篇不是危机相关笔记」这条题材闸门；§6.7 与验证
   清单、红线速记第 6 条同步。
+  <!-- 📌 2026-09-03：counselor-note-spec 的红线速记条目序号顺过一遍（原序 0 1 2 3 6 4 7 5 → 0–7，
+       只改序号⛔未调条目顺序）。本行说的「第 6 条」＝「科普笔记末页推介页（§6）」那条，
+       现在是**第 4 条**。⛔ 不改上面这行的历史陈述，只加这条指向注记。 -->
 - `nbdpsy-xiaohongshu-creator/SKILL.md`：「两条前置闸门」改为「前置闸门只有一条」；红线 4
   末尾的题材禁令删除。
 - `nbdpsy-xiaohongshu-creator/references/xiaohongshu-spec.md` **§1.5 G6 定义本身**：删掉
