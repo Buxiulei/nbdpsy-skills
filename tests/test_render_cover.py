@@ -1345,3 +1345,79 @@ def test_凭证记贴图但不记dataURI():
     assert "'sticker': ({'file':" in src and "if getattr(args, 'sticker', None) else None)" in src
     # ⛔ 凭证里不许出现 data URI 本身
     assert "'sticker': data['sticker']" not in src
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 咨询师推介封面验收闸门（check_counselor_cover.py）
+# 🔴 **每条判据都配一个"让它响"的用例**：只测「正常数据全绿」，与判据恒真的
+#    外显完全相同 —— 本脚本两处缺陷（期望值与被检数据同源、逐字比对被改动吃掉）
+#    都是靠这类用例抓出来的，⛔ 靠正常数据。
+# ══════════════════════════════════════════════════════════════════════
+
+import importlib.util as _ilu
+import os.path as _op
+
+_ccc_spec = _ilu.spec_from_file_location(
+    "check_counselor_cover", _op.join(_op.dirname(rc.__file__), "check_counselor_cover.py"))
+ccc = _ilu.module_from_spec(_ccc_spec)
+_ccc_spec.loader.exec_module(ccc)
+
+
+def _cover_fit(**over):
+    """一份**通过**的量具（render_cover 的 stdout 形状）。"""
+    d = {"sub_text": "北大临床心理硕士", "role_text": "CPS 注册号 X-26-242",
+         "role_fs": 24.0, "role_lines": 1, "role_num_broken": False,
+         "avatar_present": True, "avatar_ratio": 0.3596,
+         "overflow_px": 0, "safe_3x4_ok": True}
+    d.update(over)
+    return d
+
+
+_COVER_WANT = "CPS 注册号 X-26-242"
+
+
+def test_封面闸门_正常数据通过():
+    assert ccc.check(_cover_fit(), _COVER_WANT) == []
+
+
+@pytest.mark.parametrize("over, want, 关键词", [
+    # ① 副题：字面「北大」⛔ 认「北京大学」（助理裁定：GEO 关键词，四字里没有相邻的「北大」）
+    (dict(sub_text="北京大学临床心理硕士"), _COVER_WANT, "北大"),
+    (dict(sub_text="北大临床心理学博士后在读研究员"), _COVER_WANT, "12"),
+    # ② 编号：期望值来自事实包 ⇒ 删一位/换假号都得红
+    (dict(role_text="CPS 注册号 X-26-24"), _COVER_WANT, "事实包不符"),
+    (dict(role_text="CPS 注册号 X-99-999"), _COVER_WANT, "事实包不符"),
+    (dict(role_num_broken=True), _COVER_WANT, "折断"),
+    (dict(role_lines=4), _COVER_WANT, "行"),
+    (dict(role_lines=0), _COVER_WANT, "0 行"),
+    (dict(role_fs=19.9), _COVER_WANT, "下限"),
+    # ③ 事实包说没有注册号，画面上却有 ⇒ 红（反向：⛔ 只判"有的时候对不对"）
+    (dict(), "", "却有"),
+    # ④ 头像：**存在型**判据
+    (dict(avatar_present=False), _COVER_WANT, "头像"),
+    (dict(avatar_ratio=0.22), _COVER_WANT, "0.36"),
+    # ⑤ 版面
+    (dict(overflow_px=35.5), _COVER_WANT, "溢出"),
+    (dict(safe_3x4_ok=False), _COVER_WANT, "裁切"),
+])
+def test_封面闸门_每条判据都能响(over, want, 关键词):
+    bad = ccc.check(_cover_fit(**over), want)
+    assert bad, f"这条判据没响：{over}"
+    assert any(关键词 in b for b in bad), f"响了但理由对不上：{bad}"
+
+
+def test_封面闸门_没给期望值时编号那条标未验而非通过():
+    """🔴 `want_line=None`（没给 --expect）⇒ 必须标「未验」，⛔ 静默当通过。
+
+    🩸 本脚本第一版从**被检数据自己**取期望 ⇒ 输入与期望同源、那条判据恒真：
+       删末位、换假号都放行。⇒ 没有期望值时**只能说没验**，不能说通过。
+    """
+    bad = ccc.check(_cover_fit(role_text="CPS 注册号 X-99-999"), None)
+    assert any(b.startswith("__UNVERIFIED__") for b in bad)
+
+
+def test_封面闸门_量具缺失是判不成而非不合规():
+    """⛔ 与「不合规」混同：量具缺失是**没判成**，它与「判了没问题」外显相同、性质相反。"""
+    f = _cover_fit(); del f["role_num_broken"]
+    bad = ccc.check(f, _COVER_WANT)
+    assert bad and bad[0].startswith("__UNUSABLE__")
