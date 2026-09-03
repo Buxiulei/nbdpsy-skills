@@ -126,7 +126,7 @@ FIT_KEYS = {
                # 静默印出「身份行折了 None 行」——正是本表要防的那种伪装。
                'role_min', 'role_max_lines', 'role_lines', 'role_seg_wrap',
                'role_thumb_px', 'role_avail', 'role_text',
-               'role_num_broken', 'role_num_count', 'role_fs_margin',
+               'role_num_broken', 'role_num_count', 'role_fs_margin', 'sub_text',
                'avatar_d', 'avatar_ratio', 'avatar_present'),
     'still-life': ('icons', 'gaps', 'group_ink_w', 'margin_left', 'margin_right', 'margin_top',
                    'baseline_y', 'baseline_drawn', 'baseline_align_dev_px', 'desk_w',
@@ -1335,6 +1335,7 @@ def main():
         # 横版才有值（竖版 null）：横版下「hero 太短」的后果落在占宽上，⛔ 不落在字高上
         'hero_fill_pct': fit['hero_fill_pct'],
         'sub_fs': fit['sub_fs'],
+        'sub_text': fit['sub_text'],
         'hero_sub_ratio': fit['hero_sub_ratio'],
         'step_fs': fit['step_fs'],
         # 递进行**实际折了几行**（每条一个数）。⚠️ 与 hero 不同：hero 靠压字号避免折行，

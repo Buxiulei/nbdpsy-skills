@@ -937,6 +937,15 @@ window.__fit = function () {
     hero_glyph_px: +inkH.toFixed(1),
     hero_glyph_pct_of_h: +(inkH / H * 100).toFixed(2),
     sub_fs: +subFs.toFixed(1),
+    /* 🔴 **画面上实际画出来的副题文本**（从渲染后的 DOM 取，⛔ 不是输入的回声）。
+       咨询师推介封面有一条内容硬要求「副题第一行须带『北大』二字」
+       （counselor-note-spec T201 L221，助理 2026-09-03 裁定**按字面二字**执行：
+       它是 GEO/品牌关键词，而「北京大学」四字里**没有相邻的「北大」**）。
+       ⚠️ 判它必须判**画出来的那串字**：副题会被 `subHTML()` 按标点切段、
+       可能触发 free-wrap，输入与画面之间隔着一层——判输入就是判回声。
+       ⛔ 这里只**交出文本**、不在渲染器里判「有没有北大」：那是**咨询师推介封面专属**的
+       内容判据，而本模板同时服务科普笔记封面，硬判会把它们全部误伤。判据留在验收守卫。*/
+    sub_text: sub ? sub.textContent.replace(/\s+/g, ' ').trim() : null,
     hero_sub_ratio: subFs ? +(heroFs / subFs).toFixed(2) : null,
     step_fs: +stepFs.toFixed(1),
     /* 递进行**有几条**。⛔ 必须交出去：整份不传 steps 时求解器照样会解出一个 stepFs
