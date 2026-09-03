@@ -650,16 +650,24 @@ window.__fit = function () {
       if (roleFs < Math.max(ROLE_MIN, ideal * 0.85)) {
         rl.style.whiteSpace = 'normal';
         rl.style.maxWidth = avail.toFixed(1) + 'px';
-        /* ④b **单项内断行**：⛔ 只在这条折行分支上挂，⛔ 不常开。
-           2026-09-03 十一位实测：整幅宽 + 项内断 = 11/11 可读；
-           只在「·」处断（项间断）或让编号单独成行，同样整幅宽也只有 6/11。*/
-        if (QUAL) rl.classList.add('seg-wrap');
         /* 高度**和**宽度都要判：.seg 是 nowrap，单段撑爆 max-width 时行数不变、
            只会横向溢出到陪衬上——只判高度就是又一个恒绿闸门。*/
+        const roomAt = fs => rl.getBoundingClientRect().height <= fs * 1.35 * ROLE_MAX_LINES + 1
+                          && rl.scrollWidth <= avail + 0.5;
+        /* ④b **单项内断行**：⛔ 只在「光按项断放不下」时才放开，⛔ 不是进了折行分支就常开。
+           🩸 常开的代价（2026-09-03 目视实测）：`.seg` 一变成可断，浏览器就**贪心填满每一行**，
+              把下一项的头一个字拽到上一行——「CPS 注册号 X-26-242 · **北** / 京大学临床心理硕士」，
+              而这条数据**按项断本来正好两行**、根本不需要拆词。同一手法还会把 20 位注册号从中间劈开。
+           ⇒ 先只在「·」处断（seg 仍 nowrap）试一次，装不下才放开项内断。
+           ⚠️ `okAt` 有**副作用**（seg-wrap 挂没挂），二分结束后必须按最终字号**重放一次**，
+              ⛔ 别留着最后一次失败探测的状态——那会让一条本可以不拆词的资质行拆着词渲出去。*/
         const okAt = fs => {
           rs.setProperty('--role-fs', fs.toFixed(2) + 'px');
-          return rl.getBoundingClientRect().height <= fs * 1.35 * ROLE_MAX_LINES + 1
-              && rl.scrollWidth <= avail + 0.5;
+          if (QUAL) rl.classList.remove('seg-wrap');
+          if (roomAt(fs)) return true;
+          if (!QUAL) return false;
+          rl.classList.add('seg-wrap');
+          return roomAt(fs);
         };
         /* ⚠️ 先直接试 ideal 本身，⛔ 别一上来就二分：单行解与 ideal 只差零点几 px 时，
            二分的 hi-lo 门限直接把循环跳过，折行这条路整个空转（E3/E5 实测卡在 17.8px）。*/
@@ -672,6 +680,7 @@ window.__fit = function () {
           }
           roleFs = best;
         }
+        okAt(roleFs);   /* 按最终字号重放，把 seg-wrap 的状态与它对齐（见上面副作用那段）*/
       }
       rs.setProperty('--role-fs', roleFs.toFixed(1) + 'px');
     }
@@ -972,6 +981,11 @@ window.__fit = function () {
        可读性判据完全不同（整幅宽 756px vs 头像旁 239px）。*/
     role_slot: QUAL ? 'full' : 'ident',
     role_min: ROLE_MIN,
+    /* 🔴 **画面上实际画出来的那串字**（⛔ 不是输入的回声：这是从渲染后的 DOM 取的）。
+       老板 T201 的验收口径里有一条「注册号逐位比对」——字号够大、行数够少、
+       一个字符都没少，是三件事；前两件有量具，第三件此前只能靠人盯着图数数字。
+       ⚠️ 断行**不改** textContent，所以它能跨断行核对；空白已折叠，比对时按折叠后比。*/
+    role_text: rl ? rl.textContent.replace(/\s+/g, ' ').trim() : null,
     /* 资质行**实际**拿到的可用宽。⛔ 必须交：字号是 min(档位上限, 可用宽/行宽) 解出来的，
        只报字号的话，「解小了」到底是文本太长还是可用宽被夹小，读的人分不出来。*/
     role_avail: rl ? +(function(){ const r = document.createRange(); r.selectNodeContents(rl);

@@ -125,7 +125,7 @@ FIT_KEYS = {
                # role_slot / role_lines / role_max_lines / role_min，漏一个就会
                # 静默印出「资质行折了 None 行」——正是本表要防的那种伪装。
                'role_slot', 'role_min', 'role_max_lines', 'role_lines', 'role_seg_wrap',
-               'role_thumb_px', 'role_avail',
+               'role_thumb_px', 'role_avail', 'role_text',
                'avatar_d', 'avatar_ratio', 'avatar_present'),
     'still-life': ('icons', 'gaps', 'group_ink_w', 'margin_left', 'margin_right', 'margin_top',
                    'baseline_y', 'baseline_drawn', 'baseline_align_dev_px', 'desk_w',
@@ -743,6 +743,15 @@ CORD_CAPABLE_ICONS = frozenset({
 })
 
 
+def _norm_sep(s: str) -> str:
+    """把「·」两侧的空格折平：`roleHTML` 恒渲成「 · 」，而输入可能写成「·」。
+
+    ⛔ 只归一分隔符两侧的空白，**其余字符一个都不动**——注册号里少一位、
+    「、」没换成「·」这类真差异必须留在比对结果里。
+    """
+    return re.sub(r'\s*·\s*', '·', s)
+
+
 def cord_semantic_problem(cord, names):
     """accent=cord 时，线得从一件**本来就带线**的物件上垂下来。不满足就返回红字。"""
     if not cord or not cord.get('drawn'):
@@ -1213,6 +1222,15 @@ def main():
         warnings.append(
             f"🔴 头像只占画面宽 {fit.get('avatar_ratio')}（{fit.get('avatar_d')}px），"
             f"偏离 2026-08-14 老板定稿的 36%——⛔ 不许为了塞下别的元素把头像缩小")
+    # 🔴 **逐字闸门**：画面上画出来的资质行必须与 `identity.line` 逐字相同。
+    # ⛔ 别以为"传进去了就一定画出来"——横版会整层收起、落点开关会挑落点、
+    # 断行/省略都可能吃字符，而字号与行数那两条量具**对少了一位数字毫无反应**。
+    # 空白按折叠后比：`roleHTML` 会把分隔号统一渲成「 · 」，那是版式不是内容。
+    _want = re.sub(r'\s+', ' ', str((data.get('identity') or {}).get('line') or '')).strip()
+    _got = re.sub(r'\s+', ' ', str(fit.get('role_text') or '')).strip()
+    if _want and _norm_sep(_want) != _norm_sep(_got):
+        warnings.append(f"🔴 画面上的资质行与传入的 identity.line 不一致——"
+                        f"传入「{_want}」，画出「{_got}」。⛔ 注册号少一位在字号/行数量具上毫无反应")
     if fit.get('ident_orn_overlap'):
         warnings.append("🔴 姓名/身份行仍与右下陪衬重叠——避让算完还是压上了，"
                         "换更窄的陪衬（orn_ratio 调小）或把姓名写短")
@@ -1316,6 +1334,7 @@ def main():
         'role_slot': fit['role_slot'],
         'role_min': fit['role_min'],
         'role_avail': fit['role_avail'],
+        'role_text': fit['role_text'],
         'role_lines': fit['role_lines'],
         'role_max_lines': fit['role_max_lines'],
         'role_seg_wrap': fit['role_seg_wrap'],
