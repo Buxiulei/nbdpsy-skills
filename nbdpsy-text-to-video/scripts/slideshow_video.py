@@ -509,7 +509,8 @@ def build(a: argparse.Namespace) -> dict:
         gate = check_narration.check([(f"P{i + 1:02d}", t) for i, t in enumerate(texts)])
         check_narration.report(gate)
         if not gate["ok"]:
-            raise RuntimeError(f"⛔ 拒跑：{len(gate['over'])} 页口播超过 100 汉字（明细见上）。")
+            # 🔴 T247／T253：字数超界⛔阻断，此处只拦【观测失败】（全页读到 0 汉字）
+            raise RuntimeError("⛔ 拒跑：口播闸门观测失败（全页读到 0 汉字，闸门等于没跑），明细见上")
         if a.dry_run:
             _err(f"[dry-run] 校验通过：{len(images)} 页 / {len(texts)} 段口播，"
                  f"共 {sum(len(t) for t in texts)} 字（未调 TTS、未渲染）")

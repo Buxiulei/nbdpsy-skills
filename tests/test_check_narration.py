@@ -28,9 +28,16 @@ def test_hanzi_count_ignores_punctuation_and_latin():
     assert cn.hanzi_count("一" * 99 + "，。！？ABCdef123（）「」——") == 99
 
 
-def test_hard_gate_rejects_over_limit():
+def test_over_limit_is_advisory_not_blocking():
+    """🔴 2026-09-06（T247／T253）：字数超界【降为写作指导】，⛔ 阻断。
+
+    ⛔ 删这个测试 —— 它现在断言的是【新行为】：超界仍被逐镜记录（over 非空、
+    over_warn 为真），但 ok 保持 True（⛔ 因字数而拒跑）。
+    ⚠️ 与它成对的 test_blind_* 断言 blind 仍让 ok 为 False —— 那一条⛔跟着松。
+    """
     res = cn.check([("第1镜", "一" * 101)])
-    assert res["ok"] is False
+    assert res["ok"] is True, "字数超界⛔再阻断"
+    assert res["over_warn"] is True
     assert res["over"][0]["hanzi"] == 101 and res["over"][0]["over"] == 1
 
 
@@ -169,10 +176,16 @@ def test_cli_exit_0_on_pass():
     assert json.loads(r.stdout)["ok"] is True
 
 
-def test_cli_exit_1_on_over_limit():
+def test_cli_over_limit_exits_0_and_still_reports():
+    """🔴 2026-09-06（T247／T253）：CLI 超字数【不再 exit 1】，但仍如实报 over[]。
+
+    ⛔ 删 —— 它断言的是新行为：退出码 0（⛔ 阻断调用方），而 over[] 一格不少。
+    ⚠️ 与它成对的 test_cli_exit_2_on_missing_file 仍断言 exit 2 —— 输入错⛔跟着松。
+    """
     r = _run(["--text", "一" * 101])
-    assert r.returncode == 1
+    assert r.returncode == 0, "字数超界⛔再让 CLI 退非 0"
     assert json.loads(r.stdout)["over"][0]["over"] == 1
+    assert json.loads(r.stdout)["over_warn"] is True
 
 
 def test_cli_exit_2_on_missing_file():
@@ -187,7 +200,8 @@ def test_cli_reads_shots_and_beats(tmp_path):
         p.write_text(json.dumps({key: [{"index": 1, "narration_text": "一" * 101}]},
                                 ensure_ascii=False), encoding="utf-8")
         r = _run(["--shots", str(p)])
-        assert r.returncode == 1, key
+        # 🔴 T247／T253：超字数降为写作指导 ⇒ 退出码 0，但 over[] 仍逐镜报出
+        assert r.returncode == 0, key
         assert json.loads(r.stdout)["over"][0]["label"] == "第1镜"
 
 

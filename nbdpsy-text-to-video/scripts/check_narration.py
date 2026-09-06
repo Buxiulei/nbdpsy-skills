@@ -161,7 +161,12 @@ def check(items: list[tuple[str, str]], *, limit: int = HARD_LIMIT,
     # 拿汉字数当判据会把它们误报成观测失败（写这行时实测栽过，靠既有测试抓到）。
     # 单镜空是合法的（无旁白镜靠 subtitle 兜底）；**全镜皆空**才是观测失败的信号。
     blind = bool(shots) and not got_text and not allow_empty
-    return {"ok": (not over) and not blind, "limit": limit, "shots": shots,
+    # 🔴 2026-09-06（老板 T247／T253）：**字数超界降为写作指导，⛔ 阻断**。
+    # 老板原话逐字：「字数只是作为一开始的写作指导，但是不要作为限制而拒绝发表重新修改」。
+    # ⚠️ `blind`（全镜读到 0 汉字＝闸门根本没跑）**⛔ 跟着松** —— 那拦的是「观测失败」，
+    #    ⛔ 字数超界；两件事⛔一起松。
+    # ⚠️ 超界仍逐镜记进 `over[]` 并由 report() 打警告，调用方据此【提示】，⛔ 阻断。
+    return {"ok": not blind, "over_warn": bool(over), "limit": limit, "shots": shots,
             "over": over, "warnings": warns, "blind": blind,
             "total_hanzi": sum(s["hanzi"] for s in shots)}
 
@@ -450,8 +455,8 @@ def report(res: dict) -> None:
         _err("⛔ 这不是「都没超标」，是「根本没读到口播」——最可能是字段名不是 "
              "`narration_text`，或 shots.json 结构变了。")
         _err("先核一眼字段名；确属无口播的片子，显式加 --allow-empty。")
-    elif not res["ok"]:
-        _err(f"\n⛔ 拒跑：{len(res['over'])} 镜超过 {res['limit']} 汉字。")
+    elif res.get("over"):
+        _err(f"\n⚠️ 写作指导（⛔ 拒跑）：{len(res['over'])} 镜超过 {res['limit']} 汉字。")
         _err("**首选处置＝拆页**：把这一镜断成两镜/两页，内容一个字不少。")
         _err("  ⚠️ 本闸门拦的是「这一页念不完」，⛔ 不是「这件事说太多」——")
         _err("  页数变多是可以的；为了少几页而把话说半截，不可以。")

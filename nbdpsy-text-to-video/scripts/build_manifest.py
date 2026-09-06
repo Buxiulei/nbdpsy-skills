@@ -218,8 +218,14 @@ def main() -> None:
         report["manifest"] = str(out)
         _err(f"manifest 已写入 {out}")
     else:
+        # 🔴 2026-09-06（T247／T253）：超字数已不再影响 gate["ok"] ⇒ 这句若仍绑在
+        #    gate["ok"] 上，**降级后连提示都不会打印**——提示会随阻断一起消失；
+        #    而 blind 触发时它又会打印「超字数」（而 over 可能是 0）。两个方向都错，
+        #    ⇒ 拆成两句、各判各的条件。
         _err(f"清单完成：{result['shots']} 镜, 缺件 {len(result['missing'])}"
-             + ("" if gate["ok"] else f"；另有 {len(gate['over'])} 镜口播超字数（见上）"))
+             + (f"；另有 {len(gate['over'])} 镜口播超 {gate['limit']} 汉字"
+                "（写作指导，⛔ 阻断）" if gate.get("over") else "")
+             + ("" if gate["ok"] else "；🚨 口播闸门观测失败（全镜读到 0 汉字，闸门等于没跑）"))
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
     sys.exit(0 if ok else 1)

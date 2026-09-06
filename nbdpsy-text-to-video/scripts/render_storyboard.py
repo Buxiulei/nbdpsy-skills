@@ -186,15 +186,22 @@ def main():
     # 🩸 口播闸门（2026-08-17 挂在这里）：本步是第 2 步精修与第 3 步 TTS 之间**唯一必经**的
     # 脚本环节（SKILL.md：「无论哪种模式都生成这一页」），所以字数闸门必须落在这儿——
     # 挂在旁路等于没挂，而挂到 TTS 之后就是钱已经花了才拦。
-    # 硬闸门只有一条（≤100 汉字，narration-spec §九）；十四律那几条是 warn，⛔ 不拦。
+    # 🔴 2026-09-06（T247／T253）：**硬闸门只剩「观测失败」一条**（全镜读到 0 汉字＝
+    # 闸门根本没跑）；**≤100 汉字改为写作指导**，超界只 warn、⛔ 拦（老板原话：
+    # 「字数只是作为一开始的写作指导，但是不要作为限制而拒绝发表重新修改」）。
+    # 十四律那几条一直是 warn，⛔ 不拦。
     gate = check_narration.check(
         [(f"第{s.get('index', i + 1)}镜", (s.get("narration_text") or "").strip())
          for i, s in enumerate(shots_data["shots"])])
     check_narration.report(gate)
     if not gate["ok"]:
-        print(json.dumps({"error": "口播字数闸门不过", "narration_gate": gate},
-                         ensure_ascii=False))
-        _err("⛔ 不出确认页也不进第 3 步——回第 2 步精简/拆镜后重跑本命令。")
+        # ⚠️ gate["ok"] 现在只反映【观测失败】（blind），⛔ 字数超界 ——
+        #    错误信息与指导必须跟着改，否则 blind 触发时会把人指去「精简/拆镜」，
+        #    而那是针对字数的药、治不了「根本没读到口播」这个病。
+        print(json.dumps({"error": "口播闸门观测失败（全镜读到 0 汉字，闸门等于没跑）",
+                          "narration_gate": gate}, ensure_ascii=False))
+        _err("⛔ 不出确认页也不进第 3 步——先核 shots.json 的字段名是不是 "
+             "`narration_text`、结构有没有变；确属无口播的片子显式加 --allow-empty。")
         sys.exit(1)
 
     out = Path(a.out) if a.out else workdir / f"{workdir.name}-storyboard.html"

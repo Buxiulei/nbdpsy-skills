@@ -28,7 +28,7 @@
 | # | 命令 | 预期 | exit 语义 |
 |---|------|------|-----------|
 | 确-1 | `python3 {SKILL_DIR}/scripts/check_video.py --workdir <dir>` | 时长/时间轴/成片完整全过 | JSON 输出；任一未过 exit 1。检查项：每镜 shot-NN.mp4 ffprobe 实测时长 ∈[4,15]±0.5s；cues 每镜单调递增且末句 ≤ 旁白实测时长+0.2s；final.mp4 总时长 ≈ Σ每镜时长 ±10%；总时长 ∈[--total-min,--total-max]（默认 30–180s，可按用户对该条视频的要求覆写） |
-| 确-2 | `python3 {T2V}/scripts/check_narration.py --shots <dir>/shots.json` | 每镜口播 ≤100 汉字 | **exit 1 = 有镜超字数 = FAIL**。JSON 的 `over[]` 直接给镜号/字数/超了多少。⚠️ 同时吐 `warnings[]`（十四律软提醒），那部分**不据此判 FAIL**，拿去喂下面的判-8 |
+| 确-2 | `python3 {T2V}/scripts/check_narration.py --shots <dir>/shots.json` | 每镜口播 ≤100 汉字（**时长的代理量**） | 🔴 **写作指导，⛔ FAIL**（2026-09-06 T247/T253）：超界只记提示、列出 `over[]` 的镜号与超出量。**实体已同步改**：`check_narration.py` 的 `ok` 不再含超字数（exit 0）、`build_manifest.py` 与 `slideshow_video.py` 不再因它阻断；**`blind`（全镜读到 0 汉字＝闸门没跑）与结构自证⛔跟着松，仍 FAIL**。JSON 的 `over[]` 直接给镜号/字数/超了多少。⚠️ 同时吐 `warnings[]`（十四律软提醒），那部分**不据此判 FAIL**，拿去喂下面的判-8 |
 | 确-3 | `ffmpeg -hide_banner -nostats -i <final.mp4> -af loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json -f null - 2>&1 \| tail -20` | `input_i` ∈ **−16 ±1 LUFS**；`input_tp` ≤ **−1.2 dBTP** | 无 exit 码，**读数字判**。超出 = FAIL（老板 2026-08-16 实听投诉「背景音太小」的根因就是这条没人量）。口径真源：`{T2V}/references/audio-checklist.md` §一 A1/A2 |
 | 确-4 | `ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,channels,sample_rate -of default=nw=1 <final.mp4>` | `aac` / `channels=2` / `sample_rate=48000` | 读数字判；不符 = `major`（A3 口径：单声道手机外放更闷、采样率漂移会让某些播放器变调） |
 | 确-5 | `python3 {SKILL_DIR}/scripts/check_video_crisis.py --workdir <dir>` <br>走豁免时加 `--exempt-quote "<处置权句原话>"` | `verdict: ok` / `exempt` / `no_trigger` | **exit 1 = 命中 6-a 触发词却没有声明、且没给可核的豁免依据**；**exit 2 = 量不出来**（找不到口播稿）——🔴 **exit 2 ⛔ 不是「没有声明」，别照它去补**。判据与处置见判-6 |
