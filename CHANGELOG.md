@@ -49,6 +49,40 @@ NBDpsy 内容创作 skills（`nbdpsy-content` 插件）的版本变更记录。
 > ⚠️ 它与 v2.43.2 里那个「同版搭载」小节**各记各的**：那节记的是发版记账线在
 > v2.43.2 区间内的提交，⛔ 别把两处合并，也⛔ 别把同一个 sha 记进两处。）
 
+### 新增 `nbdpsy-xiaohongshu`：李牧阳线四道工序（Breaking：旧 creator 内容层废弃）
+
+主理人令：「把她的所有会话，总结成 skill，我们就的 skill 可以下线了，做的东西太烂了。」
+⇒ 把她 2026-09-28 → 10-28 在 codex 上跑出来的四个角色（战略官／写手／视频制作／小红书操作）
+固化成单一 skill。判据全部来自她的原话，无一条自推（她的元规则：「验证过才升格」）。
+
+**四道工序**：切题 → 写故事 → 配图 → 发布；总闸门「我为啥要看？」
+**开工三读**：`samples/` 三篇定稿 > `06-判例库.md` > references 规则（她：「动笔先读样本，不是先读规则」）。
+**判据体量**：43 条判例（她说 → 病灶 → 改后）／20 条写作判据／8 条被否切法／11 条配图否决。
+**规模**：12 文件 160KB（旧 creator 是 926KB）。
+
+- `nbdpsy-xiaohongshu/SKILL.md`、`references/01..06`、`samples/`、`scripts/check_text.py`
+- `check_text.py`：禁词与正文 Markdown 加粗是硬 FAIL，其余只报警交人判；
+  `--selfcheck <自检表> <正文>` 核 20 行判据齐不齐、每行引句能不能在正文逐字 grep 到
+- **审稿回执**（被审文件 sha256 + 审稿实例 + 20 行判决 + FAIL 三件套）+ 发布组装前 sha256 互校：
+  补上「全链唯一没有句柄的闸门」——红队实测，跳过审稿后没有任何下游能发现论文体／废话／半截故事
+- **旧 `nbdpsy-xiaohongshu-creator` 内容层废弃**：SKILL.md 头部加废弃 banner、description 改前缀，
+  只保留发布与数据脚本（`publish_note.py`／`note_ops.py`／`style_profile.py`／`fetch_post.py`／`gen_images.py`）
+- **引用同步改指**：`nbdpsy-content-pipeline`（第 4–7 步改为「不是拆长文」，产出一条故事笔记）、
+  `nbdpsy-content-reviewer`（description 与 checklist-note 加废弃说明）、`nbdpsy-guide`、
+  `nbdpsy-seo-artical-creator`（衔接语）、`install.sh`／`install.ps1`
+
+**验收方式**（三层，全部实跑）：盲跑（全新话题只给 skill，产出→独立审稿判 FAIL→返工→复审）、
+零上下文干跑（只读文档推演执行路径，抓出 5 处照做会卡住）、红队（12 种绕过闸门的方法）。
+修掉的真 bug：单字量程只认 1 个汉字（她的「更狠」「很稳」两字）、第一人称排比被显式豁免、
+破折号短句链不认、正文提取只认精确 `## 正文`、文件不存在抛 traceback 而非返回 2。
+
+提交：`1843b17`。
+
+### 同区间其它提交（补记账）
+
+- `8768dd0` feat(T247/T253): 口播字数从硬闸门降为写作指导——八处，⛔ 松要件。背景是老板 9-5 令
+  「字数只是写作指导，⛔ 不是拒发/打回的闸门」（`project_content_wordcount_guidance_not_gate`）。
+
 ### 小红书咨询师推介封面 — **资质编号上封面**（T201 → T209=A → T211=C 三轮裁定）
 
 老板 T201「咨询师介绍的封面要把 CPS 注册号 / 学历信息 / 中级治疗师注册号**有的都放上**」
