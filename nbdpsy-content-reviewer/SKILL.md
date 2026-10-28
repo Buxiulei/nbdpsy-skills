@@ -1,6 +1,6 @@
 ---
 name: nbdpsy-content-reviewer
-description: 对 NBDpsy 内容产线四类产物（心理科普长文 / 小红书图文笔记 / 轮播配图 / 短视频）做对抗性质量审查：先跑确定性检查脚本，再以「找茬」立场逐条核对清单（引用可溯源、链接可达、事实与源文一致、风格统一、图内错字、音画字幕同步、时长合规、合规红线），产出 PASS/FAIL 审查报告。只要用户提到「审查 / 审核 / 质检 / 对抗审查 / review 这篇 / 检查这批图 / 验收这条视频」，或其他 skill（nbdpsy-seo-artical-creator / nbdpsy-xiaohongshu-creator / nbdpsy-text-to-video / nbdpsy-content-pipeline）指示对产物做审查，即使用本 skill。审查者必须与生产者是不同的 agent 实例。
+description: 对 NBDpsy 内容产线四类产物（心理科普长文 / 小红书图文笔记 / 轮播配图 / 短视频）做对抗性质量审查：先跑确定性检查脚本，再以「找茬」立场逐条核对清单（引用可溯源、链接可达、事实与源文一致、风格统一、图内错字、音画字幕同步、时长合规、合规红线），产出 PASS/FAIL 审查报告。只要用户提到「审查 / 审核 / 质检 / 对抗审查 / review 这篇 / 检查这批图 / 验收这条视频」，或其他 skill（nbdpsy-seo-artical-creator / nbdpsy-xiaohongshu / nbdpsy-text-to-video / nbdpsy-content-pipeline）指示对产物做审查，即使用本 skill。审查者必须与生产者是不同的 agent 实例。
 ---
 
 # 内容产线对抗审查员（nbdpsy-content-reviewer）

@@ -41,10 +41,8 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
 
 ### 流程
 
-> ⚠️ **两套编号别混**：**本文档的"第 N 步"指的是本流水线自己的步骤**；引用 nbdpsy-xiaohongshu-creator 时
-> 一律用**它的新工序号 ⓪①②③④⑤⑥**（该 skill 2026-08-14 已从「第 0–7 步」重排为六步工序流水，
-> 旧标题不再存在——它自己的 SKILL.md 里有「旧 0–7 步 ↔ 新六步」对号表）。
-> 常用对照：**旧 0.6 步选形态 → ①-3**；**旧 6 步出图 → ③（封面）+ ③-2（内页）**；**旧 7 步发布 → ⑤-1**。
+> ⚠️ **两套编号别混**：**本文档的"第 N 步"指的是本流水线自己的步骤**；小红书笔记的四道工序
+> （①切题 / ②写故事 / ③配图 / ④发布）以 `nbdpsy-xiaohongshu` 的 SKILL.md 与 `references/` 为准，本文不重抄。
 
 0. 确认输入：话题/想法（唯一必需）。可选：指定篇数、只到某一级停。
 1. 【长文】触发 nbdpsy-seo-artical-creator 完成选题→查证→撰写。写作态正文里的引用只写
@@ -76,38 +74,25 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
    FAIL → 把报告交回 nbdpsy-seo-artical-creator 定向返工 → 复审（≤2轮，仍FAIL→停，汇报人工）。
    引用 agent 报告里标注「引用阶段新增、未经查证轮」的条目要提示审查端重点复核。
 3. 【发布】PASS 后按 nbdpsy-seo-artical-creator 的「生成即发布」步（API 直发）发布，记录 slug。
-4. 【拆笔记】触发 nbdpsy-xiaohongshu-creator，传入 slug（自动拉文）。
-   ⚠️ **该 skill 有两条形态路线，本步默认走路线①（信息图轮播，5–8 条笔记）**——
-   流水线是"一句话全套"场景，不该在中途自作主张换产出形态。
-   走**路线②（文字版，整篇 1 条）**只在两种情况：
-   ① **运营在第 0 步就说了**（「做成文字版」「整篇发别拆」）→ 记进流水线输入，本步照做；
-   ② 拆分时发现这篇的价值在**完整论证链**上、或有**必须整体呈现的表格/分级清单**
-   （判据见该 skill **工序①-3「选形态」**）→ **停下来问运营一句**，别默默改形态：
-   产出从 5–8 条变成 1 条，差别太大，不是可以静默替他决定的事。
-   走了路线② 时，本步之后的【审查】【出图】按 `references/longform-typeset-spec.md` 的口径
-   （§6 那张适用性对照表：密度五字段/页数/正文字数三项不适用，合规与红线一条不减），
-   本流水线第 6 步【出图】里的"停等闸门"（源出该 skill **工序③-2**）**不适用**（路线② 不过 AI 生图，脚本直接出图）。
-5. 【审查】nbdpsy-content-reviewer 逐篇审笔记（checklist-note），FAIL 同返工协议。
-6. 【出图】按 nbdpsy-xiaohongshu-creator 的 **工序③「封面」+ 工序③-2「内页出图」**执行
-   （旧称"第 6 步 出图"，重塑后拆成这两段；③-2 里含宿主自适应三条路线）：
-   - **先走工序③：封面是独立必经步，且逐篇走**——每篇的 P1 都是那篇的封面，
-     逐篇「单出 → 运营确认 → 缩略图验收 → 落产出凭证」四步走完，**全部封面过闸后才出内页**；
-     批量出内页的命令必须带 `--pages 2-` 排除各篇 P1。⛔ 流水线不许因为"要快"跳过这一步。
-   - **「运营确认」不是口头点头，要落到凭证上**：运营看过缩略图点头后，逐篇跑
-     `publish_note.py --confirm-cover <images/post-NN/P01.png> --confirmed-by "<运营姓名>"` 补确认戳。
-     凭证里 `cover_only` 为假（＝这张封面是批量顺带出的）**且**没有确认戳 → 第 7.5 步发布时**闸门 A 拒发**。
-   - **再走工序③-2**：宿主有图像生成能力 → 直接生成；没有 → **⛔ 停等闸门（硬性协议）**：把预览页
-     （{note_dir}/{note_dir目录名}-preview.html）绝对路径给运营，并把 post-01 的全部页提示词
-     逐页贴在会话里，说明回传方式（图片按 P01.png… 放进 images/post-NN/ 子目录），然后
-     **立即结束当前回合等待**——**不得继续本流水线第 7 步【审图】及之后**、不得假设图片已就绪。
-     这是全流程预期内的正常长停等，不算失败。运营回复后逐篇核验图片数量=页数才继续；不齐则列缺再停。
-7. 【审查】nbdpsy-content-reviewer 审图（checklist-images），FAIL → 只重出问题页。
+4. 【小红书笔记】触发 `nbdpsy-xiaohongshu`，**不是拆长文**——把话题与产品信息交给它，按它的工序①切题
+   （它为「我为啥要看」这道闸门可能反问你，要答）。产出是**一条**笔记，不是 5–8 条。
+   ⛔ 旧 skill 的「图文 / 文字版 / 视频」三形态已废弃（2026-10-28）；新 skill 只有一种形态
+   （第一人称故事 + 插画轮播 + 末页海报）。⛔ 别让模型去读 `longform-typeset-spec.md` 之类已废弃的规格。
+5. 【审查】派独立子代理（新实例，⛔ 绝不让生产 agent 自审）按 `nbdpsy-xiaohongshu/references/03-审稿.md`
+   的判据逐条审这篇笔记，FAIL 同返工协议（自检表一行一条，⛔ 不许写"已检查"）。
+6. 【出图】按 `nbdpsy-xiaohongshu/references/04-配图.md` 走：产出 `绘图-prompts.md`，一张一个 `text`
+   代码块、可整块复制交画师。⚠️ 出图这一步**没有**旧 skill 那种「封面凭证」「停等闸门」的机器闸门
+   （不产 `.meta.json`、不要 preview.html、不阻塞回合）；封面凭证是**发布**工序里的事
+   （`05-发布.md`），⛔ 别在这一步提前造一张假凭证。
+7. 【审查】按 `nbdpsy-xiaohongshu/references/04-配图.md` 的否决清单人工逐条核图；FAIL → 只重出问题页。
 7.5【发小红书·可选】图审 PASS 且本机有 `NBDPSY_XHS_API_KEY`（看第 0 步 doctor 的 `xhs_ready`，
-   别用 `secret get` 探测——会回显密钥值）时，按 nbdpsy-xiaohongshu-creator
-   **工序⑤-1 路线 A**（旧称"第 7 步 发布"）执行：**先问清运营**（发哪个账号、发哪几篇、立即/定时），确认后逐篇
-   `publish_note.py` 发布（异步轮询到 published，汇总 note_url）。运营不发/无凭据 → 跳过，
-   交付时走人工发布提醒。账号没接入/登录态失效时，按 nbdpsy-xiaohongshu-creator
-   「小红书账号接入与管理」一节引导运营装插件/扫码后再发。
+   别用 `secret get` 探测——会回显密钥值）时，按 `nbdpsy-xiaohongshu/references/05-发布.md` 的发布工序执行：
+   **先问清运营**（发哪个账号、立即/定时），确认后 `publish_note.py` 提交（异步轮询到 published，
+   汇总 note_url），再按 05 回读 `note_id / visibility / 话题挂载`。运营不发/无凭据 → 跳过，
+   交付时走人工发布提醒。账号没接入/登录态失效时，按 `nbdpsy-guide` 第 3 步①（装插件）②（扫码登录）
+   引导运营，再发。
+   **脚本路径不变**：仍调 `nbdpsy-xiaohongshu-creator/scripts/publish_note.py`。
+   ⛔ **不要因为目录名叫 creator 就去读它的 SKILL.md 写作规则**——那里是已废弃的内容层，本步只借它的 `scripts/`。
 8. 【视频】对用户选定的笔记（默认第 1 篇）触发 nbdpsy-text-to-video 十步产线。视频走图生时同样有
    storyboard 停等闸门（nbdpsy-text-to-video 第 2.5 步：分镜确认页 {workdir名}-storyboard.html
    给运营复制每镜提示词、回传 P{页号}.png 到 <workdir>/images/），停等协议同上。
@@ -118,7 +103,8 @@ python3 {SKILL_DIR}/scripts/nbdpsy_common.py doctor
 
 ### 铁律
 
-- 每级审查者必须是独立子代理（新实例加载 nbdpsy-content-reviewer），绝不让生产 agent 自审。
+- 每级审查者必须是独立子代理（新实例；长文与视频两级加载 nbdpsy-content-reviewer，小红书笔记按
+  `nbdpsy-xiaohongshu/references/03-审稿.md`、配图按 `04-配图.md` 的否决清单），绝不让生产 agent 自审。
 - 长文这一级有两道闸，顺序不可颠倒：先【引用落地】（第 1.5 步，`【引:` 残留必须为 0），
   后【审查】（第 2 步）。引用 agent **绝不自己编 URL**，对不上素材清单就打回写作端（2026-07-26 老板定案）。
 - 审查 FAIL 未消除前不进下一级；第 3 轮仍 FAIL 必须停下找人，禁止硬闯。

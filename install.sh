@@ -4,7 +4,7 @@
 # 远程: curl -fsSL https://raw.githubusercontent.com/Buxiulei/nbdpsy-skills/master/install.sh | bash
 set -euo pipefail
 REPO_URL="https://github.com/Buxiulei/nbdpsy-skills.git"
-SKILLS=(nbdpsy-seo-artical-creator nbdpsy-xiaohongshu-creator nbdpsy-text-to-video nbdpsy-youtube-transport nbdpsy-fuwuhao-operator nbdpsy-content-reviewer nbdpsy-content-teardown nbdpsy-content-pipeline nbdpsy-guide nbdpsy-strategy-report)
+SKILLS=(nbdpsy-seo-artical-creator nbdpsy-xiaohongshu nbdpsy-xiaohongshu-creator nbdpsy-text-to-video nbdpsy-youtube-transport nbdpsy-fuwuhao-operator nbdpsy-content-reviewer nbdpsy-content-teardown nbdpsy-content-pipeline nbdpsy-guide nbdpsy-strategy-report)
 
 SKILLS_ONLY=0
 CHECK_ONLY=0

@@ -13,6 +13,7 @@ description: NBDpsy 内容运营工具包的「上手向导 + 客服台」，新
 > **路径约定**：下面命令里
 > `PUB` = `~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/publish_note.py`
 > `SP` = `~/.claude/skills/nbdpsy-xiaohongshu-creator/scripts/style_profile.py`
+> ⚠️ `PUB` / `SP` 这两条**脚本**在旧 skill 目录下（目录名带 `-creator`，路径仍有效）：那个 skill 的**内容层已于 2026-10-28 废弃，只用它的 `scripts/`**；写小红书正文找 `nbdpsy-xiaohongshu`。
 > `TV` = `~/.claude/skills/nbdpsy-youtube-transport/scripts/transport_video.py`
 > `COMMON` = `~/.claude/skills/nbdpsy-content-pipeline/scripts/nbdpsy_common.py`
 > （Windows 把 `~` 换成 `%USERPROFILE%`、`/` 换成 `\`，`python3` 换成 `python`。）
@@ -127,9 +128,7 @@ server **无条件下发**它（没有个人档案时给 `0`，有档案时给�
 | 想做的事 | 对运营怎么说 | 背后的 skill |
 |---|---|---|
 | 写一篇官网博客长文并发布 | 「写一篇 XX 主题的科普长文」 | nbdpsy-seo-artical-creator |
-| 把长文拆成小红书图文笔记 + 配图提示词 | 「把这篇拆成小红书」 | nbdpsy-xiaohongshu-creator（路线①，默认） |
-| **把长文整篇排版成竖版文字版**（不拆、不过 AI 生图，正文本身就是图） | 「**把这篇做成文字版**」 | nbdpsy-xiaohongshu-creator（路线②）｜长文太长可再拆「上/中/下」系列篇 |
-| **给某位咨询师写小红书介绍**（推介笔记，从官网资料取材） | 「给 XX 咨询师写小红书介绍」 | nbdpsy-xiaohongshu-creator（咨询师场景）｜要放真人照片先问运营拿本人授权 |
+| 做一条小红书笔记（第一人称故事 + 插画轮播 + 末页海报；四道工序：切题 → 写故事 → 配图 → 发布） | 「做条小红书 / 帮我切一下这个题 / 给画师的 prompt」 | nbdpsy-xiaohongshu｜⚠️ 旧的「把长文拆成 5–8 条 / 文字版 / 咨询师推介笔记」三条路径已废弃（2026-10-28） |
 | 把笔记做成带字幕的竖屏短视频 | 「把这篇做成视频」 | nbdpsy-text-to-video |
 | **搬运一条 YouTube 视频**（翻译+配音+烧中文字幕，自动带品牌 logo） | 「搬运这个 YouTube 视频」+ 链接 | nbdpsy-youtube-transport |
 | **把长文发到微信服务号**（一句话走完全程：写长文 → 改公众号版 → **出封面/插图** → 排版编译 → 发布或定时发；另有群发、菜单装修、台账、数据统计） | 「发公众号」「排版发服务号」「给公众号出封面」 | nbdpsy-fuwuhao-operator（见第 3.7 步） |
@@ -204,7 +203,8 @@ python3 PUB --check-cookie <账号名或id>
 
 ### ⑤ 发布笔记到小红书
 
-笔记与配图由 `nbdpsy-xiaohongshu-creator` 产出（`post-NN.md` + `images/post-NN/`）。
+笔记由 `nbdpsy-xiaohongshu` 产出（定稿配文在 `seo-geo/content/xiaohongshu/定稿配文/`，成品图在 `seo-geo/content/成品图/<日期>-<主题>/01.png…`）。
+⚠️ 旧的 `nbdpsy-xiaohongshu-creator` 内容层已于 2026-10-28 废弃，本步只用它的发布脚本。
 **发布前先和运营确认：发哪个账号、发哪几篇、立即还是定时。** 然后：
 
 ```bash
@@ -644,7 +644,7 @@ python3 SP --get               # 记下 base_version —— 下面原样传它
 |---|---|
 | 「先照默认的建一套，回头再慢慢改」 | 不带 `--from` / `--file`，用内置骨架 |
 | 「照我现在这套复制一份改」 | `--from "<已有套名>"`（原样复制改个名，之后按 ① 调） |
-| 「按我发的这几张参考图做一套」 | `--file <拆解产物.json>`（参考图拆解由 nbdpsy-xiaohongshu-creator 第 0.5 步做，产物存成 json 走这条） |
+| 「按我发的这几张参考图做一套」 | `--file <拆解产物.json>`（参考图拆解原本由旧 skill `nbdpsy-xiaohongshu-creator` 第 0.5 步做——**那个 skill 的内容层已于 2026-10-28 废弃**，新 skill `nbdpsy-xiaohongshu` 没有这一步；`--file` 这条路本身仍收一份拆解好的 json） |
 
 > ⛔ **没拍板就不存。** 参考图拆解出来的风格，运营没明确说「存成一套、叫 XX」，就只在本批次生效，
 > 别自作主张写进他的档案（沿用"没拍板一律按不更新处理"的口径）。
@@ -925,10 +925,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.gith
 | 「删错了能恢复吗」 | **不能，删除不可逆**——所以⑧触发前必须把标题复述给运营确认，宁可多问一句 |
 | 「怎么发重了 2–3 篇同文」 | 2026-07-23 已根治（点击被接收绝不补点）；只可能是之前旧事，用⑧清理（`--count`=多余篇数、留 1 篇） |
 | 「今天刚发的怎么拉不到数据」 | 正常：当天刚发次日才入看板（第 3 步⑥ `--refresh` 遇 `no_data`），跟运营说「明天再拉，不用管」 |
-| 「**做成文字版 / 文字版笔记 / 整篇发别拆 / 正文排版发出去 / 照那个文字版做**」 | 触发 nbdpsy-xiaohongshu-creator 走**路线②**（文字版）：整篇长文精细排版成竖版文字版，**不过 AI 生图**、图里就是正文本身。完整口径在那个 skill 的 `references/longform-typeset-spec.md` |
-| 「这篇太长了 / **拆成上中下** / 做成系列」 | 路线② 的**系列篇**（`split_longform.py`）：按章节边界拆成 2000 字左右的上/中/下（或一二三四），每篇独立发、第 2 篇起自动带承接段 |
-| 「**末页带上 XX 咨询师** / 这条挂某某老师」 | 路线② 出图时加 `--counselor <工号>`：末页追加一页**针对性推介**（要结合本文主题写标题与文案，不是通用名片）。⚠️ 推介谁是**运营的决定**，没点名就问 |
-| 「拆小红书还是做文字版 / 这篇适合哪种」 | 那个 skill 第 0.6 步**开口就问运营要哪种**（图文笔记 5–8 条 / 文字版 1 条）；他说拿不准，再按判据说人话给建议：**有完整论证链或必须整体呈现的表格 → 文字版；能切出 5–8 个互不重叠的痛点场景 → 拆笔记**。**产出形态差很多（1 条 vs 5–8 条），最后一律运营拍板** |
+| 「**做成文字版 / 文字版笔记 / 整篇发别拆 / 正文排版发出去 / 照那个文字版做**」 | ⚠️ **随旧 skill 废弃（2026-10-28）**：旧的文字版路径（`nbdpsy-xiaohongshu-creator` + `references/longform-typeset-spec.md`）不再维护。做小红书找 `nbdpsy-xiaohongshu`——它只有一种形态（第一人称故事 + 插画轮播 + 末页海报），不产文字版 |
+| 「这篇太长了 / **拆成上中下** / 做成系列」 | ⚠️ 随文字版一并废弃（旧 `split_longform.py`，2026-10-28）。新 skill `nbdpsy-xiaohongshu` 一次只出一条笔记，没有系列篇拆分 |
+| 「**末页带上 XX 咨询师** / 这条挂某某老师」 | ⚠️ 旧的 `--counselor` 末页推介路径已随旧 skill 废弃（2026-10-28）。新 skill 的末页是**招募海报**，不产咨询师推介页 |
+| 「拆小红书还是做文字版 / 这篇适合哪种」 | ⚠️ 这个问题已不成立（2026-10-28）：旧 skill 的「图文 5–8 条 / 文字版 1 条」二分已废弃。新 skill `nbdpsy-xiaohongshu` 只有一种形态，不需要运营选形态 |
 | 「把图片传成链接 / 上传图床 / 复用素材」 | 第 3 步⑨（`--upload-images` 得直链，7 天过期） |
 | 「把图发我看看 / 链接呢」 | 最终成图在出图收尾时已上传图床，直接把 mcp 直链列表发 TA（点开即看，7 天有效，过期让 AI 重传）；别甩本地目录/服务器路径 |
 | 「我的风格跟别人不一样了 / 想换个调性 / 改一下我的风格」 | 第 3.6 步①（`SP --list-profiles` 看几套 → 有多套先问清改哪一套 → `SP --get`（不是默认那套就 `--get --profile "<套名>"`）拿全量 + `base_version` → 逐项跟他确认 → **同一套整份 PUT** 带 `base_version`；**绝不只发改动字段**；**读哪套就写哪套**） |

@@ -413,6 +413,6 @@ python3 {SKILL_DIR}/scripts/preflight.py "$WS/drafts/{slug}.md" --online
 
 ## 衔接下一级
 
-发布成功后主动告知用户：「长文已发布（slug=<slug>）。可以继续拆小红书图文：
-触发 nbdpsy-xiaohongshu-creator skill 并把 slug 传给它（它会自动拉取本文）。」
+发布成功后主动告知用户：「长文已发布（slug=<slug>）。要做小红书笔记的话另起一条：
+触发 nbdpsy-xiaohongshu skill，把话题与产品信息交给它——**它不是从这篇长文拆**，是重新切题写一条第一人称故事。」
 在全自动流水线（nbdpsy-content-pipeline）中：本级完成 = 长文通过对抗审查且发布成功，无需询问直接进下一级。
